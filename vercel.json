@@ -14,10 +14,10 @@
         "UPDATER_SECRET_TOKEN": "jK8#2LmP7r$5Tq*6Vw%E3uQ2f@9Zx!8Bn#4LmP7r$5Tq*6Vw%E3u"
     },
     "functions": {
-        "pages/api/scrape-webhook.ts": {
+        "api/scrape-webhook.ts": {
             "maxDuration": 300
         },
-        "pages/api/initiate-scrape.ts": {
+        "api/initiate-scrape.ts": {
             "maxDuration": 300
         }
     },
