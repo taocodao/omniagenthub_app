@@ -1,0 +1,53 @@
+// pages/api/useFreeChats.ts
+
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+type Data = {
+    message: string;
+    remainingChats?: number;
+    success?: boolean;
+    remainingPrice?: number;
+};
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse<Data>) {
+    const { userKey, price } = req.body;
+
+    // Ensure userKey is provided and price is positive
+    if (!userKey || price === undefined || price <= 0) {
+        return res.status(400).json({ message: "Missing or invalid required parameters. Price must be greater than 0." });
+    }
+
+    try {
+        // Fetch current free trades (chats) from KV store
+        let currentFreeTrades = await kv.get(`${userKey}:freeTrades`) as number;
+        currentFreeTrades = currentFreeTrades ? Number(currentFreeTrades) : 0;
+
+        // Calculate free chats to use
+        const freeChatsToUse = Math.floor(price / 0.01);  // Convert price to equivalent chat usage
+        const newFreeChats = currentFreeTrades - freeChatsToUse;
+        if (currentFreeTrades === 0) {
+            return res.status(200).json({ remainingChats: 0, message: "No free chats available .", success: false, remainingPrice: price });
+        }
+
+        if (newFreeChats >= 0) {
+            // Sufficient free chats, update balance
+            await kv.set(`${userKey}:freeTrades`, newFreeChats);
+            return res.status(200).json({ remainingChats: newFreeChats, message: "Free chats successfully used.", success: true });
+        } else {
+            // Insufficient free chats, update balance and return remaining price
+            await kv.set(`${userKey}:freeTrades`, 0);
+            const remainingPrice = (Math.abs(newFreeChats)) * 0.01;  // Calculate remaining price in currency
+            return res.status(200).json({ remainingChats: 0, message: "Insufficient free chats.", success: false, remainingPrice });
+
+        }
+    } catch (error) {
+        console.error('Error in useFreeChats:', error);
+        return res.status(500).json({ message: 'Internal server error.', success: false });
+    }
+}

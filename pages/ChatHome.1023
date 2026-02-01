@@ -1,0 +1,969 @@
+
+import { useActiveAccount } from "thirdweb/react";
+import styles from "../styles/ChatHome1.module.css";
+//import styles from "../styles/Home.module.css"
+import Navbar from "../components/Navbar";
+import { useState, useEffect, useRef, useCallback, useContext, ChangeEvent, use } from "react";
+import SignIn from "../components/SignIn";
+import RatingComponent from '../components/RatingComponent';
+import Head from 'next/head';
+import { useSharedContext } from "../context/SharedContext";
+import { useRouter } from 'next/router';
+import ChatBase from '../components/ChatBase';
+import { LocalizedText, getLocalizedString } from '../util/LocalizedText';
+import { LocalizationContext } from '../util/LocalizationContext';
+import { usePayment } from '../hook/Payment_Process';
+import { UPLOAD_FILE_FEE, PLATFORM_NAME } from '../constants/constants'; // Import constants
+import { toast } from 'react-toastify';
+import TaskItem from '../components/TaskItem';
+import RoleItem from '../components/RoleItem';
+
+
+interface RoleData {
+    department: string;
+    role: string;
+}
+
+interface LocalizedMessages {
+    cleanupSuccess: string;
+    cleanupFailed: string;
+    cleanupError: string;
+    translateFailed: string;
+    uploadSuccess: string;
+    uploadFailed: string;
+}
+
+
+const ChatHome: React.FC = () => {
+    const { language, setLanguage } = useContext(LocalizationContext);
+    const account = useActiveAccount();
+    const address = account?.address;
+    const [selectedRole, setSelectedRole] = useState<RoleData | null>(null);
+    const [roles, setRoles] = useState<RoleData[]>([]);
+    const [tasks, setTasks] = useState<string[]>([]);
+    const [selectedTask, setSelectedTask] = useState<string | null>(null);
+    const [isRatingModalOpen, setIsRatingModalOpen] = useState(false);
+    const { freeChatsLeft, setFreeChatsLeft } = useSharedContext();
+    const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
+    const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+    const [modalContent, setModalContent] = useState("");
+    const [isModalVisible, setIsModalVisible] = useState(false);
+    const [selectedRating, setSelectedRating] = useState<number | null>(null);
+    const router = useRouter();
+    const roleButtonRef = useRef<HTMLDivElement>(null);
+    const taskButtonRef = useRef<HTMLDivElement>(null);
+    const [selectedFile, setSelectedFile] = useState<File | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const [isRoleDropdownOpen, setIsRoleDropdownOpen] = useState(false);
+    const [isTaskDropdownOpen, setIsTaskDropdownOpen] = useState(false);
+    const [shouldCloseModal, setShouldCloseModal] = useState(false);
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [textInput, setTextInput] = useState('');
+    const [availableLanguages, setAvailableLanguages] = useState<string[]>([]);
+    const [selectedLanguage, setSelectedLanguage] = useState<string>("English");
+    const [languages, setLanguages] = useState<string[]>([]);
+    const [taskDescription, setTaskDescription] = useState<string | null>(null);
+    const [hoveredTask, setHoveredTask] = useState<string | null>(null);
+    const { process_payment, isPaymentProcessing } = usePayment();
+    // Add these state variables at the top of your component
+    const [isTaskModalVisible, setIsTaskModalVisible] = useState(false);
+    const [modalPosition, setModalPosition] = useState({ top: 0, left: 0 });
+    const [isTooltipVisible, setIsTooltipVisible] = useState(false);
+    const modalRef = useRef<HTMLDivElement>(null);
+    const [activeButton, setActiveButton] = useState<string | null>(null);
+    const [isRoleModalVisible, setIsRoleModalVisible] = useState(false);
+    const [roleModalPosition, setRoleModalPosition] = useState({ top: 0, left: 0 });
+    const [roleDescription, setRoleDescription] = useState<string | null>(null);
+    const [activeRoleButton, setActiveRoleButton] = useState<string | null>(null); // Track the active role button
+
+    const [selectedDepartment, setSelectedDepartment] = useState<string | null>(null);
+
+
+
+    const handleDescriptionMouseEnter = () => {
+        setIsTooltipVisible(true);
+    };
+
+    const handleDescriptionMouseLeave = () => {
+        setIsTooltipVisible(false);
+    };
+
+
+    const handleDescriptionClick = async (
+        event: React.MouseEvent<HTMLButtonElement>,
+        task: string
+    ) => {
+        event.stopPropagation(); // Prevent triggering task selection
+
+        // Close the Role Description modal if it's open
+        setIsRoleModalVisible(false);
+        // Set the active button
+        setTaskDescription(null);
+        setActiveButton(task);
+        // Capture the target element and calculate modal position synchronously
+        const targetElement = event.currentTarget;
+        if (!targetElement) {
+            console.error('event.currentTarget is null');
+            return;
+        }
+        const rect = targetElement.getBoundingClientRect();
+        setModalPosition({
+            top: rect.top + window.scrollY,
+            left: rect.right + 10 + window.scrollX,
+        });
+
+        // Show the modal before asynchronous code
+        setIsTaskModalVisible(true);
+
+        if (!selectedRole) {
+            console.error('selectedRole is null');
+            return;
+        }
+
+        // Check if the task description is already fetched
+        if (taskDescription && activeButton === task) {
+            // Do not re-fetch if the description is already available and the same task is clicked again
+            return;
+        }
+
+        // Fetch the task description only if it's not already available or if it's a new task
+        try {
+            const response = await fetch('/api/get_task_description', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    department: selectedRole.department,
+                    role: selectedRole.role,
+                    task: task,
+                    language: selectedLanguage,
+                }),
+            });
+            if (!response.ok) throw new Error('Failed to fetch task description');
+            const data = await response.json();
+            setTaskDescription(data.description);
+        } catch (error) {
+            console.error('Error fetching task description:', error);
+            setTaskDescription('');
+        }
+    };
+
+    const handleRoleDescriptionClick = async (
+        event: React.MouseEvent<HTMLButtonElement>,
+        roleData: { department: string; role: string }
+    ) => {
+        event.stopPropagation(); // Prevent triggering role selection when clicking on the description button
+        // Clear the previous description before fetching the new one
+        setRoleDescription(null);
+        const { department, role } = roleData; // Destructure department and role
+
+        // Create a unique key for activeRoleButton using department and role
+        const uniqueKey = `${department}:${role}`;
+        setActiveRoleButton(uniqueKey); // Set the clicked role button as active using the unique key
+
+        const targetElement = event.currentTarget; // Get the current button element
+        if (!targetElement) {
+            console.error('event.currentTarget is null');
+            return;
+        }
+
+        // Get the button's position to correctly place the modal
+        const rect = targetElement.getBoundingClientRect();
+        setRoleModalPosition({
+            top: rect.top - 100 + window.scrollY, // Adjust for scroll position
+            left: rect.left - 465 + window.scrollX, // Modal appears to the left
+        });
+
+        setIsRoleModalVisible(true); // Show the modal
+
+        try {
+            // Fetch the role description using department and role
+            const response = await fetch('/api/get_role_description', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    department: department, // Use the department from roleData
+                    role: role, // Use the role from roleData
+                    language: selectedLanguage, // Language selected for fetching localized content
+                }),
+            });
+            if (!response.ok) throw new Error('Failed to fetch role description');
+
+            const data = await response.json();
+            setRoleDescription(data.description); // Set the fetched role description
+        } catch (error) {
+            console.error('Error fetching role description:', error);
+            setRoleDescription(''); // Show an error message if fetching fails
+        }
+    };
+
+    const toggleTaskDropdown = () => {
+        if (isTaskDropdownOpen) {
+            handleCloseDropdown(); // Close both dropdown and modal if dropdown is open
+        } else {
+            setIsTaskDropdownOpen(true);
+        }
+        setIsRoleDropdownOpen(false); // Ensure the role dropdown is also closed
+    };
+
+
+    const toggleRoleDropdown = () => {
+        setIsRoleDropdownOpen(!isRoleDropdownOpen);
+        setIsTaskDropdownOpen(false);
+    };
+
+    const handleCloseModal = () => {
+        setIsTaskDropdownOpen(false);
+        setIsRoleDropdownOpen(false);
+        setShouldCloseModal(false);
+    };
+
+
+
+    const handleClickOutside = useCallback((event: MouseEvent) => {
+        if (
+            taskButtonRef.current &&
+            !taskButtonRef.current.contains(event.target as Node) &&
+            modalRef.current &&
+            !modalRef.current.contains(event.target as Node)
+        ) {
+            handleCloseDropdown(); // Close both dropdown and modal on outside click
+        }
+    }, [taskButtonRef, modalRef]);
+
+
+    const handleCloseDropdown = () => {
+        setIsTaskDropdownOpen(false); // Close the dropdown
+        //setIsRoleDropdownOpen(false);
+        setIsTaskModalVisible(false); // Close the modal
+        setActiveButton(null); // Reset the active button to clear highlight
+        setActiveRoleButton(null);
+        setIsRoleModalVisible(false); // Close the role modal as well
+    };
+
+
+
+    const initializeContent = async () => {
+        const fetchLanguages = async () => {
+            try {
+                const response = await fetch('/api/get_all_languages');
+                if (response.ok) {
+                    const langs: string[] = await response.json();
+                    setLanguages(Array.from(new Set(langs))); // Ensure unique languages
+                }
+            } catch (error) {
+                console.error("Error fetching languages:", error);
+            }
+        };
+
+        const fetchUserLanguage = async () => {
+            if (address) {
+                try {
+                    const response = await fetch(`/api/get_user_language?userAddress=${address}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.language) {
+                            setSelectedLanguage(data.language);
+                            setLanguage(data.language); // Set language in LocalizationContext
+                        } else {
+                            setSelectedLanguage("English");
+                            setLanguage("English"); // Set default language in LocalizationContext
+                        }
+                    }
+                } catch (error) {
+                    console.error("Failed to fetch user language:", error);
+                    setSelectedLanguage("English");
+                }
+            }
+        };
+
+        await fetchLanguages();
+        await fetchUserLanguage();
+    };
+
+    useEffect(() => {
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+        };
+    }, [handleClickOutside]);
+
+
+    useEffect(() => {
+        initializeContent();
+    }, [address]);
+
+    useEffect(() => {
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+        };
+    }, [handleClickOutside]);
+
+    useEffect(() => {
+        if (address) {
+            fetchRoles();
+        }
+        fetchAvailableLanguages();
+    }, [address]);
+
+    useEffect(() => {
+        const fetchTaskDescription = async (task: string, retries = 3) => {
+            try {
+                const response = await fetch('/api/get_task_description', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        department: selectedRole?.department,
+                        role: selectedRole?.role,
+                        task: task,
+                        language: selectedLanguage,
+                    }),
+                });
+                if (!response.ok) throw new Error('Failed to fetch task description');
+                const data = await response.json();
+                setTaskDescription(data.description);
+            } catch (error) {
+                console.error('Error fetching task description:', error);
+                if (retries > 0) {
+                    // Retry fetching if retries are available
+                    setTimeout(() => fetchTaskDescription(task, retries - 1), 1000);
+                } else {
+                    setTaskDescription('Error fetching .');
+                }
+            }
+        };
+
+        if (isTaskModalVisible && activeButton && !taskDescription) {
+            fetchTaskDescription(activeButton);
+        }
+    }, [isTaskModalVisible, activeButton, selectedRole, selectedLanguage, taskDescription]);
+
+
+
+
+    useEffect(() => {
+        if (router.query.selectedRole && router.query.selectedCategory) {
+            const selectedRoleData: RoleData = {
+                role: router.query.selectedRole as string,
+                department: router.query.selectedCategory as string,
+            };
+            setSelectedRole(selectedRoleData);
+            fetchTasks(selectedRoleData.department, selectedRoleData.role);
+            if (router.query.selectedTask)
+                setSelectedTask(selectedTask);
+            else
+                setSelectedTask(null);
+        }
+    }, [router.query]);
+
+    const fetchRoles = async () => {
+        try {
+            const response = await fetch('/api/get-role-by-address', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ address }),
+            });
+            if (!response.ok) throw new Error('Failed to fetch roles');
+            const rolesData = await response.json();
+            setRoles(rolesData);
+        } catch (error) {
+            console.error('Error fetching roles:', error);
+        }
+    };
+
+    const fetchTasks = async (department: string, role: string) => {
+        try {
+            const response = await fetch('/api/get-tasks', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ department, role }),
+            });
+            if (!response.ok) throw new Error('Failed to fetch tasks');
+            const tasksData = await response.json();
+            setTasks(tasksData.tasks);
+        } catch (error) {
+            console.error('Error fetching tasks:', error);
+        }
+    };
+
+    const fetchAvailableLanguages = async () => {
+        try {
+            const response = await fetch('/api/get_all_languages');
+            if (!response.ok) throw new Error('Failed to fetch languages');
+            const languages = await response.json();
+            setAvailableLanguages(languages);
+        } catch (error) {
+            console.error('Error fetching languages:', error);
+        }
+    };
+
+
+    const handleRoleChange = (role: RoleData) => {
+        setSelectedRole(role);
+        setSelectedTask(null);
+        fetchTasks(role.department, role.role);
+        setIsRoleDropdownOpen(false);
+    };
+
+    // New useEffect to fetch role description when role and department are populated
+    useEffect(() => {
+        if (selectedRole && selectedRole.role && selectedRole.department) {
+            fetchRoleDescription(selectedRole.department, selectedRole.role);
+        }
+    }, [selectedRole]); // Trigger only when selectedRole changes
+
+
+    // Function to fetch role description using department + role as the unique key
+    const fetchRoleDescription = async (department: string, role: string) => {
+        try {
+            const response = await fetch(`/api/role-description?department=${department}&role=${role}`);
+            if (response.ok) {
+                const data = await response.json();
+                setRoleDescription(data.description); // Set the role description
+            } else {
+                setRoleDescription('The persona description is currently unavailable. Please try again later');
+            }
+        } catch (error) {
+            console.error('Error fetching role description:', error);
+            setRoleDescription('Error fetching persona description');
+        }
+    };
+
+    const handleTaskChange = (task: string) => {
+        setSelectedTask(task);
+        setIsTaskDropdownOpen(false);
+        setIsTaskModalVisible(false); // Close the Task Description Modal if open
+        setIsRoleModalVisible(false); // Close the Role Description Modal if open
+    };
+
+    const handleOpenModal = () => setIsModalOpen(true);
+    const handleCloseFileModal = () => setIsModalOpen(false);
+
+    const handleUpload = async () => {
+        if (!address) {
+            const message = 'Please connect your wallet.';
+            toast.info(await getLocalizedString(message, language));
+            return;
+        }
+
+        // Check if the text input is empty
+        if (!textInput.trim()) {
+            const message = 'Please input the content.';
+            toast.info(await getLocalizedString(message, language));
+            return;
+        }
+
+        const uploadFee = UPLOAD_FILE_FEE; // Use the constant directly
+
+        // Initiate payment process
+        const paymentSuccessful = await process_payment(address, uploadFee, PLATFORM_NAME);
+
+        if (!paymentSuccessful) {
+
+            const message = 'Insufficient balance or payment failed. Please try again.';
+            toast.info(await getLocalizedString(message, language));
+            return;
+        }
+
+        const formData = new FormData();
+        let contentToUpload = textInput;
+
+        if (selectedLanguage.toLowerCase() !== 'english') {
+            try {
+                const response = await fetch('/api/translate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        name: 'Uploaded Text',
+                        description: contentToUpload,
+                        fromLanguage: selectedLanguage,
+                        toLanguage: 'English'
+                    }),
+                });
+
+                if (!response.ok) {
+                    throw new Error('Translation failed');
+                }
+
+                const result = await response.json();
+                formData.append('text', result.translatedText);
+            } catch (error) {
+                console.error('Error translating text:', error);
+                //toast.info(localizedMessages.translateFailed);
+                formData.append('text', textInput);
+            }
+        } else {
+            formData.append('text', textInput);
+        }
+
+        try {
+            const response = await fetch('/api/uploadFile', {
+                method: 'POST',
+                headers: {
+                    'User-Address': String(address),
+                },
+                body: formData,
+            });
+
+            if (response.ok) {
+                //console.log('Text uploaded successfully');
+                const message = 'Text uploaded successfully'
+                toast.info(await getLocalizedString(message, language));
+                // Clear the text input after successful upload
+                setTextInput('');
+            } else {
+                throw new Error('Failed to upload text');
+            }
+        } catch (error) {
+            console.error('Error uploading text:', error);
+            const message = 'Error uploading text:' + error;
+            toast.info(await getLocalizedString(message, language));
+            //toast.info(localizedMessages.uploadFailed);
+        }
+
+        handleCloseFileModal();
+    };
+
+    const handleCleanup = async () => {
+        if (!address) return;
+
+        try {
+            const response = await fetch('/api/cleanup_embedding', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ namespace: address }),
+            });
+
+            if (response.ok) {
+                //console.log('Embedding segment cleaned up successfully');
+                const message = 'Embedding segment cleaned up successfully'
+                toast.info(await getLocalizedString(message, language));
+            } else {
+                console.error('Failed to clean up embedding segment');
+                const message = 'Failed to clean up embedding segment'
+                toast.info(await getLocalizedString(message, language));
+            }
+        } catch (error) {
+            console.error('Error cleaning up embedding segment:', error);
+            const message = 'Error cleaning up embedding segment:' + error;
+            toast.info(await getLocalizedString(message, language));
+        }
+    };
+
+    // Sync the modal's selected language with the context's language when the modal opens
+    useEffect(() => {
+        setSelectedLanguage(language); // Sync dropdown with context language
+    }, [language]); // Trigger this when language changes in context
+
+    const handleLanguageChange = async (event: ChangeEvent<HTMLSelectElement>) => {
+        const newLanguage = event.target.value;
+        setSelectedLanguage(newLanguage);
+    }
+
+    const [isLoading, setIsLoading] = useState(false);
+
+    const [localizedPlaceholder, setLocalizedPlaceholder] = useState("Type or paste your text here...");
+
+    useEffect(() => {
+        const updatePlaceholder = async () => {
+            const placeholderText = await getLocalizedString("Type or paste your text here...", selectedLanguage);
+            setLocalizedPlaceholder(placeholderText);
+        };
+        updatePlaceholder();
+    }, [selectedLanguage]);
+
+    const [localizedMessages, setLocalizedMessages] = useState<LocalizedMessages>({
+        cleanupSuccess: 'Embedding segment cleaned up successfully',
+        cleanupFailed: 'Embedding segment not found or already clean up',
+        cleanupError: 'Error occurred while cleaning up embedding segment',
+        translateFailed: 'Failed to translate text. Uploading original text.',
+        uploadSuccess: 'Text uploaded successfully',
+        uploadFailed: 'Failed to upload text. Please try again.'
+    });
+
+    useEffect(() => {
+        const updateLocalizedMessages = async () => {
+            const updatedMessages: Partial<LocalizedMessages> = {};
+            for (const [key, message] of Object.entries(localizedMessages)) {
+                updatedMessages[key as keyof LocalizedMessages] = await getLocalizedString(message, selectedLanguage);
+            }
+            setLocalizedMessages(prevMessages => ({
+                ...prevMessages,
+                ...updatedMessages
+            }));
+        };
+        updateLocalizedMessages();
+    }, [selectedLanguage]); // Remove localizedMessages from here
+
+    return (
+        <>
+            <Head>
+                <title>Web3AIstore</title>
+                <link rel="icon" href="/favicon.ico" />
+            </Head>
+            <main className={styles.main}>
+                <div className={styles.container}>
+                    {!address ? (
+                        <SignIn />
+                    ) : (
+                        <>
+                            <Navbar />
+                            <div style={{
+                                display: "flex",
+                                flexDirection: "row",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                padding: "1px",
+                                width: "100%",
+                            }}>
+
+                                <h3
+                                    style={{ cursor: selectedRole ? 'pointer' : 'default', marginRight: "20px" }}
+                                    onClick={() => selectedRole && setIsRatingModalOpen(true)}
+                                >
+                                    {selectedRole ? <LocalizedText name="Review" /> : <LocalizedText name="GPT Chat" />}
+                                </h3>
+                                <div style={{
+                                    display: "flex",
+                                    flexDirection: "row",
+                                    justifyContent: "space-between",
+                                    alignItems: "center",
+                                    width: "100%",
+                                }}>
+                                    <div
+                                        ref={taskButtonRef}
+                                        style={{
+                                            flex: 1,
+                                            position: "relative",
+                                            textAlign: "center",
+                                        }}>
+                                        <div
+                                            style={{
+                                                border: "2px solid #444",
+                                                padding: "0.5rem 1rem",
+                                                borderRadius: "8px",
+                                                cursor: "pointer",
+                                                backgroundColor: "blue",
+                                                position: "relative",
+                                                maxWidth: "600px"
+                                            }}
+                                            onClick={toggleTaskDropdown}
+                                        >
+                                            <p style={{ fontSize: '17px', margin: 0 }}>{selectedTask ? <LocalizedText name={selectedTask} /> : <LocalizedText name="Select a Task" />}</p>
+                                        </div>
+                                        {isTaskDropdownOpen && (
+                                            <div style={{
+                                                position: "absolute",
+                                                top: "100%",
+                                                left: 0,
+                                                width: "100%",
+                                                maxWidth: "600px",
+                                                backgroundColor: "blue",
+                                                padding: "1rem",
+                                                marginTop: "0px",
+                                                borderRadius: "8px",
+                                                boxShadow: "0 2px 10px rgba(0,0,0,0.2)",
+                                                zIndex: 1000
+                                            }}>
+
+                                                {tasks.map((task) => (
+                                                    <TaskItem
+                                                        key={task}
+                                                        task={task}
+                                                        handleTaskChange={handleTaskChange}
+                                                        handleDescriptionClick={handleDescriptionClick}
+                                                        selectedTask={selectedTask}
+                                                        activeButton={activeButton}
+                                                    />
+                                                ))}
+
+
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className={styles.tooltipWrapper}>
+                                        <button
+                                            style={{
+                                                marginRight: "10px",
+                                                padding: "0.5rem 1rem",
+                                                borderRadius: "8px",
+                                                cursor: "pointer",
+                                                backgroundColor: "darkblue",
+                                                color: "white",
+                                                border: "none",
+                                                fontSize: "17 px",
+                                            }}
+                                            onClick={handleOpenModal}
+                                            aria-label="Knowledge Base"
+                                        >
+
+                                            <LocalizedText name="Knowledge Base" />
+                                        </button>
+                                        <span className={styles.tooltip}>
+                                            <LocalizedText name='Input or paste text to create a knowledge base, enabling AI to provide optimal answers' />
+                                        </span>
+                                    </div>
+
+                                    {isModalOpen && (
+                                        <div className={styles.modalOverlay1}>
+                                            <div className={styles.modalContent1}>
+                                                <h2 className={styles.modalTitle}>
+                                                    <LocalizedText name="Input Text" />
+                                                </h2>
+                                                <div className={styles.modalSubTitle} style={{ textAlign: 'center', marginBottom: '20px', font: 'bule' }}>
+                                                    <LocalizedText name="Enter text to help answer questions for your upcoming task. Language auto-detected. Adjust if needed." />
+                                                </div>
+                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                                    <select
+                                                        style={{
+                                                            padding: "0.5rem 1rem",
+                                                            border: "2px solid #444",
+                                                            borderRadius: "8px",
+                                                            cursor: "pointer",
+                                                            backgroundColor: "blue",
+                                                            color: "white",
+                                                            width: "150px",
+                                                            boxShadow: "0 2px 10px rgba(0,0,0,0.1)",
+                                                            fontSize: "18px",
+                                                            marginBottom: "1rem"
+                                                        }}
+                                                        value={selectedLanguage}
+                                                        onChange={handleLanguageChange}
+                                                    >
+                                                        {languages.map(language => (
+                                                            <option key={language} value={language} style={{
+                                                                backgroundColor: "blue",
+                                                                color: "white",
+                                                                padding: "10px 20px",
+                                                            }}>{language}</option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+
+                                                <textarea
+                                                    className={styles.textarea1}
+                                                    value={textInput}
+                                                    onChange={(e) => setTextInput(e.target.value)}
+                                                    placeholder={localizedPlaceholder}
+                                                />
+                                                <div className={styles.buttonContainer}>
+                                                    <button className={styles.copyButton} onClick={handleUpload}>
+                                                        <LocalizedText name="Submit" />
+                                                    </button>
+                                                    <button className={styles.copyButton} onClick={handleCleanup}>
+                                                        <LocalizedText name="Clean up" />
+                                                    </button>
+                                                    <button className={styles.copyButton} onClick={handleCloseFileModal}>
+                                                        <LocalizedText name="Close" />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {isLoading && (
+                                        <div className={styles.modalOverlay1}>
+                                            <div className={styles.modalContent1}>
+                                                <div style={{ textAlign: 'center' }}>
+
+                                                    <p><LocalizedText name="Loading..." /></p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+
+                                    <div
+                                        ref={roleButtonRef}
+                                        style={{
+                                            position: "relative",
+                                            width: "100%",          // Make the container take full width of its parent
+                                            maxWidth: "400px",      // Set a max-width to prevent it from being too wide
+                                            // minWidth: "450px",
+                                        }}>
+                                        <div
+                                            style={{
+                                                marginLeft: "1rem",
+                                                border: "2px solid #444",
+                                                padding: "0.5rem 1rem",
+                                                borderRadius: "8px",
+                                                cursor: "pointer",
+                                                backgroundColor: "blue",
+                                                position: "relative",
+                                                zIndex: 1000,
+                                                width: "100%",      // Ensure the button takes full width of the container
+                                                boxSizing: "border-box", // Include padding and border in the element's total width
+                                            }}
+                                            onClick={toggleRoleDropdown}
+                                        >
+                                            <p style={{ fontSize: '17px', margin: 0 }}>{selectedRole ? <LocalizedText name={selectedRole.role} /> : <LocalizedText name="Select a Persona" />}</p>
+                                        </div>
+                                        {isRoleDropdownOpen && (
+                                            <div style={{
+                                                position: "absolute",
+                                                top: "100%",
+                                                left: 0,
+                                                width: "100%",
+                                                backgroundColor: "blue",
+                                                padding: "1rem",
+                                                marginTop: "0px",
+                                                borderRadius: "8px",
+                                                boxShadow: "0 2px 10px rgba(0,0,0,0.2)",
+                                                zIndex: 1000,
+
+                                            }}>
+
+                                                {roles.map((role) => (
+                                                    <RoleItem
+                                                        key={role.role}
+                                                        role={role.role}
+                                                        department={role.department}
+                                                        handleRoleChange={handleRoleChange}
+                                                        handleRoleDescriptionClick={handleRoleDescriptionClick}
+                                                        selectedRole={selectedRole?.role ?? null} // Use ?? null to ensure it's string | null
+                                                        activeRoleButton={activeRoleButton}
+                                                    />
+                                                ))}
+
+
+
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {selectedTask && <ChatBase key={`${selectedRole?.role}-${selectedTask}`} role={selectedRole?.role || ''} task={selectedTask || ''} department={selectedRole?.department || ''} />}
+
+                            {isRatingModalOpen && (
+                                <RatingComponent
+                                    tokenId={selectedRole?.role || ''}
+                                    department={selectedRole?.department || ''}
+                                    role={selectedRole?.role || ''}
+                                    onClose={() => setIsRatingModalOpen(false)}
+                                />
+                            )}
+
+                            {isModalVisible && (
+                                <div className={styles.modalOverlay}>
+                                    <div className={styles.modalContent}>
+                                        <h2 className={styles.modalTitle}>{selectedRole?.role} Persona</h2>
+                                        <p>{modalContent}</p>
+                                        <button onClick={handleCloseModal} className={styles.closeButton}>Close</button>
+                                    </div>
+                                </div>
+                            )}
+                        </>
+                    )}
+                </div>
+                {isTaskModalVisible && (
+                    <div
+                        ref={modalRef}
+                        style={{
+                            position: 'absolute',
+                            top: modalPosition.top,
+                            left: modalPosition.left,
+                            backgroundColor: 'blue',
+                            color: 'white',
+                            padding: '15px',
+                            border: '1px solid #ccc',
+                            borderRadius: '8px',
+                            boxShadow: '2px 2px 5px darkred',
+                            width: '400px',
+                            zIndex: 1000,
+
+                        }}
+                        onClick={(e) => e.stopPropagation()} // Prevent clicks inside modal from closing dropdown
+                    >
+                        <button
+                            style={{
+                                position: 'absolute',
+                                top: '5px',
+                                right: '5px',
+                                background: 'transparent',
+                                border: 'none',
+                                fontSize: '16px',
+                                cursor: 'pointer',
+                            }}
+                            onClick={(e) => {
+                                e.stopPropagation(); // Prevent event bubbling
+                                setIsTaskModalVisible(false);
+                            }}
+                        >
+                            &times;
+                        </button>
+                        <h4 style={{ textAlign: 'center', marginTop: '6px', marginBottom: '10px' }}>
+                            <LocalizedText name="Task Description" />
+                        </h4>
+                        <p style={{ marginTop: '6px' }}>
+                            {taskDescription ? (
+                                taskDescription
+                            ) : (
+                                <LocalizedText name="Please wait, Still loading ...." />
+                            )}
+                        </p>
+                    </div>
+
+
+                )}
+                {isRoleModalVisible && (
+                    <div
+                        ref={modalRef}
+                        style={{
+                            position: 'absolute',
+                            top: roleModalPosition.top,
+                            left: roleModalPosition.left,
+                            backgroundColor: 'blue',
+                            color: 'white',
+                            padding: '15px',
+                            border: '1px solid #ccc',
+                            borderRadius: '8px',
+                            boxShadow: '2px 2px 5px darkred',
+                            width: '450px',
+                            zIndex: 1000,
+                        }}
+                        onClick={(e) => e.stopPropagation()} // Prevent clicks inside modal from closing dropdown
+                    >
+                        <button
+                            style={{
+                                position: 'absolute',
+                                top: '5px',
+                                right: '5px',
+                                background: 'transparent',
+                                border: 'none',
+                                fontSize: '16px',
+                                cursor: 'pointer',
+                            }}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setIsRoleModalVisible(false);
+                            }}
+                        >
+                            &times;
+                        </button>
+                        <h4 style={{ textAlign: 'center', marginTop: '6px', marginBottom: '10px' }}>
+                            <LocalizedText name={`Persona Description `} />
+                        </h4>
+                        <p style={{ marginTop: '20px' }}>
+                            {roleDescription ? (
+                                roleDescription
+                            ) : (
+                                <LocalizedText name="Please wait, Still loading ...." />
+                            )}
+                        </p>
+                    </div>
+                )}
+
+
+
+
+            </main>
+        </>
+    );
+};
+
+export default ChatHome;

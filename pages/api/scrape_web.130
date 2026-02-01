@@ -1,0 +1,206 @@
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { ApifyClient } from 'apify-client';
+import { Pinecone } from '@pinecone-database/pinecone';
+import { OpenAI } from 'openai';
+import { createClient } from '@vercel/kv';
+// biome-ignore lint/style/useNodejsImportProtocol: <explanation>
+import crypto from 'crypto';
+
+// Initialize clients
+const apifyClient = new ApifyClient({
+    // biome-ignore lint/style/noNonNullAssertion: <explanation>
+    token: process.env.APIFY_API_TOKEN!,
+});
+
+const openai = new OpenAI({
+    // biome-ignore lint/style/noNonNullAssertion: <explanation>
+    apiKey: process.env.OPENAI_API_KEY!,
+});
+
+const pinecone = new Pinecone({
+    // biome-ignore lint/style/noNonNullAssertion: <explanation>
+    apiKey: process.env.PINECONE_API_KEY!,
+});
+
+const indexName = 'omnisharing';
+
+const kv = createClient({
+    // biome-ignore lint/style/noNonNullAssertion: <explanation>
+    url: process.env.KV_REST_API_URL!,
+    // biome-ignore lint/style/noNonNullAssertion: <explanation>
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+// Function to clean text (e.g., remove HTML tags, trim whitespace)
+function cleanText(text: string): string {
+    return text.replace(/<[^>]+>/g, '').trim();
+}
+
+// Function to normalize URLs
+function normalizeUrl(url: string): string {
+    return url.replace(/\/$/, '').toLowerCase();
+}
+
+// Function to generate a unique hash for long URLs
+function generateHash(url: string): string {
+    return crypto.createHash('sha256').update(url).digest('hex');
+}
+
+// Function to truncate text based on token limits
+function truncateText(text: string, maxTokens: number): string {
+    const words = text.split(' ');
+    if (words.length > maxTokens) {
+        // biome-ignore lint/style/useTemplate: <explanation>
+        return words.slice(0, maxTokens).join(' ') + '...';
+    }
+    return text;
+}
+
+// Function to calculate token count using OpenAI's tokenizer
+async function calculateTokenCount(text: string): Promise<number> {
+    const response = await openai.embeddings.create({
+        model: 'text-embedding-ada-002',
+        input: text,
+    });
+    return response.data[0].embedding.length;
+}
+
+// Function to get embeddings
+async function getEmbedding(text: string): Promise<number[]> {
+    try {
+        const response = await openai.embeddings.create({
+            model: 'text-embedding-ada-002',
+            input: text,
+        });
+        return response.data[0].embedding;
+    } catch (error) {
+        if (error === 403) {
+            throw new Error('Permission denied. Ensure your API key has access to this model.');
+        }
+        if (error === 400) {
+            throw new Error('Input text exceeds the maximum token limit for this model.');
+        }
+        throw error;
+    }
+}
+
+// Function to store embeddings in Pinecone
+// biome-ignore lint/suspicious/noExplicitAny: <explanation>
+async function storeEmbedding(embedding: number[], metadata: any) {
+    const index = pinecone.Index(indexName);
+
+    try {
+        const id = metadata.id.length > 512 ? generateHash(metadata.id) : metadata.id;
+
+        const vectors = [
+            {
+                id,
+                values: embedding,
+                metadata,
+            },
+        ];
+
+        await index.upsert(vectors);
+        console.log(`[${new Date().toISOString()}] Successfully upserted vector with ID "${id}".`);
+    } catch (error) {
+        console.error(`[${new Date().toISOString()}] Error in storeEmbedding for ID "${metadata.id}":`, error);
+        throw error;
+    }
+}
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed' });
+    }
+
+    const { url } = req.body;
+    if (!url) {
+        return res.status(400).json({ error: 'Missing "url" in request body.' });
+    }
+
+    const sitemapUrls = [
+        `${url}/sitemap.xml`,
+        `${url}/page-sitemap.xml`,
+        `${url}/sitemap_index.xml`,
+    ];
+
+    try {
+        const normalizedUrl = normalizeUrl(url);
+
+        // biome-ignore lint/suspicious/noExplicitAny: <explanation>
+        let items: any[] = [];
+        let sitemapCrawlSuccess = false;
+
+        // Attempt to crawl sitemaps
+        for (const sitemapUrl of sitemapUrls) {
+            try {
+                console.log(`Attempting to crawl: ${sitemapUrl}`);
+                const sitemapRun = await apifyClient.actor('apify/website-content-crawler').call({
+                    startUrls: [{ url: sitemapUrl }],
+                    maxCrawlPages: 20,
+                    maxRequestsPerCrawl: 20, // Ensure no more than 20 requests are enqueued
+                    maxCrawlDepth: 1, // Set a limit on depth if needed
+                });
+                const sitemapData = await apifyClient.dataset(sitemapRun.defaultDatasetId).listItems();
+                items = sitemapData.items;
+                sitemapCrawlSuccess = true;
+                break;
+            } catch (error) {
+                console.warn(`Failed to crawl sitemap: ${sitemapUrl}`);
+            }
+        }
+
+        // Fallback to predefined pages if sitemap not available
+        if (!sitemapCrawlSuccess) {
+            console.warn('No valid sitemap found. Falling back to predefined pages.');
+            const fallbackRun = await apifyClient.actor('apify/website-content-crawler').call({
+                startUrls: [
+                    { url },
+                    { url: `${url}/about` },
+                    { url: `${url}/services` },
+                    { url: `${url}/products` },
+                    { url: `${url}/solutions` },
+                ],
+                maxCrawlPages: 10,
+                maxCrawlDepth: 1,
+            });
+            const fallbackData = await apifyClient.dataset(fallbackRun.defaultDatasetId).listItems();
+            items = fallbackData.items;
+        }
+
+        // Process and store scraped content in Pinecone
+        for (const item of items) {
+            const cleanedText = cleanText(item.text || '');
+
+            let truncatedText = cleanedText;
+            try {
+                const tokenCount = await calculateTokenCount(cleanedText);
+                if (tokenCount > 8192) {
+                    truncatedText = truncateText(cleanedText, Math.floor(8192 * 0.9));
+                }
+            } catch (error) {
+                console.error(`Error calculating token count for URL "${item.url}":`, error);
+                continue;
+            }
+
+            // biome-ignore lint/suspicious/noImplicitAnyLet: <explanation>
+            let embedding;
+            try {
+                embedding = await getEmbedding(truncatedText);
+            } catch (error) {
+                console.error(`Error generating embedding for URL "${item.url}":`, error);
+                continue;
+            }
+
+            await storeEmbedding(embedding, { id: item.url, text: truncatedText, url: normalizedUrl });
+        }
+
+        // Store website URL and metadata in KV database
+        await kv.set(`website:${normalizedUrl}`, { scrapedAt: new Date().toISOString(), pageCount: items.length });
+
+        res.status(200).json({ message: `Scraped and stored ${items.length} pages.` });
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ error: 'An error occurred while scraping and storing the website content.' });
+    }
+}

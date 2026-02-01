@@ -1,0 +1,336 @@
+// hooks/usePayment.ts
+
+import { useState, useCallback } from 'react';
+import { ethers } from 'ethers';
+import { useSendTransaction } from "thirdweb/react";
+import {
+    TRANSACTION_FEE_RATE,
+    PLATFORM_NAME,
+    ACTIVE_CHAIN,
+    WEBAI_TOKEN_ADDRESS,
+    CLIENT_ID,
+    UPLOAD_FILE_FEE,
+} from "../constants/constants";
+import { polygonAmoy, polygon, Chain } from "thirdweb/chains";
+import { useSharedContext } from '../context/SharedContext';
+import { createThirdwebClient, prepareContractCall, getContract } from "thirdweb";
+import { prepareTransaction, toWei } from "thirdweb";
+import HashUtil from '../util/hashToFixedDigits';
+import { client } from "../util/client";
+import { useRouter } from 'next/router'; // **Import useRouter**
+
+const erc20Abi = [
+    "function balanceOf(address owner) view returns (uint256)",
+    "function decimals() view returns (uint8)",
+    "function symbol() view returns (string)",
+];
+
+const chainMap: { [key: string]: Chain } = {
+    "polygon-amoy-testnet": polygonAmoy,
+    "polygon": polygon,
+};
+
+const activeChain: Chain = chainMap[ACTIVE_CHAIN];
+
+export function usePayment() {
+    const [isPaymentProcessing, setIsPaymentProcessing] = useState(false);
+    const {
+        setBalanceData,
+        selectedToken,
+        setWebaiBalance,
+        setMaticBalance
+    } = useSharedContext();
+    const { mutateAsync: sendTransaction } = useSendTransaction();
+    const router = useRouter(); // **Initialize useRouter**
+
+    /**
+     * Helper to check if an account is deployed on the blockchain.
+     */
+    const isAccountDeployed = async (address: string, provider: ethers.providers.JsonRpcProvider): Promise<boolean> => {
+        const code = await provider.getCode(address);
+        return code !== "0x"; // If code is not "0x", the account exists
+    };
+
+    /**
+     * Helper to fetch account address by username.
+     */
+    const getAccountAddressByUsername = async (username: string): Promise<string | null> => {
+        try {
+            const response = await fetch('/api/get_address_by_username', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username }),
+            });
+            const data = await response.json();
+            if (response.ok) {
+                return data.accountAddress;
+            } else {
+                console.error("Error fetching address:", data.error);
+                return null;
+            }
+        } catch (error) {
+            console.error("Error fetching account address:", error);
+            return null;
+        }
+    };
+
+    /**
+     * Helper to send funds in USD (WEBAI).
+     * Modified to not await sendTransaction and handle errors internally.
+     */
+    const sendFundsUSD = (receiverUsername: string, sendAmount: number): void => {
+        (async () => {
+            try {
+                const receiverWalletAddress = await getAccountAddressByUsername(receiverUsername);
+
+                if (!receiverWalletAddress) {
+                    console.error("Receiver username does not exist:", receiverUsername);
+                    router.push('/insufficient-payment'); // **Redirect on failure**
+                    return;
+                }
+                const toAddress = receiverWalletAddress as `0x${string}`;
+                const provider = new ethers.providers.JsonRpcProvider(activeChain.rpc);
+                const signer = provider.getSigner();
+
+                const isDeployed = await isAccountDeployed(toAddress, provider);
+                if (!isDeployed) {
+                    console.warn("Receiver's account is not deployed:", toAddress);
+                    // Proceeding with EOA transaction
+                }
+
+                const clientInstance = createThirdwebClient({ clientId: CLIENT_ID });
+                const contract = getContract({
+                    client: clientInstance,
+                    chain: activeChain,
+                    address: WEBAI_TOKEN_ADDRESS,
+                });
+
+                const transaction = await prepareContractCall({
+                    contract,
+                    method: "function transfer(address to, uint256 amount)",
+                    params: [
+                        toAddress,
+                        toWei(sendAmount.toString()) // Amount to transfer (e.g., 1 token)
+                    ],
+                });
+
+                // Initiate transaction without awaiting
+                sendTransaction(transaction)
+                    .then(() => {
+                        console.log("Funds successfully sent to:", receiverWalletAddress, " with username:", receiverUsername);
+                    })
+                    .catch((error: any) => {
+                        console.error("Error sending funds:", error.message || error);
+                        router.push('/insufficient-payment'); // **Redirect on failure**
+                    });
+            } catch (error: any) {
+                console.error("Error sending funds to", receiverUsername, ":", error.message || error);
+                router.push('/insufficient-payment'); // **Redirect on failure**
+            }
+        })();
+    };
+
+    /**
+     * Helper to send funds in MATIC.
+     * Modified to not await sendTransaction and handle errors internally.
+     */
+    const sendFundsMATIC = (receiverUsername: string, sendAmount: number): void => {
+        (async () => {
+            try {
+                const receiverWalletAddress = await getAccountAddressByUsername(receiverUsername);
+
+                if (!receiverWalletAddress) {
+                    console.error("Receiver username does not exist:", receiverUsername);
+                    router.push('/insufficient-payment'); // **Redirect on failure**
+                    return;
+                }
+                const toAddress = receiverWalletAddress as `0x${string}`;
+
+                const transaction = {
+                    to: toAddress,
+                    chain: activeChain,
+                    client: client, // Ensure this is your configured thirdweb client
+                    value: toWei(sendAmount.toString()), // Convert amount to Wei using thirdweb utility
+                };
+
+                // Initiate transaction without awaiting
+                sendTransaction(transaction)
+                    .then(() => {
+                        console.log("Funds successfully sent to:", receiverWalletAddress, " with userName as ", receiverUsername);
+                    })
+                    .catch((error: any) => {
+                        console.error("Error sending funds:", error.message || error);
+                        router.push('/insufficient-payment'); // **Redirect on failure**
+                    });
+            } catch (error) {
+                console.error("Error sending funds to", receiverUsername, ":", error);
+                router.push('/insufficient-payment'); // **Redirect on failure**
+            }
+        })();
+    };
+
+    /**
+     * Helper to pay by crypto in USD (WEBAI).
+     * Modified to not await sendFundsUSD and handle process accordingly.
+     */
+    const payByCryptoUSD = async (userAddress: string, user: string, sendAmount: number): Promise<boolean> => {
+        try {
+            setIsPaymentProcessing(true);
+
+            const provider = new ethers.providers.JsonRpcProvider(activeChain.rpc);
+            const erc20Contract = new ethers.Contract(WEBAI_TOKEN_ADDRESS, erc20Abi, provider);
+
+            const balance = await erc20Contract.balanceOf(userAddress);
+            const formattedBalance = ethers.utils.formatEther(balance);
+
+            const transactionFee = Number(sendAmount) * Number(TRANSACTION_FEE_RATE);
+            const totalAmount = sendAmount + transactionFee;
+
+            if (parseFloat(formattedBalance) < 2 * totalAmount) {
+                console.error("Insufficient balance to proceed with the payment.");
+                setIsPaymentProcessing(false);
+                router.push('/insufficient-payment'); // **Redirect on failure**
+                return false;
+            }
+
+            console.log("Sufficient balance. Proceeding with the payment...");
+
+            // Initiate sendFundsUSD without awaiting
+            sendFundsUSD(user, sendAmount);
+
+            if (!(sendAmount === UPLOAD_FILE_FEE && user === PLATFORM_NAME)) {
+                // Initiate sendFundsUSD for transaction fee without awaiting
+                sendFundsUSD(PLATFORM_NAME, transactionFee);
+            } else {
+                console.log("No transaction fee required for this payment.");
+            }
+
+            // Update balance optimistically or fetch later
+            const updatedBalance = await erc20Contract.balanceOf(userAddress);
+            const formattedUpdatedBalance = ethers.utils.formatEther(updatedBalance);
+            setBalanceData(parseFloat(formattedUpdatedBalance).toFixed(3));
+
+            window.dispatchEvent(new CustomEvent('refreshFreeChats'));
+            setIsPaymentProcessing(false);
+            return true;
+        } catch (error: any) {
+            console.error("Error during payment:", error.message || error);
+            setIsPaymentProcessing(false);
+            router.push('/insufficient-payment'); // **Redirect on failure**
+            return false;
+        }
+    };
+
+    /**
+     * Helper to pay by crypto in MATIC.
+     * Modified to not await sendFundsMATIC and handle process accordingly.
+     */
+    const payByCryptoMATIC = async (userAddress: string, user: string, sendAmount: number): Promise<boolean> => {
+        try {
+            setIsPaymentProcessing(true);
+
+            const provider = new ethers.providers.JsonRpcProvider(activeChain.rpc);
+            const balance = await provider.getBalance(userAddress);
+            const formattedBalance = Number(ethers.utils.formatEther(balance));
+
+            const transactionFee = sendAmount * TRANSACTION_FEE_RATE;
+            const totalAmount = sendAmount + transactionFee;
+
+            // Check if the balance is less than 2 * totalAmount (including the fee)
+            if (formattedBalance < 2 * totalAmount) {
+                console.error("Insufficient balance to proceed with the payment.");
+                setIsPaymentProcessing(false);
+                router.push('/insufficient-payment'); // **Redirect on failure**
+                return false;
+            }
+
+            console.log("Sufficient balance. Proceeding with the payment...");
+
+            // Initiate sendFundsMATIC without awaiting
+            sendFundsMATIC(user, sendAmount);
+
+            if (!(sendAmount === UPLOAD_FILE_FEE && user === PLATFORM_NAME)) {
+                // Initiate sendFundsMATIC for transaction fee without awaiting
+                sendFundsMATIC(PLATFORM_NAME, transactionFee);
+            } else {
+                console.log("No transaction fee required for this payment.");
+            }
+
+            const updatedBalance = await provider.getBalance(userAddress);
+            const formattedUpdatedBalance = Number(ethers.utils.formatEther(updatedBalance));
+            setBalanceData(formattedUpdatedBalance.toFixed(3));
+
+            //window.dispatchEvent(new CustomEvent('refreshFreeChats'));
+            setIsPaymentProcessing(false);
+            return true;
+        } catch (error: any) {
+            console.error("Error during payment:", error.message || error);
+            setIsPaymentProcessing(false);
+            router.push('/insufficient-payment'); // **Redirect on failure**
+            return false;
+        }
+    };
+
+    /**
+     * General sendFunds function that delegates to specific functions based on selectedToken.
+     */
+    const sendFundsGeneral = async (receiverUsername: string, sendAmount: number): Promise<boolean> => {
+        if (selectedToken === 'USD') {
+            sendFundsUSD(receiverUsername, sendAmount);
+            return true;
+        } else if (selectedToken === 'MATIC') {
+            sendFundsMATIC(receiverUsername, sendAmount);
+            return true;
+        }
+        return false;
+    };
+
+    /**
+     * General payByCrypto function that delegates to specific functions based on selectedToken.
+     */
+    const payByCryptoGeneral = async (userAddress: string, user: string, sendAmount: number): Promise<boolean> => {
+        if (selectedToken === 'USD') {
+            return await payByCryptoUSD(userAddress, user, sendAmount);
+        } else if (selectedToken === 'MATIC') {
+            return await payByCryptoMATIC(userAddress, user, sendAmount);
+        }
+        return false;
+    };
+
+    /**
+     * Process a payment, either using free chats or crypto.
+     * Modified to not await sendFunds functions.
+     */
+    const process_payment = async (userAddress: string, price: number, user: string): Promise<boolean> => {
+        try {
+            const userKey = HashUtil.hashTo(userAddress || '');
+            const response = await fetch('/api/useFreeChats', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userKey, price }),
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                window.dispatchEvent(new CustomEvent('refreshFreeChats'));
+                return true;
+            } else if (data.remainingPrice) {
+                // Initiate payment without awaiting
+                const paymentResult = await payByCryptoGeneral(userAddress, user, data.remainingPrice);
+                // Note: payByCryptoGeneral handles redirection on failure
+                return paymentResult;
+            } else {
+                console.error('No free chats and no remaining price. Payment not processed.');
+                router.push('/insufficient-payment'); // **Redirect if no payment processed**
+                return false;
+            }
+        } catch (error: any) {
+            console.error('Error during process_payment:', error.message || error);
+            router.push('/insufficient-payment'); // **Redirect on failure**
+            return false;
+        }
+    };
+
+    return { process_payment, isPaymentProcessing };
+}

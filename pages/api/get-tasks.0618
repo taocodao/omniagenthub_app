@@ -1,0 +1,47 @@
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+const isValidJSON = (str: string) => {
+    try {
+        JSON.parse(str);
+        return true;
+    } catch (e) {
+        return false;
+    }
+};
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    const { department, role } = req.body;
+
+    if (!department || !role) {
+        return res.status(400).json({ message: 'Department and Role are required' });
+    }
+
+    const roleTasksKey = `department:${department}:role:${role}:tasks`;
+
+    try {
+        const tasks: string[] = await kv.get(roleTasksKey).then((res: any) => {
+            console.log(`Tasks fetched for key ${roleTasksKey}:`, res);
+            if (res === null || res === undefined) {
+                return [];
+            } else if (Array.isArray(res)) {
+                return res;
+            } else if (typeof res === 'string' && isValidJSON(res)) {
+                return JSON.parse(res);
+            } else {
+                console.warn(`Invalid data for key ${roleTasksKey}: ${res}`);
+                return [];
+            }
+        });
+
+        return res.status(200).json({ tasks });
+    } catch (error) {
+        console.error('Error fetching tasks from KV database:', error);
+        return res.status(500).json({ message: 'Error fetching tasks from KV database.' });
+    }
+}

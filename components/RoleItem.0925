@@ -1,0 +1,110 @@
+import React, { useState } from 'react';
+import { LocalizedText } from '../util/LocalizedText'; // Adjust the import path
+
+interface RoleData {
+    department: string;
+    role: string;
+}
+
+interface RoleItemProps {
+    role: string;
+    department: string;
+    handleRoleChange: (role: RoleData) => void;
+    handleRoleDescriptionClick: (event: React.MouseEvent<HTMLButtonElement>, role: string) => void;
+    selectedRole: string | null;
+    activeRoleButton: string | null;
+}
+
+const RoleItem: React.FC<RoleItemProps> = ({
+    role,
+    department,
+    handleRoleChange,
+    handleRoleDescriptionClick,
+    selectedRole,
+    activeRoleButton,
+}) => {
+    const [isRoleHovered, setIsRoleHovered] = useState(false);
+    const [isButtonHovered, setIsButtonHovered] = useState(false);
+
+    // Handlers for role hover
+    const handleRoleMouseEnter = () => {
+        setIsRoleHovered(true);
+    };
+
+    const handleRoleMouseLeave = () => {
+        setIsRoleHovered(false);
+    };
+
+    // Handlers for button hover
+    const handleButtonMouseEnter = () => {
+        setIsButtonHovered(true);
+    };
+
+    const handleButtonMouseLeave = () => {
+        setIsButtonHovered(false);
+    };
+
+    // Determine background color for role
+    const getRoleBackgroundColor = () => {
+        if (isRoleHovered) {
+            return 'deeppink'; // Background turns dark pink on hover
+        } else {
+            return 'transparent'; // Default background
+        }
+    };
+
+    // Determine background color for the description button
+    const getButtonBackgroundColor = () => {
+        if (activeRoleButton === role || isButtonHovered) {
+            return 'yellow'; // Active button turns yellow
+        } else {
+            return 'blue';
+        }
+    };
+
+    return (
+        <div style={{ display: 'flex', alignItems: 'center', position: 'relative' }}>
+            <button
+                style={{
+                    width: '24px',
+                    height: '24px',
+                    marginRight: '8px',
+                    backgroundColor: getButtonBackgroundColor(),
+                    color: 'white',
+                    fontWeight: 'bold',
+                    border: '1px solid #ccc',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    position: 'relative',
+                    boxShadow: '3px 1px 1px darkred',
+                    transition: 'background-color 0.2s',
+                }}
+                onMouseEnter={handleButtonMouseEnter}
+                onMouseLeave={handleButtonMouseLeave}
+                onClick={(e) => handleRoleDescriptionClick(e, role)}
+            >
+                D
+            </button>
+
+            <p
+                style={{
+                    fontSize: '17px',
+                    padding: '0.25rem 0.5rem',
+                    cursor: 'pointer',
+                    borderBottom: '1px solid #eee',
+                    flex: 1,
+                    backgroundColor: getRoleBackgroundColor(),
+                    margin: 0.8,
+                    transition: 'background-color 0.2s',
+                }}
+                onClick={() => handleRoleChange({ role, department })} // Pass RoleData object here
+                onMouseEnter={handleRoleMouseEnter}
+                onMouseLeave={handleRoleMouseLeave}
+            >
+                <LocalizedText name={role} />
+            </p>
+        </div>
+    );
+};
+
+export default RoleItem;

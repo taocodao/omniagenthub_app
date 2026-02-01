@@ -1,0 +1,120 @@
+.campaign-story p,
+.campaign-story li span,
+.bootstrap-iso p,
+.bootstrap-iso li span {
+  color: #1e1e1e;
+  font-family: 'IBM Plex Sans', sans-serif !important;
+  letter-spacing: -0.2px;
+  line-height: 1.7;
+}
+
+.fdb-block ul {
+  color: #1e1e1e;
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 18px;
+  letter-spacing: -0.2px;
+  line-height: 1.7;
+}
+
+.campaign-story h1,
+.bootstrap-iso h1 {
+  font-size: 36px !important;
+  line-height: 1.2 !important;
+  margin-bottom: 20px;
+  font-family: 'IBM Plex Sans', sans-serif !important;
+  margin-top: 20px;
+  margin-bottom: 20px;
+  color: #1e1e1e !important;
+}
+
+.campaign-story ul,
+.bootstrap-iso ul {
+  display: inline-block !important;
+}
+
+.campaign-story .fdb-block {
+  margin-top: 0;
+  margin-bottom: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.bootstrap-iso .container {
+  max-width: 706px;
+}
+
+.fr-toolbar {
+  max-width: 38% !important;
+  padding: 0px !important;
+}
+
+.fr-btn-grp {
+  font-size: 14px !important;
+}
+
+@media screen and (min-width: 768px) {
+  .campaign-story .container {
+    max-width: 706px;
+    width: 706px;
+    padding-right: 44px !important;
+    padding-left: 15px !important;
+    margin-right: auto;
+    margin-left: auto;
+  }
+
+  .campaign-story .fdb-block {
+    max-width: 706px;
+    width: 706px;
+    padding-right: 44px !important;
+    padding-left: 15px !important;
+    margin-right: auto;
+    margin-left: auto;
+  }
+}
+
+.fr-toolbar a {
+  color: #000 !important;
+}
+
+.fdb-block a,
+.fdb-block a:hover {
+  color: #01d1b8 !important;
+}
+
+.fdb-block a:hover {
+  text-decoration: none !important;
+}
+
+.fr-command[title='Default'] {
+  display: none !important;
+}
+
+.fr-box a.fr-floating-btn.fr-btn + .fr-btn {
+  padding: 0px !important;
+}
+
+.block-title p {
+  text-transform: uppercase;
+  padding-right: 48px;
+  font-family: IBM Plex Sans, sans-serif;
+  font-weight: bold;
+  font-size: 18px;
+  letter-spacing: 1.5px;
+  color: #3c3636;
+  text-align: left;
+}
+
+.campaign-story span[style],
+.campaign-story span:not(.fa),
+.campaign-story div:not(.fa) {
+  font-family: IBM Plex Sans !important;
+}
+
+.block-title > div {
+  background: #01d1b8 !important;
+}
+
+.fr-box.fr-inline .fr-wrapper .fr-element.fr-view ul:not([style*='list-style-type']) {
+  list-style-type: circle !important;
+  display: block !important;
+}

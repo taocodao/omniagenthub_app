@@ -1,0 +1,103 @@
+// pages/api/initiate-scrape.ts
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+import { normalizeUrl } from '../../utils/embeddings';
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'POST') {
+        return res.status(405).json({ success: false, message: 'Method not allowed' });
+    }
+
+    const { url, userId } = req.body;
+
+    if (!url || !userId) {
+        return res.status(400).json({ success: false, message: 'URL and userId are required' });
+    }
+
+    try {
+        const normalizedUrl = normalizeUrl(url);
+        const jobId = `scrape-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+
+        // Save job info to KV store
+        await kv.set(`scrape-job:${jobId}`, {
+            status: 'RUNNING',
+            url: url,
+            normalizedUrl: normalizedUrl,
+            userId: userId,
+            startedAt: new Date().toISOString()
+        });
+
+        // Define webhook for Apify to call when job completes
+        const webhookUrl = `${process.env.NEXT_PUBLIC_BASE_URL || process.env.VERCEL_URL || 'http://localhost:3000'}/api/scrape-webhook`;
+
+        // pages/api/initiate-scrape.ts
+        // Update the webhook definition to use URL parameters only (no payload)
+        const webhookDefinition = [{
+            eventTypes: ['ACTOR.RUN.SUCCEEDED', 'ACTOR.RUN.FAILED'],
+            requestUrl: `${webhookUrl}?jobId=${encodeURIComponent(jobId)}&eventType=$ACTOR_EVENT_TYPE$&datasetId=$DATASET_ID$`,
+            // Remove payload template completely
+        }];
+
+
+
+
+        const encodedWebhook = Buffer.from(JSON.stringify(webhookDefinition)).toString('base64');
+
+        // Call Apify API to start the scraping job
+        const apifyUrl = `https://api.apify.com/v2/acts/apify~website-content-crawler/runs?token=${process.env.APIFY_API_TOKEN}&webhooks=${encodedWebhook}`;
+
+        console.log(`Initiating Apify scraping job for URL: ${url}, Job ID: ${jobId}`);
+
+        const apifyResponse = await fetch(apifyUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                startUrls: [{ url: url }],
+                maxCrawlPages: 50,
+                maxRequestsPerCrawl: 50,
+                maxCrawlDepth: 2,
+                waitUntil: ["domcontentloaded"], // Optimize page loading
+                maxConcurrency: 2 // Limit concurrent requests
+            })
+        });
+
+        if (!apifyResponse.ok) {
+            const errorData = await apifyResponse.json();
+            throw new Error(`Apify API error: ${JSON.stringify(errorData)}`);
+        }
+
+        const apifyData = await apifyResponse.json();
+        console.log(`Apify job started successfully, Run ID: ${apifyData.id}, Job ID: ${jobId}`);
+
+        // Store mapping from Apify run ID to our job ID
+        await kv.set(`apify-run-map:${apifyData.id}`, jobId);
+
+        // Update job with Apify run details
+        await kv.set(`scrape-job:${jobId}`, {
+            status: 'RUNNING',
+            url: url,
+            normalizedUrl: normalizedUrl,
+            userId: userId,
+            startedAt: new Date().toISOString(),
+            apifyRunId: apifyData.id
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: 'Scraping job initiated',
+            jobId: jobId
+        });
+
+    } catch (error) {
+        console.error('Error initiating scraping job:', error);
+        return res.status(500).json({
+            success: false,
+            message: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+}

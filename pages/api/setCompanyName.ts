@@ -1,0 +1,63 @@
+import type { NextApiRequest, NextApiResponse } from "next";
+import { createClient } from "@vercel/kv";
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL || "https://credible-walleye-47876.upstash.io",
+    token: process.env.KV_REST_API_TOKEN || "AbsEAAIncDEyZGQ0MmZhODg2YmE0OTEyYTlhNzdjNzg1YWMwN2NhN3AxNDc4NzY",
+});
+
+export default async function handler(
+    req: NextApiRequest,
+    res: NextApiResponse
+) {
+    if (req.method !== "POST") {
+        return res.status(405).json({ error: "Method not allowed" });
+    }
+
+    const { userAddress, companyName } = req.body as { userAddress: string; companyName: string };
+    if (!userAddress || !companyName) {
+        return res.status(400).json({ error: "userAddress and companyName are required" });
+    }
+
+    try {
+        // Save the individual company mapping.
+        const key = `companyName:${userAddress}`;
+        await kv.set(key, companyName);
+        console.log(`[setCompanyName] Set key ${key} = ${companyName}`);
+
+        // (Optional) Update the global array of company names.
+        const globalKey = "companyNames";
+        let companyNames: string[] = [];
+        const existingNames = await kv.get(globalKey);
+        if (existingNames && Array.isArray(existingNames)) {
+            companyNames = existingNames as string[];
+        }
+
+        if (!companyNames.includes(companyName)) {
+            companyNames.push(companyName);
+            await kv.set(globalKey, companyNames);
+            console.log("[setCompanyName] Updated global company names:", companyNames);
+        }
+
+        // Update the global index for company users.
+        const companyUsersKey = `companyUsers:${companyName}`;
+        let companyUsers: string[] = [];
+        const existingUsers = await kv.get(companyUsersKey);
+        if (existingUsers && Array.isArray(existingUsers)) {
+            companyUsers = existingUsers as string[];
+        }
+
+        if (!companyUsers.includes(userAddress)) {
+            companyUsers.push(userAddress);
+            await kv.set(companyUsersKey, companyUsers);
+            console.log(`[setCompanyName] Updated ${companyUsersKey}:`, companyUsers);
+        } else {
+            console.log(`[setCompanyName] ${userAddress} is already in ${companyUsersKey}`);
+        }
+
+        return res.status(200).json({ companyName });
+    } catch (error) {
+        console.error("Error setting company name:", error);
+        return res.status(500).json({ error: "Error setting company name" });
+    }
+}

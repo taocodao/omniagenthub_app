@@ -1,0 +1,35 @@
+import { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'POST') {
+        return res.status(405).json({ message: 'Method not allowed' });
+    }
+
+    const { userId, role, task, selectedSources } = req.body;
+
+    if (!userId || !role || !task) {
+        return res.status(400).json({ message: 'Missing required parameters' });
+    }
+
+    try {
+        // Create key using all required elements
+        const selectedSourcesStr = selectedSources ? selectedSources.join('-') : '';
+        const savedQuestionsKey = `savedQuestions:${userId}-${role}-${task}-${selectedSourcesStr}`;
+
+        // Get saved questions
+        const savedQuestions = await kv.get(savedQuestionsKey) as string[] || [];
+
+        console.log(`[getSavedQuestions] Retrieved ${savedQuestions.length} saved questions for key: ${savedQuestionsKey}`);
+
+        return res.status(200).json({ questions: savedQuestions });
+    } catch (error) {
+        console.error('Error retrieving saved questions:', error);
+        return res.status(500).json({ message: 'Internal server error' });
+    }
+}

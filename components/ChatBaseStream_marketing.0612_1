@@ -1,0 +1,605 @@
+'use client';
+
+import React, { useState, useEffect, useRef, useContext } from 'react';
+import ReactMarkdown from 'react-markdown';
+import rehypeRaw from 'rehype-raw';
+import remarkGfm from 'remark-gfm';
+import styles from "../styles/Home5.module.css";
+import HashUtil from '../util/hashToFixedDigits';
+import { useActiveAccount } from 'thirdweb/react';
+import { LocalizedText, useLocalizedString, getLocalizedString } from '../util/LocalizedText';
+import { LocalizationContext } from '../util/LocalizationContext';
+import { usePayment } from '../hook/Payment_Process';
+import { useAssistant } from 'ai/react';
+import ReactDOM from 'react-dom/client';
+import { toast } from 'react-toastify';
+
+export const maxDuration = 300;
+export const dynamic = 'force-dynamic';
+export const runtime = "edge";
+
+interface ChatBaseStreamProps {
+    role: string;
+    task: string;
+    initialMessage: string;
+    department: string;
+    user: string | null;
+    price: number | null;
+    onSaveProfile?: (profileData: any, profileName: string) => Promise<void>;
+    isEditingProfile?: boolean;
+    onCancelProfile?: () => void;
+}
+
+interface Message {
+    role: 'user' | 'assistant';
+    content: string;
+    id?: string;
+}
+
+const options = [
+    'Enhance Based on Previous Feedback or Additional Input',
+    'Conduct a More Rigorous Assessment',
+    'Gather Detail for Customization by Answering More Questions',
+    'Simulate Comprehensive Focus Group Insights For Better Work',
+    'Replicate Diverse Expert Opinions to Improve',
+    'Explore Innovative Approaches to be Creative',
+    'Adjust Presentation Style, Tone, or Scope',
+    'Optimize for Peak Performance',
+];
+
+const optionShortNames: { [key: string]: string } = {
+    'Enhance Based on Previous Feedback or Additional Input': 'Refine',
+    'Conduct a More Rigorous Assessment': 'Evaluate',
+    'Gather Detail for Customization by Answering More Questions': 'Personalize',
+    'Simulate Comprehensive Focus Group Insights For Better Work': 'Focus Group',
+    'Replicate Diverse Expert Opinions to Improve': 'Expert Feedback',
+    'Explore Innovative Approaches to be Creative': 'Creative',
+    'Adjust Presentation Style, Tone, or Scope': 'Modify',
+    'Optimize for Peak Performance': 'Auto Improve',
+};
+
+const CustomTable: React.FC<React.TableHTMLAttributes<HTMLTableElement>> = ({ children, ...props }) => (
+    <table className={styles.customTable} {...props}>
+        {children}
+    </table>
+);
+
+export function ChatBaseStream1({
+    role,
+    task,
+    initialMessage,
+    department,
+    user,
+    price,
+    onSaveProfile,
+    isEditingProfile,
+    onCancelProfile
+}: ChatBaseStreamProps) {
+
+    const [profileData, setProfileData] = useState<any>(null);
+    const [showSaveDialog, setShowSaveDialog] = useState(false);
+    const [profileName, setProfileName] = useState('');
+    const { process_payment } = usePayment();
+    const [isRefining, setIsRefining] = useState(false);
+    const account = useActiveAccount();
+    const userAddress = account?.address;
+    const assistantId = HashUtil.hashTo(role + task);
+    const { language } = useContext(LocalizationContext);
+    const inputRef = useRef<HTMLTextAreaElement>(null);
+    const messageRefs = useRef<(HTMLDivElement | null)[]>([]);
+    const [renderKey, setRenderKey] = useState(0);
+    const initialMessageSentRef = useRef(false);
+    const [optionLongNames, setOptionLongNames] = useState<{ [key: string]: string }>({});
+
+    const { messages, append, submitMessage, status } = useAssistant({
+        api: '/api/assistant1',
+        body: {
+            assistantId: assistantId,
+            threadId: null,
+            userAddress,
+        },
+    });
+    const [userInput, setUserInput] = useState<string>('');
+    const isLoading = status === 'in_progress';
+
+    // ENHANCED: Improved profile data extraction function for last iteration only
+    const extractProfileDataFromLastMessage = (content: string) => {
+        console.log('Extracting profile data from last assistant message:', content);
+
+        // Initialize empty values
+        let business = '';
+        let ups = '';
+        let persona = '';
+        let challenge = '';
+
+        // Split content by lines for easier processing
+        const lines = content.split('\n');
+        let currentSection = '';
+        let currentContent = '';
+
+        // Process each line to identify sections
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+
+            // Check if line starts with one of our target keywords
+            if (line.toLowerCase().startsWith('business:')) {
+                // Save previous section if any
+                if (currentSection && currentContent) {
+                    saveSection(currentSection, currentContent.trim());
+                }
+                currentSection = 'business';
+                currentContent = line.replace(/^business:\s*/i, '');
+            } else if (line.toLowerCase().startsWith('ups:')) {
+                // Save previous section if any
+                if (currentSection && currentContent) {
+                    saveSection(currentSection, currentContent.trim());
+                }
+                currentSection = 'ups';
+                currentContent = line.replace(/^ups:\s*/i, '');
+            } else if (line.toLowerCase().startsWith('persona:')) {
+                // Save previous section if any
+                if (currentSection && currentContent) {
+                    saveSection(currentSection, currentContent.trim());
+                }
+                currentSection = 'persona';
+                currentContent = line.replace(/^persona:\s*/i, '');
+            } else if (line.toLowerCase().startsWith('challenge:')) {
+                // Save previous section if any
+                if (currentSection && currentContent) {
+                    saveSection(currentSection, currentContent.trim());
+                }
+                currentSection = 'challenge';
+                currentContent = line.replace(/^challenge:\s*/i, '');
+            } else if (currentSection && line !== '') {
+                // Continue building current section content
+                currentContent += (currentContent ? ' ' : '') + line;
+            }
+        }
+
+        // Save the last section
+        if (currentSection && currentContent) {
+            saveSection(currentSection, currentContent.trim());
+        }
+
+        // Helper function to save extracted sections
+        function saveSection(section: string, content: string) {
+            switch (section.toLowerCase()) {
+                case 'business':
+                    business = content;
+                    break;
+                case 'ups':
+                    ups = content;
+                    break;
+                case 'persona':
+                    persona = content;
+                    break;
+                case 'challenge':
+                    challenge = content;
+                    break;
+            }
+        }
+
+        // Alternative extraction using regex patterns as fallback
+        if (!business || !ups || !persona || !challenge) {
+            console.log('Line-by-line extraction incomplete, trying regex patterns...');
+
+            // Try regex patterns for more flexible extraction
+            if (!business) {
+                const businessMatch = content.match(/Business:\s*(.*?)(?=\n\s*UPS:|UPS:|persona:|Challenge:|$)/is);
+                business = businessMatch ? businessMatch[1].trim() : '';
+            }
+
+            if (!ups) {
+                const upsMatch = content.match(/UPS:\s*(.*?)(?=\n\s*Business:|Business:|persona:|Challenge:|$)/is);
+                ups = upsMatch ? upsMatch[1].trim() : '';
+            }
+
+            if (!persona) {
+                const personaMatch = content.match(/persona:\s*(.*?)(?=\n\s*Business:|Business:|UPS:|Challenge:|$)/is);
+                persona = personaMatch ? personaMatch[1].trim() : '';
+            }
+
+            if (!challenge) {
+                const challengeMatch = content.match(/Challenge:\s*(.*?)(?=\n\s*Business:|Business:|UPS:|persona:|$)/is);
+                challenge = challengeMatch ? challengeMatch[1].trim() : '';
+            }
+        }
+
+        console.log('Final extracted data:', { business, ups, persona, challenge });
+
+        return { business, ups, persona, challenge };
+    };
+
+    const updateOptionLongNames = async (language: string) => {
+        const newOptionLongNames: { [key: string]: string } = {};
+        const longNames = Object.keys(optionShortNames);
+        for (let longName of longNames) {
+            newOptionLongNames[optionShortNames[longName]] = await getLocalizedString(longName, language);
+        }
+        setOptionLongNames(newOptionLongNames);
+    };
+
+    const resetTextareaHeight = () => {
+        if (inputRef.current) {
+            inputRef.current.style.height = '';
+        }
+    };
+
+    useEffect(() => {
+        updateOptionLongNames(language);
+    }, [language]);
+
+    useEffect(() => {
+        if (Object.keys(optionLongNames).length > 0) {
+            setRenderKey(prev => prev + 1);
+        }
+    }, [optionLongNames]);
+
+    useEffect(() => {
+        if (initialMessage && !initialMessageSentRef.current) {
+            submitQuestion(initialMessage);
+            initialMessageSentRef.current = true;
+        }
+    }, [initialMessage]);
+
+    const submitQuestion = async (message: string) => {
+        if (isLoading) return;
+
+        if (price && user) {
+            const isPaymentValid = await process_payment(String(userAddress), price, user);
+            if (!isPaymentValid) {
+                toast.info(await getLocalizedString('Insufficient balance', language));
+                return;
+            }
+
+            try {
+                const updateResponse = await fetch('/api/updateUsage', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        department,
+                        role,
+                        increment: 1,
+                    }),
+                });
+
+                if (!updateResponse.ok) {
+                    const errorData = await updateResponse.json();
+                    console.error('Failed to update usage:', errorData.message || updateResponse.statusText);
+                } else {
+                    const data = await updateResponse.json();
+                    console.log(`Usage count updated successfully. New usage: ${data.usage}`);
+                }
+            } catch (error) {
+                console.error('Error updating usage:', error);
+                toast.error('An error occurred while updating usage count.');
+            }
+        }
+
+        append({ role: 'user', content: message });
+        await submitMessage();
+        resetTextareaHeight();
+
+        if (inputRef.current) {
+            inputRef.current.value = '';
+        }
+
+        setIsRefining(false);
+        setUserInput('');
+    };
+
+    const handleInputChange1 = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+        setUserInput(e.target.value);
+        if (inputRef.current) {
+            inputRef.current.style.height = 'auto';
+            inputRef.current.style.height = `${inputRef.current.scrollHeight}px`;
+        }
+    };
+
+    const handleButtonClick = async (action: string) => {
+        const shortName = optionShortNames[action];
+        if (shortName === 'Refine') {
+            await submitQuestion('Refine: ' + userInput);
+            setUserInput('');
+        } else {
+            setUserInput(shortName || action);
+            await submitQuestion(shortName || action);
+        }
+    };
+
+    const copyToClipboard = async (index: number) => {
+        try {
+            const messageElement = messageRefs.current[index];
+            if (!messageElement) throw new Error('Message element not found');
+
+            const html = messageElement.innerHTML;
+            const text = messageElement.innerText;
+
+            await navigator.clipboard.write([
+                new ClipboardItem({
+                    'text/html': new Blob([html], { type: 'text/html' }),
+                    'text/plain': new Blob([text], { type: 'text/plain' }),
+                }),
+            ]);
+
+            toast.info(await getLocalizedString('Copied to clipboard with formatting', language));
+        } catch (err) {
+            console.error("Failed to copy: ", err);
+            const messageElement = messageRefs.current[index];
+            if (messageElement) {
+                const text = messageElement.innerText;
+                await navigator.clipboard.writeText(text);
+                toast.info(await getLocalizedString('Copied plain text to clipboard', language));
+            }
+        }
+    };
+
+    const feedbackPlaceholder = useLocalizedString("Please type feedback or leave blank");
+    const messagePlaceholder = useLocalizedString("Type your message");
+
+    const extractAction = (content: string) => {
+        const colonIndex = content.indexOf(':');
+        if (colonIndex !== -1) {
+            return content.substring(0, colonIndex).trim();
+        }
+        return content.trim();
+    };
+
+    // ENHANCED: Modified profile save handler to only use last assistant message
+    const handleSaveProfile = async () => {
+        // Get only the LAST assistant message (most recent iteration)
+        const assistantMessages = messages.filter(m => m.role === 'assistant');
+        const lastAssistantMessage = assistantMessages[assistantMessages.length - 1];
+
+        if (lastAssistantMessage) {
+            try {
+                console.log('Processing last assistant message for profile data...');
+                const content = lastAssistantMessage.content;
+
+                // Use the enhanced extraction function for better parsing
+                const extractedData = extractProfileDataFromLastMessage(content);
+
+                // Validate that we have all required fields
+                if (!extractedData.business || !extractedData.ups || !extractedData.persona || !extractedData.challenge) {
+                    toast.error(await getLocalizedString('Could not extract all required profile fields. Please ensure the response contains Business, UPS, persona, and Challenge sections.', language));
+                    return;
+                }
+
+                // Create profile data object
+                const profileObj = {
+                    business: extractedData.business,
+                    ups: extractedData.ups,
+                    persona: extractedData.persona,
+                    challenge: extractedData.challenge,
+                    raw_content: content
+                };
+
+                console.log('Setting profile data from last message:', profileObj);
+                setProfileData(profileObj);
+                setShowSaveDialog(true);
+            } catch (error) {
+                console.error('Error processing profile data from last message:', error);
+                toast.error(await getLocalizedString('Error processing profile data from the latest response', language));
+            }
+        } else {
+            toast.error(await getLocalizedString('No assistant response found to save', language));
+        }
+    };
+
+    return (
+        <div key={renderKey}>
+            <div className={styles.container}>
+                <div className={styles.chatContainer}>
+                    {messages.map((message, index) => (
+                        <div key={index} className={`${styles.message} ${message.role === 'user' ? styles.userMessage : styles.aiMessage}`}>
+                            <div className={message.role === 'user' ? styles.userMessageRole : styles.aiMessageRole}>
+                                {message.role === 'user' ? <LocalizedText name={`User: ${task}`} /> : <LocalizedText name={role} />}
+                            </div>
+                            <div ref={(el) => { messageRefs.current[index] = el; }}>
+                                <ReactMarkdown
+                                    rehypePlugins={[rehypeRaw]}
+                                    remarkPlugins={[remarkGfm]}
+                                    components={{
+                                        table: ({ children, ...props }) => (
+                                            <table className={styles.customTable} {...props}>
+                                                {children}
+                                            </table>
+                                        ),
+                                        thead: ({ children, ...props }) => (
+                                            <thead {...props}>{children}</thead>
+                                        ),
+                                        tbody: ({ children, ...props }) => (
+                                            <tbody {...props}>{children}</tbody>
+                                        ),
+                                        tr: ({ children, ...props }) => (
+                                            <tr {...props}>{children}</tr>
+                                        ),
+                                        th: ({ children, ...props }) => (
+                                            <th {...props}>{children}</th>
+                                        ),
+                                        td: ({ children, ...props }) => (
+                                            <td {...props}>{children}</td>
+                                        ),
+                                        code: ({ node, className, children, ...props }) => {
+                                            const match = /language-(\w+)/.exec(className || '');
+                                            if (match && match[1] === 'html') {
+                                                return <div dangerouslySetInnerHTML={{ __html: String(children).replace(/\n$/, '') }} />;
+                                            }
+                                            return <code className={className} {...props}>{children}</code>;
+                                        },
+                                    }}
+                                >
+                                    {message.role === 'user' && optionLongNames[extractAction(message.content)]
+                                        ? optionLongNames[extractAction(message.content)]
+                                        : message.content}
+                                </ReactMarkdown>
+                            </div>
+                            {message.role === 'assistant' && (
+                                <button onClick={() => copyToClipboard(index)} className={styles.copyButton} disabled={isLoading}>
+                                    <LocalizedText name="Copy" />
+                                </button>
+                            )}
+                        </div>
+                    ))}
+
+                    {isLoading && <div className={styles.loadingIndicator}><LocalizedText name="AI is thinking..." /></div>}
+                </div>
+
+                <div className={styles.buttonContainer}>
+                    {options.map((option) => (
+                        <div key={option} className={styles.buttonWrapper}>
+                            <button onClick={() => handleButtonClick(option)} className={styles.cardButton} disabled={isLoading || isRefining}>
+                                <LocalizedText name={optionShortNames[option]} />
+                            </button>
+                            <div className={styles.buttonTooltip}>
+                                <LocalizedText name={option} />
+                            </div>
+                        </div>
+                    ))}
+                </div>
+
+                <form className={styles.inputForm}>
+                    <textarea
+                        ref={inputRef}
+                        className={`${styles.input} ${isRefining ? styles.refineInput : ''}`}
+                        value={userInput}
+                        onChange={handleInputChange1}
+                        placeholder={isRefining ? feedbackPlaceholder : messagePlaceholder}
+                        rows={1}
+                        disabled={isLoading}
+                    />
+                    <button type="button" className={styles.cardButton} onClick={() => submitQuestion(userInput)} disabled={isLoading}>
+                        <LocalizedText name='Send' />
+                    </button>
+                </form>
+
+                {/* Profile Save Dialog */}
+                {showSaveDialog && onSaveProfile && (
+                    <div className={styles.modalOverlay}>
+                        <div className={styles.modalContent} style={{
+                            padding: '2rem',
+                            maxWidth: '400px',
+                            backgroundColor: 'white',
+                            borderRadius: '8px',
+                            boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
+                        }}>
+                            <h3 style={{ marginBottom: '1rem', color: '#333', textAlign: 'center' }}>
+                                <LocalizedText name={isEditingProfile ? "Update Profile" : "Save Profile"} />
+                            </h3>
+                            <input
+                                type="text"
+                                value={profileName}
+                                onChange={(e) => setProfileName(e.target.value)}
+                                placeholder="Enter profile name..."
+                                style={{
+                                    width: '100%',
+                                    padding: '0.75rem',
+                                    marginBottom: '1rem',
+                                    border: '1px solid #ccc',
+                                    borderRadius: '4px',
+                                    fontSize: '16px',
+                                    outline: 'none',
+                                    boxSizing: 'border-box'
+                                }}
+                                autoFocus
+                            />
+                            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+                                <button
+                                    onClick={() => {
+                                        setShowSaveDialog(false);
+                                        setProfileName('');
+                                        setProfileData(null);
+                                    }}
+                                    style={{
+                                        padding: '0.5rem 1rem',
+                                        backgroundColor: '#666',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    <LocalizedText name="Cancel" />
+                                </button>
+                                <button
+                                    onClick={async () => {
+                                        if (!profileName.trim()) {
+                                            toast.error(await getLocalizedString('Please enter a profile name', language));
+                                            return;
+                                        }
+
+                                        if (onSaveProfile && profileData) {
+                                            await onSaveProfile(profileData, profileName.trim());
+                                            setShowSaveDialog(false);
+                                            setProfileName('');
+                                            setProfileData(null);
+                                            if (onCancelProfile) onCancelProfile();
+                                        }
+                                    }}
+                                    disabled={!profileName.trim()}
+                                    style={{
+                                        padding: '0.5rem 1rem',
+                                        backgroundColor: !profileName.trim() ? '#ccc' : '#4CAF50',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: !profileName.trim() ? 'not-allowed' : 'pointer'
+                                    }}
+                                >
+                                    <LocalizedText name={isEditingProfile ? "Update" : "Save"} />
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Profile action buttons for User Research Collector */}
+                {role === "User Research Collector" && onSaveProfile && messages.length > 0 && (
+                    <div style={{
+                        display: 'flex',
+                        gap: '1rem',
+                        padding: '1rem',
+                        borderTop: '1px solid #ccc',
+                        justifyContent: 'center',
+                        backgroundColor: '#f8f9fa'
+                    }}>
+                        <button
+                            onClick={handleSaveProfile}
+                            style={{
+                                padding: '0.75rem 1.5rem',
+                                backgroundColor: '#4CAF50',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '8px',
+                                fontSize: '16px',
+                                cursor: 'pointer',
+                                fontWeight: 'bold'
+                            }}
+                            disabled={messages.filter(m => m.role === 'assistant').length === 0}
+                        >
+                            <LocalizedText name={isEditingProfile ? "Update Profile" : "Save Profile"} />
+                        </button>
+                        {onCancelProfile && (
+                            <button
+                                onClick={onCancelProfile}
+                                style={{
+                                    padding: '0.75rem 1.5rem',
+                                    backgroundColor: '#f44336',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    fontSize: '16px',
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                <LocalizedText name="Cancel" />
+                            </button>
+                        )}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}

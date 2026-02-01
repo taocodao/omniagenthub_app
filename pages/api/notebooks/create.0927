@@ -1,0 +1,202 @@
+// pages/api/notebooks/create.ts - FIXED PINECONE ASSISTANT CREATION
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+
+const kv = createClient({
+  url: process.env.KV_REST_API_URL!,
+  token: process.env.KV_REST_API_TOKEN!,
+});
+
+interface CreateNotebookRequest {
+  userKey: string;
+  title: string;
+  userAddress?: string;
+}
+
+interface Notebook {
+  id: string;
+  title: string;
+  sources: any[];
+  created: string;
+  sourceCount: number;
+  pineconeAssistantName?: string;
+  lastUpdated: string;
+  userAddress?: string;
+}
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ success: false, message: 'Method Not Allowed' });
+  }
+
+  try {
+    const { userKey, title, userAddress } = req.body as CreateNotebookRequest;
+
+    console.log('Create notebook request:', { userKey, title, userAddress });
+
+    if (!userKey || !title?.trim()) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid request parameters. userKey and title are required.' 
+      });
+    }
+
+    // Generate unique notebook ID and assistant name
+    const notebookId = `nb_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const assistantName = `notebook-${notebookId}`.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const now = new Date().toISOString();
+
+    console.log('Generated notebook ID:', notebookId);
+    console.log('Generated assistant name:', assistantName);
+
+    // Create notebook object
+    const notebook: Notebook = {
+      id: notebookId,
+      title: title.trim(),
+      sources: [],
+      created: new Date().toLocaleDateString('en-US', { 
+        year: 'numeric', 
+        month: 'short', 
+        day: 'numeric' 
+      }),
+      sourceCount: 0,
+      pineconeAssistantName: assistantName,
+      lastUpdated: now,
+      userAddress: userAddress || 'unknown'
+    };
+
+    // Create Pinecone Assistant with improved error handling
+    let assistantCreated = false;
+
+    try {
+      console.log(`Creating Pinecone Assistant: ${assistantName} for user: ${userAddress || 'unknown'}`);
+
+      // Check if required environment variables exist
+      if (!process.env.PINECONE_API_KEY) {
+        console.error('PINECONE_API_KEY environment variable is missing');
+        throw new Error('Pinecone API key not configured');
+      }
+
+      const createAssistantUrl = 'https://api.pinecone.io/assistants';
+      console.log('Using Pinecone API URL:', createAssistantUrl);
+
+      const assistantPayload = {
+        name: assistantName,
+        instructions: `You are an AI assistant for a notebook titled "${title.trim()}". Answer questions based only on the sources provided in this notebook. Always cite your sources and be helpful and accurate.`,
+        metadata: {
+          notebook_id: notebookId,
+          notebook_title: title.trim(),
+          user_address: userAddress || 'unknown',
+          created_by: 'web3_notebook_system',
+          created_at: now
+        }
+      };
+
+      console.log('Pinecone assistant payload:', JSON.stringify(assistantPayload, null, 2));
+
+      const assistantResponse = await fetch(createAssistantUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.PINECONE_API_KEY}`,
+          'Content-Type': 'application/json',
+          'User-Agent': 'Web3-NotebookManager/1.0'
+        },
+        body: JSON.stringify(assistantPayload)
+      });
+
+      console.log('Pinecone API response status:', assistantResponse.status);
+      // Create headers object from Headers instance
+const headersObj: Record<string, string> = {};
+assistantResponse.headers.forEach((value, key) => {
+  headersObj[key] = value;
+});
+console.log('Pinecone API response headers:', headersObj);
+
+      if (assistantResponse.ok) {
+        const assistantData = await assistantResponse.json();
+        console.log('Pinecone Assistant created successfully:', assistantData);
+        assistantCreated = true;
+      } else {
+        const errorText = await assistantResponse.text();
+        console.error(`Pinecone Assistant creation failed (${assistantResponse.status}):`, errorText);
+
+        // Try to parse error for more details
+        try {
+          const errorJson = JSON.parse(errorText);
+          console.error('Pinecone error details:', errorJson);
+        } catch (e) {
+          console.error('Raw error text:', errorText);
+        }
+
+        // Continue without Pinecone (fallback mode)
+        notebook.pineconeAssistantName = undefined;
+        console.log('Continuing in fallback mode without Pinecone Assistant');
+      }
+    } catch (error) {
+      console.error('Exception during Pinecone Assistant creation:', error);
+
+      if (error instanceof Error) {
+        console.error('Error name:', error.name);
+        console.error('Error message:', error.message);
+        console.error('Error stack:', error.stack);
+      }
+
+      // Continue without Pinecone (fallback mode)
+      notebook.pineconeAssistantName = undefined;
+      console.log('Continuing in fallback mode due to exception');
+    }
+
+    // Store notebook
+    const notebookKey = `${userKey}:notebook:${notebookId}`;
+    await kv.set(notebookKey, JSON.stringify(notebook));
+    console.log('Notebook stored in KV:', notebookKey);
+
+    // Add to user's notebooks list
+    const notebooksKey = `${userKey}:notebooks`;
+    const existingNotebooks = await kv.get(notebooksKey);
+    let notebooksList: string[] = [];
+
+    if (existingNotebooks && typeof existingNotebooks === 'string') {
+      try {
+        notebooksList = JSON.parse(existingNotebooks);
+      } catch (e) {
+        console.error('Error parsing existing notebooks list:', e);
+        notebooksList = [];
+      }
+    }
+
+    notebooksList.unshift(notebookId); // Add to beginning for recent order
+    await kv.set(notebooksKey, JSON.stringify(notebooksList));
+    console.log('Updated notebooks list for user:', userKey);
+
+    // Log successful creation
+    console.log(`Notebook created: ${notebookId} by user: ${userAddress || 'unknown'}`);
+    console.log(`Pinecone Assistant: ${assistantCreated ? 'Created' : 'Failed/Skipped'}`);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Notebook created successfully',
+      notebook,
+      pineconeAssistantCreated: assistantCreated,
+      warnings: assistantCreated ? [] : ['Pinecone Assistant creation failed - notebook will work in fallback mode']
+    });
+
+  } catch (error) {
+    console.error('Error creating notebook:', error);
+
+    if (error instanceof Error) {
+      console.error('Error details:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      });
+    }
+
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Internal server error.',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+}

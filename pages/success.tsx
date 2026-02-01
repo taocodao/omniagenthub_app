@@ -1,0 +1,254 @@
+// pages/success.tsx
+
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/router';
+import { toast } from 'react-toastify';
+import { useActiveAccount } from '../hooks/useWalletAddress';
+import SignIn from '../components/SignIn';
+import styles from '../styles/Success.module.css';
+import Link from 'next/link';
+
+const SuccessPage = () => {
+    const router = useRouter();
+    const { session_id } = router.query;
+    const [loading, setLoading] = useState(true);
+    const [message, setMessage] = useState<string>('Verifying your payment...');
+    // New state variable to track when payment is verified
+    const [paymentVerified, setPaymentVerified] = useState(false);
+    // State to store purchased perks
+    const [purchasedPerks, setPurchasedPerks] = useState({
+        freeTrades: 0,
+        freeUploads: 0,
+        freeWebScrape: 0
+    });
+
+    const account = useActiveAccount();
+    const userAddress = account?.account?.address;
+
+    // Process referral rewards AFTER payment verification
+    useEffect(() => {
+        // Only process referrals once payment is verified and userAddress exists
+        if (!paymentVerified || !userAddress) return;
+
+        async function processReferralReward() {
+            try {
+                console.log("Processing referral rewards for user:", userAddress);
+                console.log("Purchased perks for referral:", purchasedPerks);
+
+                // Check if the user has a referrer
+                const referrerResponse = await fetch('/api/get-referrer', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userKey: userAddress })
+                });
+
+                const referrerData = await referrerResponse.json();
+                console.log("Referrer data:", referrerData);
+
+                if (referrerData.success && referrerData.referrerId) {
+                    // Calculate 10% of purchased perks (minimum 1 for each non-zero value)
+                    const referralBonus = {
+                        freeTrades: purchasedPerks.freeTrades > 0 ?
+                            Math.max(1, Math.floor(purchasedPerks.freeTrades * 0.1)) : 0,
+                        freeUploads: purchasedPerks.freeUploads > 0 ?
+                            Math.max(1, Math.floor(purchasedPerks.freeUploads * 0.1)) : 0,
+                        freeWebScrape: purchasedPerks.freeWebScrape > 0 ?
+                            Math.max(1, Math.floor(purchasedPerks.freeWebScrape * 0.1)) : 0
+                    };
+
+                    console.log("Calculated referral bonus:", referralBonus);
+
+                    // Transfer the bonus to the referrer
+                    const transferResponse = await fetch('/api/transfer-free-chat', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            recipientId: referrerData.referrerId,
+                            freeTrades: referralBonus.freeTrades,
+                            freeUploads: referralBonus.freeUploads,
+                            freeWebScrape: referralBonus.freeWebScrape,
+                            source: 'referral_reward'
+                        })
+                    });
+
+                    const transferData = await transferResponse.json();
+                    console.log("Transfer response:", transferData);
+
+                    if (transferResponse.ok) {
+                        setMessage(prev => prev + ' A reward has been sent to your referrer.');
+                        toast.success('Referral reward sent successfully!');
+                    } else {
+                        console.error("Failed to transfer referral bonus:", transferData);
+                    }
+                } else {
+                    console.log("No referrer found for this user");
+                }
+            } catch (error) {
+                console.error('Error processing referral reward:', error);
+            }
+        }
+
+        processReferralReward();
+    }, [paymentVerified, userAddress, purchasedPerks]);
+
+    // Payment verification useEffect
+    useEffect(() => {
+        const fetchSessionAndUpdatePerks = async () => {
+            if (!session_id || Array.isArray(session_id)) {
+                setMessage('Invalid session ID.');
+                setLoading(false);
+                return;
+            }
+
+            if (!userAddress) {
+                setMessage('Wallet not connected. Please connect your wallet.');
+                setLoading(false);
+                return;
+            }
+
+            try {
+                // Fetch the Checkout Session details from your server
+                const response = await fetch(`/api/retrieve-checkout-session?session_id=${session_id}`);
+                const data = await response.json();
+
+                if (data.session && data.session.payment_status === 'paid') {
+                    // Extract metadata
+                    const { productId, userId } = data.session.metadata as { productId: string; userId: string };
+
+                    // Verify that the userId matches the connected wallet address
+                    if (userId.toLowerCase() !== userAddress.toLowerCase()) {
+                        setMessage('User mismatch. Please ensure you are using the correct wallet.');
+                        toast.error('User mismatch. Please ensure you are using the correct wallet.');
+                        setLoading(false);
+                        return;
+                    }
+
+                    // Determine the number of perks based on the productId
+                    let freeTrades = 0;
+                    let freeUploads = 0;
+                    let freeWebScrape = 0;
+                    console.log('The product Id is', productId);
+
+                    switch (productId) {
+                        case '1': // Entry Level AI Starter Pack
+                            freeTrades = 5000;
+                            freeUploads = 10;
+                            freeWebScrape = 2;
+                            break;
+                        case '2': // Professional AI Productivity Pack
+                            freeTrades = 50000;
+                            freeUploads = 100;
+                            freeWebScrape = 10;
+                            break;
+                        case '3': // Enterprise AI Collaboration Suite
+                            freeTrades = 100000;
+                            freeUploads = 250;
+                            freeWebScrape = 20;
+                            break;
+                        default:
+                            console.warn(`Unknown productId: ${productId}`);
+                            break;
+                    }
+
+                    // Update the purchased perks state
+                    const newPerks = {
+                        freeTrades,
+                        freeUploads,
+                        freeWebScrape
+                    };
+
+                    // Store perks in state for referral processing
+                    setPurchasedPerks(newPerks);
+
+                    if (freeTrades > 0 || freeUploads > 0 || freeWebScrape > 0) {
+                        // Prepare the request body
+                        const requestBody: {
+                            userKey: string;
+                            freeTrades: number;
+                            freeUploads?: number;
+                            freeWebScrape?: number;
+                        } = {
+                            userKey: userAddress,
+                            freeTrades: freeTrades,
+                        };
+
+                        if (freeUploads > 0) {
+                            requestBody.freeUploads = freeUploads;
+                        }
+
+                        if (freeWebScrape > 0) {
+                            requestBody.freeWebScrape = freeWebScrape;
+                        }
+
+                        // Call the proxy-add-free-chats API to update the user's perks balance
+                        const updateResponse = await fetch('/api/proxy-add-free-chats', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify(requestBody),
+                        });
+
+                        const updateData = await updateResponse.json();
+
+                        if (updateResponse.ok) {
+                            setMessage('Payment successful! Your perks have been added.');
+                            toast.success(updateData.message || 'Your perks have been added successfully!');
+                            // Mark payment as verified to trigger referral processing
+                            setPaymentVerified(true);
+                        } else {
+                            setMessage('Payment successful, but failed to update your perks.');
+                            toast.error(updateData.message || 'Failed to update your perks. Please contact support.');
+                        }
+                    } else {
+                        setMessage('Payment successful! However, the purchased product does not grant any perks.');
+                        toast.info('Payment successful! No perks were added for this purchase.');
+                        // Still mark as verified even if no perks
+                        setPaymentVerified(true);
+                    }
+                } else {
+                    // Payment failed or is incomplete
+                    setMessage('Payment not completed. Please try again.');
+                    toast.error('Payment not completed. Please try again.');
+                }
+            } catch (error: any) {
+                console.error('Error verifying payment:', error);
+                setMessage('An error occurred while verifying your payment.');
+                toast.error('An error occurred while verifying your payment.');
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchSessionAndUpdatePerks();
+    }, [session_id, userAddress]);
+
+    return (
+        <main className={styles.main}>
+            <div className={styles.container}>
+                {!userAddress ? (
+                    <SignIn />
+                ) : (
+                    <div style={{ padding: '2rem', textAlign: 'center' }}>
+                        <h1>Payment Status</h1>
+                        <p>{message}</p>
+                        {loading && <p>Please wait...</p>}
+                        {!loading && (
+                            <>
+                                <p>
+                                    You can close this window or return to the{' '}
+                                    <Link href="/ChatHome" style={{ color: 'blue', textDecoration: 'underline' }}>
+                                        Chat Home
+                                    </Link>
+                                    .
+                                </p>
+                            </>
+                        )}
+                    </div>
+                )}
+            </div>
+        </main>
+    );
+};
+
+export default SuccessPage;

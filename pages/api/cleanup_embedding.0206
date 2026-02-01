@@ -1,0 +1,27 @@
+// pages/api/cleanup-namespace.ts
+
+import { NextApiRequest, NextApiResponse } from 'next';
+import { Pinecone } from '@pinecone-database/pinecone';
+
+const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
+const index = pc.index("user-documents"); // Replace with your actual index name
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'POST') {
+        return res.status(405).json({ message: 'Method not allowed' });
+    }
+
+    const { namespace } = req.body;
+
+    if (!namespace) {
+        return res.status(400).json({ message: 'Namespace is required' });
+    }
+
+    try {
+        await index.namespace(namespace).deleteAll();
+        return res.status(200).json({ message: `All vectors in namespace ${namespace} have been deleted` });
+    } catch (error) {
+        console.error('Error deleting vectors:', error);
+        return res.status(500).json({ message: 'Error deleting vectors', error: (error as Error).message });
+    }
+}

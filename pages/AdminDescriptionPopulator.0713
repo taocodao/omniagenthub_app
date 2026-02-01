@@ -1,0 +1,1315 @@
+// AdminDescriptionPopulator.tsx
+
+import React, { useState, useEffect, useCallback, useContext } from 'react';
+import { toast } from 'react-toastify';
+import { LocalizationContext } from '../util/LocalizationContext';
+import { LocalizedText, getLocalizedString } from '../util/LocalizedText';
+
+interface RoleData {
+    department: string;
+    role: string;
+}
+
+interface PopulationStats {
+    totalRoles: number;
+    totalTasks: number;
+    totalDescriptions: number;
+    totalSummaries: number;
+    processedDescriptions: number;
+    processedSummaries: number;
+    failedDescriptions: number;
+    failedSummaries: number;
+    currentOperation: string;
+    isRunning: boolean;
+    isSummaryRunning: boolean;
+    startTime: Date | null;
+    estimatedCompletion: Date | null;
+    isProductionMode: boolean;
+}
+
+interface ProgressLog {
+    id: number;
+    timestamp: Date;
+    type: 'role' | 'task' | 'summary' | 'error' | 'success' | 'info' | 'warning';
+    message: string;
+    details?: string;
+}
+
+const DEPARTMENT = "Vibe Marketing";
+const NON_PROD_TASK_LIMIT = 10;
+
+const AdminDescriptionPopulator: React.FC = () => {
+    const { language } = useContext(LocalizationContext);
+
+    const [stats, setStats] = useState<PopulationStats>({
+        totalRoles: 0,
+        totalTasks: 0,
+        totalDescriptions: 0,
+        totalSummaries: 0,
+        processedDescriptions: 0,
+        processedSummaries: 0,
+        failedDescriptions: 0,
+        failedSummaries: 0,
+        currentOperation: '',
+        isRunning: false,
+        isSummaryRunning: false,
+        startTime: null,
+        estimatedCompletion: null,
+        isProductionMode: false
+    });
+
+    const [availableLanguages, setAvailableLanguages] = useState<string[]>([]);
+    const [selectedLanguages, setSelectedLanguages] = useState<string[]>([]);
+    const [logs, setLogs] = useState<ProgressLog[]>([]);
+    const [roles, setRoles] = useState<RoleData[]>([]);
+    const [forceRegenerate, setForceRegenerate] = useState(false);
+    const [logId, setLogId] = useState(0);
+    const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
+    const [batchSize, setBatchSize] = useState(5);
+    const [delayBetweenRequests, setDelayBetweenRequests] = useState(1000);
+    const [isProductionMode, setIsProductionMode] = useState(false);
+
+    // Type guard function
+    const getErrorMessage = (error: unknown): string => {
+        if (error instanceof Error) return error.message;
+        if (typeof error === 'string') return error;
+        return String(error);
+    };
+
+    // Fetch available languages
+    const fetchAvailableLanguages = useCallback(async () => {
+        try {
+            addLog('info', 'Fetching available languages from system...');
+            const response = await fetch('/api/get-available-languages');
+
+            if (response.ok) {
+                const languages = await response.json();
+                const languageArray = Array.isArray(languages) ? languages : (languages.languages || languages);
+                setAvailableLanguages(languageArray);
+                setSelectedLanguages([language]);
+                addLog('success', `Found ${languageArray.length} available languages`, languageArray.join(', '));
+            } else {
+                throw new Error('API request failed');
+            }
+        } catch (error) {
+            addLog('warning', 'API failed, using default languages', getErrorMessage(error));
+            const defaultLanguages = ['English', 'Español', '中文', 'العربية', 'हिन्दी', '日本語', '한국어'];
+            setAvailableLanguages(defaultLanguages);
+            setSelectedLanguages([language]);
+            addLog('info', 'Using default language list', defaultLanguages.join(', '));
+        }
+    }, [language]);
+
+    // Add log entry
+    const addLog = useCallback((type: ProgressLog['type'], message: string, details?: string) => {
+        setLogs(prev => [
+            {
+                id: logId,
+                timestamp: new Date(),
+                type,
+                message,
+                details
+            },
+            ...prev.slice(0, 499)
+        ]);
+        setLogId(prev => prev + 1);
+    }, [logId]);
+
+    // Fetch all roles
+    const fetchRoles = useCallback(async (): Promise<RoleData[]> => {
+        try {
+            addLog('info', `Fetching roles from ${DEPARTMENT} department...`);
+            const response = await fetch('/api/get-roles', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ department: DEPARTMENT }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch roles.');
+            }
+
+            const data: { roles: string[] } = await response.json();
+            const allRoles = Array.isArray(data.roles) ? data.roles : [];
+
+            const filteredRoles = allRoles.filter(roleName =>
+                roleName !== "User Research Collector" &&
+                roleName !== "Favorite Task"
+            );
+
+            const roleDataArray: RoleData[] = filteredRoles.map(roleName => ({
+                department: DEPARTMENT,
+                role: roleName
+            }));
+
+            setRoles(roleDataArray);
+            addLog('success', `Found ${roleDataArray.length} roles to process`, roleDataArray.map(r => r.role).join(', '));
+            return roleDataArray;
+        } catch (error) {
+            addLog('error', 'Failed to fetch roles', getErrorMessage(error));
+            throw error;
+        }
+    }, []);
+
+    // Fetch tasks
+    const fetchTasks = useCallback(async (department: string, role: string, isProduction: boolean = false, isFirstRole: boolean = false): Promise<string[]> => {
+        try {
+            const response = await fetch("/api/get-tasks", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ department, role }),
+            });
+
+            if (!response.ok) throw new Error("Failed to fetch tasks");
+
+            const tasksData = await response.json();
+            let tasks = tasksData.tasks || [];
+
+            if (!isProduction && isFirstRole && tasks.length > NON_PROD_TASK_LIMIT) {
+                addLog('warning', `Non-production mode: Limiting tasks from ${tasks.length} to ${NON_PROD_TASK_LIMIT} for FIRST role ${role}`);
+                tasks = tasks.slice(0, NON_PROD_TASK_LIMIT);
+            } else if (!isProduction && !isFirstRole) {
+                addLog('info', `Non-production mode: Skipping all tasks for role ${role} (only processing first role)`);
+                tasks = [];
+            }
+
+            return tasks;
+        } catch (error) {
+            addLog('error', `Failed to fetch tasks for ${role}`, getErrorMessage(error));
+            return [];
+        }
+    }, []);
+
+    // Check if description exists
+    const checkDescriptionExists = useCallback(async (endpoint: string, params: any): Promise<boolean> => {
+        try {
+            const response = await fetch(endpoint, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(params),
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                return data.description &&
+                    !data.description.includes("Error fetching") &&
+                    !data.description.includes("Please wait") &&
+                    !data.description.includes("being processed") &&
+                    data.description.trim().length > 0;
+            }
+            return false;
+        } catch (error) {
+            return false;
+        }
+    }, []);
+
+    // Generate role description
+    const generateRoleDescription = useCallback(async (role: RoleData, targetLanguage: string): Promise<boolean> => {
+        try {
+            setStats(prev => ({ ...prev, currentOperation: `Generating role description: ${role.role} (${targetLanguage})` }));
+
+            if (!forceRegenerate) {
+                const exists = await checkDescriptionExists("/api/get_role_description", {
+                    department: role.department,
+                    role: role.role,
+                    language: targetLanguage
+                });
+
+                if (exists) {
+                    addLog('info', `Role description already exists: ${role.role} (${targetLanguage})`);
+                    return true;
+                }
+            }
+
+            addLog('info', `Generating role description: ${role.role} (${targetLanguage})`);
+            const response = await fetch("/api/get_role_description", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    department: role.department,
+                    role: role.role,
+                    language: targetLanguage
+                }),
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                if (data.description && !data.description.includes("Error") && !data.description.includes("being processed")) {
+                    addLog('success', `✅ Generated role description: ${role.role} (${targetLanguage})`);
+                    return true;
+                } else {
+                    addLog('warning', `⚠️ Incomplete role description: ${role.role} (${targetLanguage})`, data.description || data.message);
+                    return false;
+                }
+            } else {
+                addLog('error', `❌ API error for role ${role.role} (${targetLanguage}): ${response.status}`);
+                return false;
+            }
+        } catch (error) {
+            addLog('error', `❌ Error generating role description: ${role.role} (${targetLanguage})`, getErrorMessage(error));
+            return false;
+        }
+    }, [forceRegenerate, checkDescriptionExists]);
+
+    // Generate task description
+    const generateTaskDescription = useCallback(async (role: RoleData, task: string, targetLanguage: string): Promise<boolean> => {
+        try {
+            setStats(prev => ({ ...prev, currentOperation: `Generating task description: ${task} (${role.role}, ${targetLanguage})` }));
+
+            if (!forceRegenerate) {
+                const exists = await checkDescriptionExists("/api/get_task_description", {
+                    department: role.department,
+                    role: role.role,
+                    task: task,
+                    language: targetLanguage
+                });
+
+                if (exists) {
+                    addLog('info', `Task description already exists: ${task} (${targetLanguage})`);
+                    return true;
+                }
+            }
+
+            addLog('info', `Generating task description: ${task} (${role.role}, ${targetLanguage})`);
+            const response = await fetch("/api/get_task_description", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    department: role.department,
+                    role: role.role,
+                    task: task,
+                    language: targetLanguage
+                }),
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                if (data.description && !data.description.includes("Error") && !data.description.includes("being processed")) {
+                    addLog('success', `✅ Generated task description: ${task} (${targetLanguage})`);
+                    return true;
+                } else {
+                    addLog('warning', `⚠️ Incomplete task description: ${task} (${targetLanguage})`, data.description || data.message);
+                    return false;
+                }
+            } else {
+                addLog('error', `❌ API error for task ${task} (${targetLanguage}): ${response.status}`);
+                return false;
+            }
+        } catch (error) {
+            addLog('error', `❌ Error generating task description: ${task} (${targetLanguage})`, getErrorMessage(error));
+            return false;
+        }
+    }, [forceRegenerate, checkDescriptionExists]);
+
+    // NEW: Generate role summary (concise description)
+    const generateRoleSummary = useCallback(async (role: RoleData): Promise<boolean> => {
+        try {
+            setStats(prev => ({ ...prev, currentOperation: `Generating role summary: ${role.role}` }));
+
+            addLog('info', `Generating concise role summary: ${role.role}`);
+            const response = await fetch("/api/get_role_summary", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    department: role.department,
+                    role: role.role,
+                    forceRegenerate: true // Always use overwrite option
+                }),
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                if (data.summary && !data.summary.includes("Error") && !data.summary.includes("being processed")) {
+                    addLog('success', `✅ Generated role summary: ${role.role}`, `Summary: "${data.summary}"`);
+                    return true;
+                } else {
+                    addLog('warning', `⚠️ Incomplete role summary: ${role.role}`, data.summary || data.message);
+                    return false;
+                }
+            } else {
+                addLog('error', `❌ API error for role summary ${role.role}: ${response.status}`);
+                return false;
+            }
+        } catch (error) {
+            addLog('error', `❌ Error generating role summary: ${role.role}`, getErrorMessage(error));
+            return false;
+        }
+    }, []);
+
+    // Calculate estimated completion time
+    const calculateEstimatedCompletion = useCallback((totalDescriptions: number, processed: number, startTime: Date): Date | null => {
+        if (processed === 0) return null;
+        const elapsed = Date.now() - startTime.getTime();
+        const avgTimePerDescription = elapsed / processed;
+        const remaining = totalDescriptions - processed;
+        const estimatedRemainingTime = remaining * avgTimePerDescription;
+        return new Date(Date.now() + estimatedRemainingTime);
+    }, []);
+
+    // Main population function for descriptions
+    const populateAllDescriptions = useCallback(async () => {
+        if (stats.isRunning) return;
+
+        const startTime = new Date();
+        setStats(prev => ({
+            ...prev,
+            isRunning: true,
+            processedDescriptions: 0,
+            failedDescriptions: 0,
+            startTime,
+            currentOperation: 'Initializing...',
+            isProductionMode
+        }));
+
+        if (isProductionMode) {
+            addLog('success', '🚀 Starting PRODUCTION mode - processing ALL roles and ALL tasks...');
+        } else {
+            addLog('warning', `🧪 Starting NON-PRODUCTION mode - processing FIRST role only with max ${NON_PROD_TASK_LIMIT} tasks...`);
+        }
+
+        addLog('info', `Configuration: Production: ${isProductionMode}, Batch size: ${batchSize}, Delay: ${delayBetweenRequests}ms, Force regenerate: ${forceRegenerate}`);
+
+        try {
+            const rolesList = await fetchRoles();
+            let totalTasks = 0;
+            const roleTaskMap = new Map<string, string[]>();
+
+            for (let i = 0; i < rolesList.length; i++) {
+                const role = rolesList[i];
+                const isFirstRole = i === 0;
+                const tasks = await fetchTasks(role.department, role.role, isProductionMode, isFirstRole);
+                roleTaskMap.set(role.role, tasks);
+                totalTasks += tasks.length;
+
+                if (isProductionMode) {
+                    addLog('info', `Role ${role.role}: ${tasks.length} tasks (all tasks)`);
+                } else {
+                    if (isFirstRole) {
+                        addLog('info', `Role ${role.role}: ${tasks.length} tasks (first role, limited to ${NON_PROD_TASK_LIMIT})`);
+                    } else {
+                        addLog('info', `Role ${role.role}: ${tasks.length} tasks (skipped in dev mode)`);
+                    }
+                }
+            }
+
+            const totalRoleDescriptions = rolesList.length * selectedLanguages.length;
+            const totalTaskDescriptions = totalTasks * selectedLanguages.length;
+            const totalDescriptions = totalRoleDescriptions + totalTaskDescriptions;
+
+            setStats(prev => ({
+                ...prev,
+                totalRoles: rolesList.length,
+                totalTasks: totalTasks,
+                totalDescriptions
+            }));
+
+            addLog('info', `📊 Work calculation (${isProductionMode ? 'PRODUCTION' : 'NON-PRODUCTION'} mode):`);
+            addLog('info', ` • ${rolesList.length} roles × ${selectedLanguages.length} languages = ${totalRoleDescriptions} role descriptions`);
+            addLog('info', ` • ${totalTasks} tasks × ${selectedLanguages.length} languages = ${totalTaskDescriptions} task descriptions`);
+            addLog('info', ` • Grand total: ${totalDescriptions} descriptions to process`);
+
+            if (!isProductionMode) {
+                addLog('warning', `⚠️ NON-PRODUCTION MODE: Only processing FIRST role with max ${NON_PROD_TASK_LIMIT} tasks`);
+            }
+
+            let processedDescriptions = 0;
+            let failedDescriptions = 0;
+            const batch: Promise<boolean>[] = [];
+
+            // Process role descriptions
+            addLog('info', '📝 Starting role description generation...');
+            for (const role of rolesList) {
+                for (const targetLanguage of selectedLanguages) {
+                    batch.push(generateRoleDescription(role, targetLanguage));
+
+                    if (batch.length >= batchSize) {
+                        const results = await Promise.all(batch);
+                        processedDescriptions += results.filter(r => r).length;
+                        failedDescriptions += results.filter(r => !r).length;
+
+                        setStats(prev => ({
+                            ...prev,
+                            processedDescriptions,
+                            failedDescriptions,
+                            estimatedCompletion: calculateEstimatedCompletion(totalDescriptions, processedDescriptions, startTime)
+                        }));
+
+                        batch.length = 0;
+                        await new Promise(resolve => setTimeout(resolve, delayBetweenRequests));
+                    }
+                }
+            }
+
+            // Process remaining role descriptions
+            if (batch.length > 0) {
+                const results = await Promise.all(batch);
+                processedDescriptions += results.filter(r => r).length;
+                failedDescriptions += results.filter(r => !r).length;
+                batch.length = 0;
+            }
+
+            addLog('success', `✅ Role descriptions completed: ${processedDescriptions - failedDescriptions} successful, ${failedDescriptions} failed`);
+
+            // Process task descriptions
+            addLog('info', '📋 Starting task description generation...');
+            for (let i = 0; i < rolesList.length; i++) {
+                const role = rolesList[i];
+                const tasks = roleTaskMap.get(role.role) || [];
+                const isFirstRole = i === 0;
+
+                if (isProductionMode) {
+                    addLog('info', `Processing ALL ${tasks.length} tasks for role: ${role.role}`);
+                } else {
+                    if (isFirstRole) {
+                        addLog('info', `Processing ${tasks.length} tasks for FIRST role: ${role.role} (max ${NON_PROD_TASK_LIMIT})`);
+                    } else {
+                        addLog('info', `Skipping role: ${role.role} (dev mode - first role only)`);
+                        continue;
+                    }
+                }
+
+                for (const task of tasks) {
+                    for (const targetLanguage of selectedLanguages) {
+                        batch.push(generateTaskDescription(role, task, targetLanguage));
+
+                        if (batch.length >= batchSize) {
+                            const results = await Promise.all(batch);
+                            processedDescriptions += results.filter(r => r).length;
+                            failedDescriptions += results.filter(r => !r).length;
+
+                            setStats(prev => ({
+                                ...prev,
+                                processedDescriptions,
+                                failedDescriptions,
+                                estimatedCompletion: calculateEstimatedCompletion(totalDescriptions, processedDescriptions, startTime)
+                            }));
+
+                            batch.length = 0;
+                            await new Promise(resolve => setTimeout(resolve, delayBetweenRequests));
+                        }
+                    }
+                }
+            }
+
+            // Process remaining task descriptions
+            if (batch.length > 0) {
+                const results = await Promise.all(batch);
+                processedDescriptions += results.filter(r => r).length;
+                failedDescriptions += results.filter(r => !r).length;
+            }
+
+            const endTime = new Date();
+            const totalTime = endTime.getTime() - startTime.getTime();
+            const totalTimeMinutes = Math.round(totalTime / 60000);
+
+            addLog('success', '🎉 Description population completed!');
+            addLog('info', `📊 Final Statistics (${isProductionMode ? 'PRODUCTION' : 'NON-PRODUCTION'} mode):`);
+            addLog('info', ` • Total processed: ${processedDescriptions + failedDescriptions}`);
+            addLog('info', ` • Successful: ${processedDescriptions}`);
+            addLog('info', ` • Failed: ${failedDescriptions}`);
+            addLog('info', ` • Processing time: ${totalTimeMinutes} minutes`);
+
+            if (!isProductionMode) {
+                addLog('warning', `⚠️ NON-PRODUCTION MODE: Limited processing completed (first role only). Use production mode for full processing.`);
+            }
+
+            toast.success(await getLocalizedString(`Population completed! Mode: ${isProductionMode ? 'PRODUCTION' : 'NON-PRODUCTION'}. Processed: ${processedDescriptions} descriptions successfully. Failed: ${failedDescriptions}. Time: ${totalTimeMinutes} minutes.`, language));
+
+        } catch (error) {
+            addLog('error', '❌ Fatal error during population', getErrorMessage(error));
+            toast.error(await getLocalizedString('Population failed with fatal error', language));
+        } finally {
+            setStats(prev => ({
+                ...prev,
+                isRunning: false,
+                currentOperation: 'Completed',
+                estimatedCompletion: null
+            }));
+        }
+    }, [
+        stats.isRunning, selectedLanguages, forceRegenerate, batchSize, delayBetweenRequests, isProductionMode,
+        fetchRoles, fetchTasks, generateRoleDescription, generateTaskDescription,
+        calculateEstimatedCompletion, language
+    ]);
+
+    // NEW: Populate all role summaries function
+    const populateAllRoleSummaries = useCallback(async () => {
+        if (stats.isSummaryRunning) return;
+
+        const startTime = new Date();
+        setStats(prev => ({
+            ...prev,
+            isSummaryRunning: true,
+            processedSummaries: 0,
+            failedSummaries: 0,
+            startTime,
+            currentOperation: 'Initializing role summaries...'
+        }));
+
+        addLog('success', '🚀 Starting role summary generation with OVERWRITE enabled...');
+
+        try {
+            const rolesList = await fetchRoles();
+
+            setStats(prev => ({
+                ...prev,
+                totalSummaries: rolesList.length
+            }));
+
+            addLog('info', `📊 Summary generation: ${rolesList.length} roles to process`);
+            addLog('info', `🔄 All existing summaries will be OVERWRITTEN`);
+
+            let processedSummaries = 0;
+            let failedSummaries = 0;
+            const batch: Promise<boolean>[] = [];
+
+            // Process role summaries
+            addLog('info', '📝 Starting role summary generation...');
+            for (const role of rolesList) {
+                batch.push(generateRoleSummary(role));
+
+                if (batch.length >= batchSize) {
+                    const results = await Promise.all(batch);
+                    processedSummaries += results.filter(r => r).length;
+                    failedSummaries += results.filter(r => !r).length;
+
+                    setStats(prev => ({
+                        ...prev,
+                        processedSummaries,
+                        failedSummaries,
+                        estimatedCompletion: calculateEstimatedCompletion(rolesList.length, processedSummaries, startTime)
+                    }));
+
+                    batch.length = 0;
+                    await new Promise(resolve => setTimeout(resolve, delayBetweenRequests));
+                }
+            }
+
+            // Process remaining summaries
+            if (batch.length > 0) {
+                const results = await Promise.all(batch);
+                processedSummaries += results.filter(r => r).length;
+                failedSummaries += results.filter(r => !r).length;
+            }
+
+            const endTime = new Date();
+            const totalTime = endTime.getTime() - startTime.getTime();
+            const totalTimeMinutes = Math.round(totalTime / 60000);
+
+            addLog('success', '🎉 Role summary population completed!');
+            addLog('info', `📊 Final Summary Statistics:`);
+            addLog('info', ` • Total processed: ${processedSummaries + failedSummaries}`);
+            addLog('info', ` • Successful: ${processedSummaries}`);
+            addLog('info', ` • Failed: ${failedSummaries}`);
+            addLog('info', ` • Processing time: ${totalTimeMinutes} minutes`);
+
+            toast.success(await getLocalizedString(`Role summaries completed! Processed: ${processedSummaries} summaries successfully. Failed: ${failedSummaries}. Time: ${totalTimeMinutes} minutes.`, language));
+
+        } catch (error) {
+            addLog('error', '❌ Fatal error during summary population', getErrorMessage(error));
+            toast.error(await getLocalizedString('Summary population failed with fatal error', language));
+        } finally {
+            setStats(prev => ({
+                ...prev,
+                isSummaryRunning: false,
+                currentOperation: 'Completed',
+                estimatedCompletion: null
+            }));
+        }
+    }, [
+        stats.isSummaryRunning, batchSize, delayBetweenRequests,
+        fetchRoles, generateRoleSummary, calculateEstimatedCompletion, language
+    ]);
+
+    // Initialize on component mount
+    useEffect(() => {
+        fetchAvailableLanguages();
+    }, [fetchAvailableLanguages]);
+
+    // Handle language selection
+    const handleLanguageToggle = (targetLanguage: string) => {
+        setSelectedLanguages(prev =>
+            prev.includes(targetLanguage)
+                ? prev.filter(l => l !== targetLanguage)
+                : [...prev, targetLanguage]
+        );
+    };
+
+    // Handle select all languages
+    const handleSelectAllLanguages = () => {
+        setSelectedLanguages([...availableLanguages]);
+    };
+
+    // Handle deselect all languages
+    const handleDeselectAllLanguages = () => {
+        setSelectedLanguages([]);
+    };
+
+    return (
+        <div style={{
+            padding: '2rem',
+            backgroundColor: '#f8f9fa',
+            minHeight: '100vh',
+            fontFamily: 'Arial, sans-serif'
+        }}>
+            <div style={{
+                maxWidth: '1200px',
+                margin: '0 auto',
+                backgroundColor: 'white',
+                borderRadius: '12px',
+                boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                overflow: 'hidden'
+            }}>
+                {/* Header */}
+                <div style={{
+                    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                    color: 'white',
+                    padding: '2rem',
+                    textAlign: 'center'
+                }}>
+                    <h1 style={{ margin: 0, fontSize: '2rem', fontWeight: 'bold' }}>
+                        <LocalizedText name="Admin Description Populator" />
+                    </h1>
+                    <p style={{ margin: '0.5rem 0 0 0', opacity: 0.9, fontSize: '1.1rem' }}>
+                        <LocalizedText name="Generate role descriptions, task descriptions, and concise role summaries" />
+                    </p>
+                </div>
+
+                {/* Configuration Panel */}
+                <div style={{
+                    padding: '2rem',
+                    borderBottom: '2px solid #e9ecef'
+                }}>
+                    <h2 style={{ marginTop: 0, color: '#495057', fontSize: '1.5rem' }}>
+                        <LocalizedText name="Configuration" />
+                    </h2>
+
+                    {/* Production Mode Checkbox */}
+                    <div style={{
+                        backgroundColor: '#f8f9fa',
+                        padding: '1rem',
+                        borderRadius: '8px',
+                        marginBottom: '1.5rem',
+                        border: '2px solid #dee2e6'
+                    }}>
+                        <label style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.75rem',
+                            fontSize: '1.1rem',
+                            fontWeight: 'bold',
+                            cursor: 'pointer',
+                            color: isProductionMode ? '#dc3545' : '#28a745'
+                        }}>
+                            <input
+                                type="checkbox"
+                                checked={isProductionMode}
+                                onChange={(e) => setIsProductionMode(e.target.checked)}
+                                disabled={stats.isRunning || stats.isSummaryRunning}
+                                style={{
+                                    width: "20px",
+                                    height: "20px",
+                                    cursor: "pointer"
+                                }}
+                            />
+                            <span>
+                                {isProductionMode ? '🚀 Production Mode' : '🧪 Development Mode'}
+                            </span>
+                        </label>
+                        <p style={{
+                            margin: '0.5rem 0 0 2.75rem',
+                            fontSize: '0.9rem',
+                            color: '#6c757d',
+                            lineHeight: '1.4'
+                        }}>
+                            {isProductionMode
+                                ? <LocalizedText name="Production mode processes ALL roles and ALL tasks for ALL languages" />
+                                : <LocalizedText name="Development mode processes FIRST role only with limited tasks for testing" />
+                            }
+                        </p>
+                    </div>
+
+                    {/* Language Selection */}
+                    <div style={{ marginBottom: '1.5rem' }}>
+                        <div style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            marginBottom: '0.75rem'
+                        }}>
+                            <h3 style={{
+                                margin: 0,
+                                color: '#495057',
+                                fontSize: '1.2rem'
+                            }}>
+                                <LocalizedText name="Languages" /> ({selectedLanguages.length}/{availableLanguages.length})
+                            </h3>
+                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                <button
+                                    onClick={handleSelectAllLanguages}
+                                    disabled={stats.isRunning || stats.isSummaryRunning}
+                                    style={{
+                                        padding: '0.5rem 1rem',
+                                        backgroundColor: '#28a745',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: 'pointer',
+                                        fontSize: '0.9rem'
+                                    }}
+                                >
+                                    <LocalizedText name="Select All" />
+                                </button>
+                                <button
+                                    onClick={handleDeselectAllLanguages}
+                                    disabled={stats.isRunning || stats.isSummaryRunning}
+                                    style={{
+                                        padding: '0.5rem 1rem',
+                                        backgroundColor: '#dc3545',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: 'pointer',
+                                        fontSize: '0.9rem'
+                                    }}
+                                >
+                                    <LocalizedText name="Deselect All" />
+                                </button>
+                            </div>
+                        </div>
+                        <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+                            gap: '0.5rem',
+                            padding: '1rem',
+                            backgroundColor: '#f8f9fa',
+                            borderRadius: '8px',
+                            border: '1px solid #dee2e6'
+                        }}>
+                            {availableLanguages.map(availableLanguage => (
+                                <label key={availableLanguage} style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.5rem',
+                                    cursor: 'pointer',
+                                    fontSize: '0.95rem',
+                                    color: '#495057'
+                                }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={selectedLanguages.includes(availableLanguage)}
+                                        onChange={() => handleLanguageToggle(availableLanguage)}
+                                        disabled={stats.isRunning || stats.isSummaryRunning}
+                                        style={{ cursor: 'pointer' }}
+                                    />
+                                    <span>{availableLanguage}</span>
+                                </label>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Advanced Options */}
+                    <div style={{ marginBottom: '1.5rem' }}>
+                        <button
+                            onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
+                            disabled={stats.isRunning || stats.isSummaryRunning}
+                            style={{
+                                backgroundColor: 'transparent',
+                                border: '1px solid #6c757d',
+                                padding: '0.5rem 1rem',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                marginBottom: '1rem',
+                                fontSize: '1rem',
+                                color: '#495057'
+                            }}
+                        >
+                            <LocalizedText name={showAdvancedOptions ? "Hide Advanced Options" : "Show Advanced Options"} />
+                        </button>
+
+                        {showAdvancedOptions && (
+                            <div style={{
+                                backgroundColor: '#f8f9fa',
+                                padding: '1rem',
+                                borderRadius: '8px',
+                                border: '1px solid #dee2e6'
+                            }}>
+                                <div style={{ marginBottom: '1rem' }}>
+                                    <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', color: '#495057' }}>
+                                        <LocalizedText name="Batch Size" />
+                                    </label>
+                                    <input
+                                        type="number"
+                                        value={batchSize}
+                                        onChange={(e) => setBatchSize(parseInt(e.target.value))}
+                                        disabled={stats.isRunning || stats.isSummaryRunning}
+                                        min="1"
+                                        max="20"
+                                        style={{
+                                            width: '100%',
+                                            padding: '0.5rem',
+                                            border: '1px solid #ddd',
+                                            borderRadius: '4px',
+                                            fontSize: '1rem'
+                                        }}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', color: '#495057' }}>
+                                        <LocalizedText name="Delay Between Requests (ms)" />
+                                    </label>
+                                    <input
+                                        type="number"
+                                        value={delayBetweenRequests}
+                                        onChange={(e) => setDelayBetweenRequests(parseInt(e.target.value))}
+                                        disabled={stats.isRunning || stats.isSummaryRunning}
+                                        min="100"
+                                        max="5000"
+                                        step="100"
+                                        style={{
+                                            width: '100%',
+                                            padding: '0.5rem',
+                                            border: '1px solid #ddd',
+                                            borderRadius: '4px',
+                                            fontSize: '1rem'
+                                        }}
+                                    />
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Force Regenerate Option */}
+                    <div style={{
+                        backgroundColor: '#fff3cd',
+                        padding: '1rem',
+                        borderRadius: '8px',
+                        border: '1px solid #ffeaa7',
+                        marginBottom: '1.5rem'
+                    }}>
+                        <label style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.75rem',
+                            fontSize: '1rem',
+                            fontWeight: 'bold',
+                            cursor: 'pointer',
+                            color: '#856404'
+                        }}>
+                            <input
+                                type="checkbox"
+                                checked={forceRegenerate}
+                                onChange={(e) => setForceRegenerate(e.target.checked)}
+                                disabled={stats.isRunning || stats.isSummaryRunning}
+                                style={{ cursor: 'pointer' }}
+                            />
+                            <LocalizedText name="Force Regenerate (Overwrite Existing)" />
+                        </label>
+                        <p style={{
+                            margin: '0.5rem 0 0 2.75rem',
+                            fontSize: '0.9rem',
+                            color: '#856404',
+                            lineHeight: '1.4'
+                        }}>
+                            <LocalizedText name="When enabled, all existing descriptions will be regenerated and overwritten" />
+                        </p>
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
+                        gap: '1rem',
+                        marginBottom: '1rem'
+                    }}>
+                        {/* Descriptions Button */}
+                        {stats.isRunning ? (
+                            <button
+                                disabled
+                                style={{
+                                    padding: '1rem 1.5rem',
+                                    backgroundColor: '#6c757d',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    cursor: 'not-allowed',
+                                    fontSize: '1.1rem',
+                                    fontWeight: 'bold'
+                                }}
+                            >
+                                <LocalizedText name="🔄 Processing Descriptions..." />
+                            </button>
+                        ) : (
+                            <button
+                                onClick={populateAllDescriptions}
+                                disabled={selectedLanguages.length === 0 || stats.isSummaryRunning}
+                                style={{
+                                    padding: '1rem 1.5rem',
+                                    backgroundColor: isProductionMode ? '#dc3545' : '#28a745',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    cursor: selectedLanguages.length === 0 || stats.isSummaryRunning ? 'not-allowed' : 'pointer',
+                                    fontSize: '1.1rem',
+                                    fontWeight: 'bold'
+                                }}
+                            >
+                                {isProductionMode ? (
+                                    <LocalizedText name="🚀 Start Production Population" />
+                                ) : (
+                                    <LocalizedText name="🧪 Start Development Population" />
+                                )}
+                            </button>
+                        )}
+
+                        {/* NEW: Role Summaries Button */}
+                        {stats.isSummaryRunning ? (
+                            <button
+                                disabled
+                                style={{
+                                    padding: '1rem 1.5rem',
+                                    backgroundColor: '#6c757d',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    cursor: 'not-allowed',
+                                    fontSize: '1.1rem',
+                                    fontWeight: 'bold'
+                                }}
+                            >
+                                <LocalizedText name="🔄 Generating Summaries..." />
+                            </button>
+                        ) : (
+                            <button
+                                onClick={populateAllRoleSummaries}
+                                disabled={stats.isRunning}
+                                style={{
+                                    padding: '1rem 1.5rem',
+                                    backgroundColor: '#17a2b8',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    cursor: stats.isRunning ? 'not-allowed' : 'pointer',
+                                    fontSize: '1.1rem',
+                                    fontWeight: 'bold'
+                                }}
+                            >
+                                <LocalizedText name="📝 Generate Role Summaries (Overwrite)" />
+                            </button>
+                        )}
+                    </div>
+
+                    {/* Clear Logs Button */}
+                    <button
+                        onClick={() => setLogs([])}
+                        disabled={stats.isRunning || stats.isSummaryRunning}
+                        style={{
+                            padding: '1rem 1.5rem',
+                            backgroundColor: '#dc3545',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '8px',
+                            cursor: stats.isRunning || stats.isSummaryRunning ? 'not-allowed' : 'pointer',
+                            fontSize: '1rem',
+                            fontWeight: 'bold'
+                        }}
+                    >
+                        <LocalizedText name="🗑️ Clear Logs" />
+                    </button>
+
+                    {selectedLanguages.length === 0 && (
+                        <div style={{
+                            backgroundColor: '#f8d7da',
+                            color: '#721c24',
+                            padding: '1rem',
+                            borderRadius: '8px',
+                            marginTop: '1rem',
+                            border: '1px solid #f5c6cb',
+                            textAlign: 'center',
+                            fontSize: '1rem'
+                        }}>
+                            <LocalizedText name="⚠️ Please select at least one language to continue" />
+                        </div>
+                    )}
+                </div>
+
+                {/* Progress Panel */}
+                <div style={{
+                    padding: '2rem',
+                    borderBottom: '2px solid #e9ecef',
+                    backgroundColor: '#f8f9fa'
+                }}>
+                    <h2 style={{ marginTop: 0, color: '#495057', fontSize: '1.5rem' }}>
+                        <LocalizedText name="Progress Statistics" />
+                    </h2>
+
+                    {/* Production Mode Status */}
+                    {(stats.isRunning || stats.isSummaryRunning) && (
+                        <div style={{
+                            backgroundColor: stats.isProductionMode ? '#f8d7da' : '#d1ecf1',
+                            color: stats.isProductionMode ? '#721c24' : '#0c5460',
+                            padding: '1rem',
+                            borderRadius: '8px',
+                            marginBottom: '1.5rem',
+                            border: `1px solid ${stats.isProductionMode ? '#f5c6cb' : '#bee5eb'}`,
+                            textAlign: 'center',
+                            fontSize: '1.1rem',
+                            fontWeight: 'bold'
+                        }}>
+                            {stats.isProductionMode
+                                ? <LocalizedText name="🚀 PRODUCTION MODE ACTIVE - Processing ALL data" />
+                                : <LocalizedText name="🧪 DEVELOPMENT MODE ACTIVE - Limited processing for testing" />
+                            }
+                        </div>
+                    )}
+
+                    {/* Statistics Grid */}
+                    <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                        gap: '1rem',
+                        marginBottom: '1.5rem'
+                    }}>
+                        <div style={{
+                            backgroundColor: 'white',
+                            padding: '1rem',
+                            borderRadius: '8px',
+                            textAlign: 'center',
+                            border: '1px solid #dee2e6'
+                        }}>
+                            <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#28a745' }}>
+                                {stats.processedDescriptions}
+                            </div>
+                            <div style={{ color: '#6c757d', fontSize: '0.9rem', marginTop: '0.25rem' }}>
+                                <LocalizedText name="Descriptions Processed" />
+                            </div>
+                        </div>
+
+                        <div style={{
+                            backgroundColor: 'white',
+                            padding: '1rem',
+                            borderRadius: '8px',
+                            textAlign: 'center',
+                            border: '1px solid #dee2e6'
+                        }}>
+                            <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#dc3545' }}>
+                                {stats.failedDescriptions}
+                            </div>
+                            <div style={{ color: '#6c757d', fontSize: '0.9rem', marginTop: '0.25rem' }}>
+                                <LocalizedText name="Descriptions Failed" />
+                            </div>
+                        </div>
+
+                        <div style={{
+                            backgroundColor: 'white',
+                            padding: '1rem',
+                            borderRadius: '8px',
+                            textAlign: 'center',
+                            border: '1px solid #dee2e6'
+                        }}>
+                            <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#17a2b8' }}>
+                                {stats.processedSummaries}
+                            </div>
+                            <div style={{ color: '#6c757d', fontSize: '0.9rem', marginTop: '0.25rem' }}>
+                                <LocalizedText name="Summaries Processed" />
+                            </div>
+                        </div>
+
+                        <div style={{
+                            backgroundColor: 'white',
+                            padding: '1rem',
+                            borderRadius: '8px',
+                            textAlign: 'center',
+                            border: '1px solid #dee2e6'
+                        }}>
+                            <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#ffc107' }}>
+                                {stats.totalDescriptions}
+                            </div>
+                            <div style={{ color: '#6c757d', fontSize: '0.9rem', marginTop: '0.25rem' }}>
+                                <LocalizedText name="Total Descriptions" />
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Progress Percentage */}
+                    <div style={{
+                        backgroundColor: 'white',
+                        padding: '1rem',
+                        borderRadius: '8px',
+                        textAlign: 'center',
+                        border: '1px solid #dee2e6',
+                        marginBottom: '1.5rem'
+                    }}>
+                        <div style={{ fontSize: '3rem', fontWeight: 'bold', color: '#007bff' }}>
+                            {stats.totalDescriptions > 0 ? Math.round((stats.processedDescriptions + stats.failedDescriptions) / stats.totalDescriptions * 100) : 0}%
+                        </div>
+                        <div style={{ color: '#6c757d', fontSize: '1rem', marginTop: '0.25rem' }}>
+                            <LocalizedText name="Completion Progress" />
+                        </div>
+                    </div>
+
+                    {/* Current Operation Status */}
+                    {(stats.isRunning || stats.isSummaryRunning) && (
+                        <div style={{
+                            backgroundColor: 'white',
+                            padding: '1.5rem',
+                            borderRadius: '8px',
+                            border: '1px solid #dee2e6'
+                        }}>
+                            <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#495057', marginBottom: '1rem' }}>
+                                <LocalizedText name="Current Operation" />
+                            </div>
+                            <div style={{ fontSize: '1rem', color: '#6c757d', marginBottom: '1rem', padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '4px' }}>
+                                {stats.currentOperation}
+                            </div>
+
+                            {stats.estimatedCompletion && (
+                                <div style={{ fontSize: '0.95rem', color: '#28a745', marginBottom: '0.5rem' }}>
+                                    <strong><LocalizedText name="Estimated Completion" />:</strong> {stats.estimatedCompletion.toLocaleTimeString()}
+                                </div>
+                            )}
+
+                            {stats.startTime && (
+                                <div style={{ fontSize: '0.95rem', color: '#17a2b8' }}>
+                                    <strong><LocalizedText name="Running Time" />:</strong> {Math.round((Date.now() - stats.startTime.getTime()) / 60000)} minutes
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Progress Bar */}
+                    {stats.totalDescriptions > 0 && (
+                        <div style={{
+                            backgroundColor: 'white',
+                            padding: '1rem',
+                            borderRadius: '8px',
+                            border: '1px solid #dee2e6',
+                            marginTop: '1rem'
+                        }}>
+                            <div style={{ fontSize: '1rem', fontWeight: 'bold', color: '#495057', marginBottom: '0.5rem' }}>
+                                <LocalizedText name="Progress" />: {stats.processedDescriptions + stats.failedDescriptions}/{stats.totalDescriptions}
+                            </div>
+                            <div style={{
+                                width: '100%',
+                                height: '30px',
+                                backgroundColor: '#e9ecef',
+                                borderRadius: '15px',
+                                overflow: 'hidden'
+                            }}>
+                                <div style={{
+                                    width: `${stats.totalDescriptions > 0 ? ((stats.processedDescriptions + stats.failedDescriptions) / stats.totalDescriptions) * 100 : 0}%`,
+                                    backgroundColor: stats.failedDescriptions > 0 ? '#ffc107' : '#28a745',
+                                    height: '100%',
+                                    transition: 'width 0.3s ease',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    color: 'white',
+                                    fontSize: '12px',
+                                    fontWeight: 'bold'
+                                }}>
+                                    {stats.totalDescriptions > 0 ? Math.round(((stats.processedDescriptions + stats.failedDescriptions) / stats.totalDescriptions) * 100) : 0}%
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* Logs Panel */}
+                <div style={{ padding: '2rem' }}>
+                    <div style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        marginBottom: '1rem'
+                    }}>
+                        <h2 style={{ margin: 0, color: '#495057', fontSize: '1.5rem' }}>
+                            <LocalizedText name="Activity Logs" />
+                        </h2>
+                        <span style={{ fontSize: '0.9rem', color: '#6c757d' }}>
+                            {logs.length} entries (last 500 shown)
+                        </span>
+                    </div>
+
+                    <div style={{
+                        backgroundColor: '#f8f9fa',
+                        borderRadius: '8px',
+                        border: '1px solid #dee2e6',
+                        maxHeight: '500px',
+                        overflowY: 'auto'
+                    }}>
+                        {logs.length === 0 ? (
+                            <div style={{
+                                padding: '2rem',
+                                textAlign: 'center',
+                                color: '#6c757d',
+                                fontSize: '1.1rem'
+                            }}>
+                                <LocalizedText name="No activity logs yet. Start a population process to see logs here." />
+                            </div>
+                        ) : (
+                            <div style={{ padding: '1rem' }}>
+                                {logs.map(log => (
+                                    <div
+                                        key={log.id}
+                                        style={{
+                                            padding: '0.75rem 1rem',
+                                            marginBottom: '0.5rem',
+                                            borderRadius: '6px',
+                                            backgroundColor: 'white',
+                                            border: '1px solid #dee2e6',
+                                            fontSize: '0.9rem',
+                                            lineHeight: '1.4'
+                                        }}
+                                    >
+                                        <div style={{
+                                            display: 'flex',
+                                            justifyContent: 'space-between',
+                                            alignItems: 'flex-start',
+                                            marginBottom: '0.25rem'
+                                        }}>
+                                            <span style={{
+                                                fontWeight: 'bold',
+                                                color: log.type === 'error' ? '#dc3545' :
+                                                    log.type === 'success' ? '#28a745' :
+                                                        log.type === 'warning' ? '#ffc107' :
+                                                            log.type === 'summary' ? '#17a2b8' :
+                                                                '#495057',
+                                                flex: 1
+                                            }}>
+                                                {log.message}
+                                            </span>
+                                            <span style={{
+                                                fontSize: '0.8rem',
+                                                color: '#6c757d',
+                                                marginLeft: '1rem',
+                                                flexShrink: 0
+                                            }}>
+                                                {log.timestamp.toLocaleTimeString()}
+                                            </span>
+                                        </div>
+                                        {log.details && (
+                                            <div style={{
+                                                fontSize: '0.85rem',
+                                                color: '#6c757d',
+                                                backgroundColor: '#f8f9fa',
+                                                padding: '0.5rem',
+                                                borderRadius: '4px',
+                                                marginTop: '0.5rem',
+                                                wordBreak: 'break-word'
+                                            }}>
+                                                {log.details}
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+export default AdminDescriptionPopulator;

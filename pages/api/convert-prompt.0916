@@ -1,0 +1,206 @@
+require('dotenv').config(); // Load environment variables
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+import HashUtil from '../../util/hashToFixedDigits';
+import createAssistant from '../../components/createAssistant';
+
+// Initialize KV Client
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+type Criterion = {
+    name: string;
+    description: string;
+};
+
+const parseJsonObject = (jsonString: string) => {
+    try {
+        console.log('Parsing JSON string:', jsonString); // Log the JSON string
+        return JSON.parse(jsonString);
+    } catch (e) {
+        console.error('JSON parsing error:', e, 'Invalid JSON:', jsonString);
+        return {};
+    }
+};
+
+const isValidJSON = (str: string) => {
+    try {
+        JSON.parse(str);
+        return true;
+    } catch {
+        return false;
+    }
+};
+
+const cleanPrompt = (prompt: string) => {
+    return prompt
+        .replace(/📌📌 .* 📌📌/g, '') // Remove newsletter subscription blocks
+        .replace(/aiforwork\.co/g, ''); // Remove unnecessary URLs
+};
+
+// Parse the prompt and extract relevant fields
+const parsePrompt = (prompt: string) => {
+    const cleanedPrompt = cleanPrompt(prompt);
+    const promptMatch = cleanedPrompt.match(/"prompt":"([^"]+)"/);
+    const roleMatch = cleanedPrompt.match(/"role":"([^"]+)"/);
+    const departmentMatch = cleanedPrompt.match(/"department":"([^"]+)"/);
+    const taskMatch = cleanedPrompt.match(/"task":"([^"]+)"/);
+    const taskDescriptionMatch = cleanedPrompt.match(/"task_description":"([^"]+)"/);
+    const keyReferencesMatch = cleanedPrompt.match(/"key_references":{([^}]+)}/s);
+    const criteriaMatch = cleanedPrompt.match(/"criteria":\s*({(?:[^{}]*|{(?:[^{}]*|{[^{}]*})*})*})/s);
+    const evaluationRubricMatch = cleanedPrompt.match(/"evaluationRubric":{([^}]+)}/s);
+
+    const newRules = {
+        rule_1: "Ask 5 relevant questions to gather the required details to create a personalized output that meets the user's goal. Wait for responses before proceeding.",
+        rule_2: "If the user asks to continue in another language, proceed by adjusting all content, including tables, to that language based on their input.",
+        rule_3: "Complete tasks step-by-step, ensuring all key success factors and goals are met. Strive for the optimal result in each attempt.",
+        rule_4: "Combine user input, key references, and best practices to craft the most effective content.",
+        rule_5: "End each task by providing feedback on the work, including suggestions for improvement.",
+        rule_6: `Display the evaluation table. Each evaluation must encompass the following elements, with all headers and content displayed in \${language}:
+            {criteria_header}
+            {rating_header} (out of 10 based on evaluationRubric)
+            {reasons_header}
+            {feedback_header}
+            Display the evaluation table in HTML format, strictly following the format below:
+            <table>
+              <thead>
+                <tr>
+                  <th>{criteria_header_\${language}}</th>
+                  <th>{rating_header_\${language}}</th>
+                  <th>{reasons_header_\${language}}</th>
+                  <th>{feedback_header_\${language}}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>{criteria_1_\${language}}</td>
+                  <td>{rating_1_\${language}}</td>
+                  <td>{reasons_1_\${language}}</td>
+                  <td>{feedback_1_\${language}}</td>
+                </tr>
+                <tr>
+                  <td>{criteria_2_\${language}}</td>
+                  <td>{rating_2_\${language}}</td>
+                  <td>{reasons_2_\${language}}</td>
+                  <td>{feedback_2_\${language}}</td>
+                </tr>
+              </tbody>
+            </table>`,
+        rule_7: "Use the evaluationRubric as a guide to rate work. Ensure all criteria are accurately assessed against the rubric.",
+        rule_8: `After evaluation, await user input and act accordingly:
+            - If input starts with "refine", check for additional input. If feedback is provided, use it to refine the work. Apply improvements and re-evaluate the refined work, then append a "CHANGE LOG 📝" summarizing updates.
+            - If input is "Evaluate", perform a more detailed evaluation, raising the standard of review.
+            - If input is "Personalize", gather more details from the user to tailor the task further, then re-evaluate and append updates to the "CHANGE LOG 📝".
+            - If input is "Focus Group", simulate feedback from a diverse group and implement improvements based on the feedback, followed by re-evaluation and documentation of changes.
+            - If input is "Expert Feedback", emulate an expert review process, implement expert-level improvements, and re-evaluate. Append a "CHANGE LOG 📝" with industry-specific updates.
+            - If input is "Creative", propose an innovative approach, implement it, and re-evaluate. Summarize the creative direction in the "CHANGE LOG 📝".
+            - If input is "Modify", suggest and implement changes in format, style, or length, then re-evaluate and document the changes.
+            - If input is "Auto Improve", analyze previous feedback to make comprehensive improvements for achieving a 10/10 score. Re-evaluate and append a "CHANGE LOG 📝" detailing the final refinements.`,
+        rule_9: "After each revision, append a 'Change Log 📝' summarizing all updates made.",
+        rule_10: "For focus group or expert reviews, create new versions of the work based on the feedback to improve evaluation scores."
+    };
+
+    const structuredPrompt = {
+        prompt: promptMatch ? promptMatch[1] : '',
+        role: roleMatch ? roleMatch[1] : '',
+        department: departmentMatch ? departmentMatch[1] : '',
+        task: taskMatch ? taskMatch[1] : '',
+        task_description: taskDescriptionMatch ? taskDescriptionMatch[1] : '',
+        rules: newRules,
+        key_references: keyReferencesMatch ? parseJsonObject(`{${keyReferencesMatch[1]}}`) : {},
+        criteria: criteriaMatch ? parseJsonObject(criteriaMatch[1]) : {},
+        evaluationRubric: evaluationRubricMatch ? parseJsonObject(`{${evaluationRubricMatch[1]}}`) : {}
+    };
+
+    return structuredPrompt;
+};
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    const { department, role, task, prompt } = req.body;
+
+    if (!prompt || !role || !task || !department) {
+        return res.status(400).json({ message: 'Department, Role, Task, and Prompt are required.' });
+    }
+
+    const structuredPrompt = parsePrompt(prompt);
+    const key = HashUtil.hashTo(`${role}${task}`);
+
+    const value = JSON.stringify({
+        ...structuredPrompt,
+        role,
+        department,
+        task,
+    }, null, 2);
+
+    const departmentRolesKey = `department:${department}:roles`;
+    const roleTasksKey = `department:${department}:role:${role}:tasks`;
+
+    const parseData = (data: any) => {
+        if (Array.isArray(data)) {
+            return data;
+        } else if (typeof data === 'string') {
+            try {
+                const parsed = JSON.parse(data);
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (e) {
+                console.error('Error parsing data:', e);
+                return [];
+            }
+        } else if (data == null) {
+            return [];
+        } else {
+            return [];
+        }
+    };
+
+    try {
+        const [roles, tasks] = await Promise.all([
+            kv.get(departmentRolesKey).then((res: any) => {
+                const parsedRoles = parseData(res);
+                console.log('Roles fetched:', parsedRoles);
+                return parsedRoles;
+            }),
+            kv.get(roleTasksKey).then((res: any) => {
+                const parsedTasks = parseData(res);
+                console.log('Tasks fetched for role:', role, parsedTasks);
+                return parsedTasks;
+            }),
+        ]);
+
+        // Add role if it doesn't exist
+        if (!roles.includes(role)) {
+            roles.push(role);
+            await kv.set(departmentRolesKey, JSON.stringify(roles));
+            console.log('Roles after adding new role:', roles);
+        }
+
+        // Add task if it doesn't exist
+        if (!tasks.includes(task)) {
+            tasks.push(task);
+            await kv.set(roleTasksKey, JSON.stringify(tasks));
+            console.log('Tasks after adding new task:', tasks);
+        }
+
+        // Verify data after saving
+        const savedRoles = await kv.get(departmentRolesKey);
+        const savedTasks = await kv.get(roleTasksKey);
+        console.log('Roles after saving:', savedRoles);
+        console.log('Tasks after saving:', savedTasks);
+
+        // Save the instructions associated with the task
+        await kv.set(`assistant:${key}:instructions`, value);
+        await createAssistant(key);
+
+        return res.status(200).json({
+            message: `${key}`,
+            instruction: JSON.stringify(structuredPrompt, null, 2),
+        });
+    } catch (error) {
+        console.error('Error saving instructions to KV:', error);
+        return res.status(500).json({ message: 'Error saving instructions to KV database.' });
+    }
+}
+
+

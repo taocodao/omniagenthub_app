@@ -1,0 +1,56 @@
+// pages/api/uploadFile.ts
+import { NextApiRequest, NextApiResponse } from 'next';
+import formidable from 'formidable';
+import { createClient } from '@vercel/kv';
+import { createAndStoreEmbeddings } from '../../utils/embeddings';
+
+export const config = {
+    api: {
+        bodyParser: false,
+    },
+};
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'POST') {
+        return res.status(405).json({ message: 'Method not allowed' });
+    }
+
+    const userId = req.headers['user-address'] as string;
+    if (!userId) {
+        return res.status(400).json({ message: 'User address is required' });
+    }
+
+    const form = formidable({ multiples: false });
+
+    try {
+        const { fields } = await new Promise<{ fields: formidable.Fields }>((resolve, reject) => {
+            form.parse(req, (err, fields) => {
+                if (err) reject(err);
+                else resolve({ fields });
+            });
+        });
+
+        // Accept text input either as a single string or first element of an array
+        const text = Array.isArray(fields.text) ? fields.text[0] : fields.text;
+        if (!text) {
+            return res.status(400).json({ message: 'No text provided' });
+        }
+
+        // Use constant source id "textInput" with version 0 so that new uploads accumulate.
+        await createAndStoreEmbeddings(userId, 'textInput', text, 0, false);
+        await kv.set(`lastEmbeddingTimestamp:${userId}:textInput`, Date.now());
+
+        res.status(200).json({
+            message: 'Text uploaded and embeddings created successfully',
+            embeddingsCreated: true,
+        });
+    } catch (error: any) {
+        console.error('Error in text upload:', error);
+        res.status(500).json({ message: 'Error uploading text', error: error.message });
+    }
+}

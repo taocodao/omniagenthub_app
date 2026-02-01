@@ -1,0 +1,187 @@
+// pages/success.tsx
+
+import { useEffect, useState } from 'react';
+import { client } from "../util/client";
+import { useRouter } from 'next/router';
+import { toast } from 'react-toastify';
+import { useActiveAccount, useEstimateGas } from 'thirdweb/react';
+import SignIn from '../components/SignIn';
+import styles from '../styles/Success.module.css';
+import Link from 'next/link'; // Import Link from next/link
+import { ethers } from 'ethers';
+import {
+    ACTIVE_CHAIN,
+    CLIENT_ID,
+    WEBAI_TOKEN_ADDRESS,
+
+} from '../constants/constants';
+import { polygonAmoy, polygon, Chain } from 'thirdweb/chains';
+import {
+    prepareContractCall,
+    sendTransaction,
+    getContract,
+    toWei
+} from "thirdweb";
+import { readContract } from "thirdweb";
+
+const SuccessPage = () => {
+    const router = useRouter();
+    const { session_id } = router.query;
+    const [loading, setLoading] = useState(true);
+    const [message, setMessage] = useState<string>('Processing your payment...');
+
+    const account = useActiveAccount();
+    const userAddress = account?.address;
+
+    useEffect(() => {
+        const fetchSessionAndUpdatePerks = async () => {
+            if (!session_id || Array.isArray(session_id)) {
+                setMessage('Invalid session ID.');
+                setLoading(false);
+                return;
+            }
+
+            if (!userAddress) {
+                // User address is not available; perhaps wallet is not connected
+                setMessage('Wallet not connected. Please connect your wallet.');
+                setLoading(false);
+                return;
+            }
+
+            try {
+                // Fetch the Checkout Session details from your server
+                setMessage('Verifying payment...');
+                const response = await fetch(`/api/retrieve-checkout-session?session_id=${session_id}`);
+                const data = await response.json();
+
+                if (data.session && data.session.payment_status === 'paid') {
+                    // Extract metadata
+                    const { productId, userId } = data.session.metadata as { productId: string; userId: string };
+
+                    // Verify that the userId matches the connected wallet address
+                    if (userId.toLowerCase() !== userAddress.toLowerCase()) {
+                        setMessage('User mismatch. Please ensure you are using the correct wallet.');
+                        toast.error('User mismatch. Please ensure you are using the correct wallet.');
+                        setLoading(false);
+                        return;
+                    }
+                    setMessage('Payment verified. Updating perks...');
+                    // Determine the number of perks based on the productId
+                    let freeTrades = 0;
+                    let freeUploads = 0;
+                    let freeCustomGPT = 0;
+                    let webAIamount = 0;
+                    console.log('The product Id is', productId);
+
+                    switch (productId) {
+                        case '1': // Entry Level AI Starter Pack
+                            webAIamount = 50
+                            freeUploads = 10;
+                            freeCustomGPT = 0;
+                            break;
+                        case '2': // Professional AI Productivity Pack
+                            webAIamount = 200;
+                            freeUploads = 50;
+                            freeCustomGPT = 2;
+                            break;
+                        case '3': // Enterprise AI Collaboration Suite
+                            webAIamount = 1000;
+                            freeUploads = 250;
+                            freeCustomGPT = 10;
+                            break;
+                        default:
+                            console.warn(`Unknown productId: ${productId}`);
+                            break;
+                    }
+
+                    if (freeTrades > 0 || freeUploads > 0 || freeCustomGPT > 0 || webAIamount > 0) { // Ensure only positive perks
+                        // Prepare the request body
+                        const requestBody: {
+                            userKey: string;
+                            freeTrades: number;
+                            freeUploads?: number;
+                            freeCustomGPT?: number;
+                            webAIamount?: number;
+                        } = {
+                            userKey: userAddress,
+                            freeTrades: freeTrades,
+                        };
+
+                        if (freeUploads > 0) {
+                            requestBody.freeUploads = freeUploads;
+                        }
+
+                        if (freeCustomGPT > 0) {
+                            requestBody.freeCustomGPT = freeCustomGPT;
+                        }
+
+                        if (webAIamount > 0) {
+                            requestBody.webAIamount = webAIamount;
+                        }
+
+
+                        // Call the proxy-add-free-chats API to update the user's perks balance
+                        const updateResponse = await fetch('/api/proxy-add-free-chats', { // Changed to proxy endpoint
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify(requestBody),
+                        });
+
+                        const updateData = await updateResponse.json();
+
+                        if (updateResponse.ok) {
+                            setMessage('Payment successful! Your perks have been added.');
+                            toast.success(updateData.message || 'Your perks have been added successfully!');
+                        } else {
+                            setMessage('Payment successful, but failed to update your perks.');
+                            toast.error(updateData.message || 'Failed to update your perks. Please contact support.');
+                        }
+                    } else {
+                        setMessage('Payment successful! However, the purchased product does not grant any perks.');
+                        toast.info('Payment successful! No perks were added for this purchase.');
+                    }
+                } else {
+                    // Payment failed or is incomplete
+                    setMessage('Payment not completed. Please try again.');
+                    toast.error('Payment not completed. Please try again.');
+                }
+            } catch (error: any) {
+                console.error('Error verifying payment:', error);
+                setMessage('An error occurred while verifying your payment.');
+                toast.error('An error occurred while verifying your payment.');
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchSessionAndUpdatePerks();
+    }, [session_id, userAddress]);
+
+    return (
+        <main className={styles.main}>
+            <div className={styles.container}>
+                {!userAddress ? (
+                    <SignIn />
+                ) : (
+                    <div style={{ padding: '2rem', textAlign: 'center' }}>
+                        <h1>Payment Status</h1>
+                        <p>{message}</p>
+                        {(message.includes('Payment successful') || message.includes('Payment not completed')) && (
+                            <p>
+                                You can close this window or return to the{' '}
+                                <Link href="/ChatHome" style={{ color: 'blue', textDecoration: 'underline' }}>
+                                    Chat Home
+                                </Link>
+                                .
+                            </p>
+                        )}
+                    </div>
+                )}
+            </div>
+        </main>
+    );
+};
+
+export default SuccessPage;

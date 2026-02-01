@@ -1,0 +1,663 @@
+/* styles/Home_signin.module.css */
+
+/* ----------------- Parent Container ----------------- */
+.signInContainer {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    background-color: #000000;
+    padding: 0 20px;
+    position: relative;
+    box-sizing: border-box;
+    color: #ffffff;
+    /* Ensure text is visible against the dark background */
+    overflow: hidden;
+    /* Prevent content overflow on smaller screens */
+}
+
+/* ----------------- Header Styles ----------------- */
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    padding: 20px;
+    box-sizing: border-box;
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 2;
+    transition: padding 0.3s ease;
+    background: rgba(0, 0, 0, 0.7);
+    /* Semi-transparent background for better visibility */
+}
+
+/* Responsive Adjustments for Header */
+@media (max-width: 600px) {
+    .header {
+        flex-direction: column;
+        align-items: center;
+        padding: 10px;
+    }
+
+    .logoContainer {
+        margin-bottom: 10px;
+    }
+
+    .languageContainer {
+        width: 100%;
+        display: flex;
+        justify-content: center;
+    }
+}
+
+/* ----------------- Logo Container ----------------- */
+.logoContainer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    transition: all 0.3s ease;
+    position: relative;
+    /* For positioning the tooltip */
+}
+
+/* Logo Wrapper */
+.logoWrapper {
+    cursor: pointer;
+    position: relative;
+    width: 130px;
+    height: 130px;
+    max-width: 140px;
+    max-height: 140px;
+    transition: transform 0.3s ease;
+}
+
+.logoWrapper:hover {
+    transform: scale(0.8);
+    /* Shrink the container to 80% on hover */
+}
+
+.hoverLogo {
+    object-fit: contain;
+    /* Adjust as needed (e.g., 'cover', 'contain') */
+    transition: transform 0.3s ease;
+    /* Smooth transition if needed */
+}
+
+
+@media (max-width: 600px) {
+    .logoWrapper {
+        width: 60px;
+        height: 60px;
+        max-width: 60px;
+        max-height: 60px;
+    }
+}
+
+/* Hover Tooltip */
+.hoverTooltip {
+    position: absolute;
+    bottom: -50px;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: black;
+    color: white;
+    padding: 8px 12px;
+    border-radius: 5px;
+    white-space: nowrap;
+    text-align: center;
+    z-index: 1000;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+/* Show Tooltip on Hover */
+.logoContainer:hover .hoverTooltip {
+    opacity: 1;
+}
+
+/* Visit Website Link */
+.visitWebsiteLink {
+    color: white;
+    text-decoration: none;
+    font-size: 16px;
+    font-weight: bold;
+    margin-top: 10px;
+    display: block;
+    transition: color 0.3s ease;
+}
+
+.visitWebsiteLink:hover,
+.visitWebsiteLink:focus,
+.visitWebsiteLink:active {
+    color: #84309c;
+    font-size: 0.95em;
+    text-decoration: underline;
+}
+
+/* ----------------- Language Select ----------------- */
+.languageContainer {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.languageSelect {
+    padding: 0.5rem 1rem;
+    border: 2px solid #444;
+    border-radius: 8px;
+    cursor: pointer;
+    background-color: blue;
+    color: white;
+    width: 150px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    font-size: 18px;
+    transition: width 0.3s ease, font-size 0.3s ease;
+}
+
+@media (max-width: 600px) {
+    .languageSelect {
+        width: 100%;
+        max-width: 200px;
+        font-size: 16px;
+    }
+}
+
+/* ----------------- Welcome Message ----------------- */
+.welcomeMessage {
+    margin-top: 100px;
+    /* To account for the fixed header */
+    margin-bottom: 10px;
+    color: #fff;
+    font-size: 2em;
+    text-align: center;
+    transition: font-size 0.3s ease;
+}
+
+/* Ensure all text within .welcomeMessage is white */
+.welcomeMessage,
+.welcomeMessage * {
+    color: #fff;
+}
+
+@media (max-width: 600px) {
+    .welcomeMessage {
+        font-size: 1.5em;
+        margin-top: 80px;
+        color: #fff;
+        font-weight: bold;
+        /* Ensure text color is white */
+    }
+}
+
+/* ----------------- Tagline ----------------- */
+.tagline {
+    font-size: 1.3em;
+    color: #fff;
+    font-weight: bolder;
+    text-align: center;
+    max-width: 800px;
+    margin-bottom: 20px;
+    transition: font-size 0.3s ease;
+}
+
+/* Ensure all text within .tagline is white */
+.tagline,
+.tagline * {
+    color: #fff !important;
+}
+
+@media (max-width: 600px) {
+    .tagline {
+        font-size: 1em;
+        max-width: 100%;
+    }
+}
+
+/* ----------------- ConnectEmbed Styling ----------------- */
+.connectEmbed {
+    border: 4px solid red;
+    width: 100%;
+    max-width: 700px;
+    margin-bottom: 30px;
+    box-sizing: border-box;
+    padding: 20px;
+    border-radius: 10px;
+    background-color: #1a1a1a;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    transition: all 0.3s ease;
+    z-index: 1;
+}
+
+.connectEmbed:hover {
+    border-color: #ff0000;
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.3);
+}
+
+@media (max-width: 600px) {
+    .connectEmbed {
+        max-width: 100%;
+        padding: 10px;
+        border: 3px solid red;
+    }
+}
+
+/* ----------------- Instructional Text ----------------- */
+.instructionText {
+    font-size: 20px;
+    color: #fff;
+    text-align: center;
+    max-width: 2000px;
+    margin-bottom: 10px;
+    transition: font-size 0.3s ease;
+}
+
+@media (max-width: 600px) {
+    .instructionText {
+        font-size: 0.9em;
+        max-width: 100%;
+    }
+}
+
+/* ----------------- Instructional Text ----------------- */
+.instructionText1 {
+    font-size: 20px;
+    color: #fff;
+    text-align: center;
+    font-weight: bolder;
+    max-width: 2000px;
+    margin-bottom: 20px;
+    transition: font-size 0.3s ease;
+}
+
+@media (max-width: 600px) {
+    .instructionText1 {
+        font-size: 1.0em;
+        max-width: 100%;
+        font-weight: bolder;
+    }
+}
+
+/* ----------------- Quick Demo Link/Button ----------------- */
+.quickDemoLink {
+    text-decoration: none;
+}
+
+.quickDemoButton {
+    padding: 10px 20px;
+    font-size: 16px;
+    font-weight: bold;
+    color: #fff;
+    background-color: blue;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.4);
+    transition: background-color 0.3s, transform 0.2s;
+}
+
+.quickDemoButton:hover {
+    background-color: #365899;
+    transform: translateY(-2px);
+}
+
+@media (max-width: 600px) {
+    .quickDemoButton {
+        font-size: 14px;
+        padding: 8px 16px;
+    }
+}
+
+/* ----------------- Hover Logo Styles ----------------- */
+.hoverLogo {
+    width: 100%;
+    height: auto;
+    max-width: 120px;
+    transition: max-width 0.3s ease;
+}
+
+@media (max-width: 600px) {
+    .hoverLogo {
+        max-width: 60px;
+    }
+}
+
+/* ----------------- Toast Content Styles ----------------- */
+.toastContent {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    color: #fff;
+    background-color: #0417a3;
+    /* Adjusted for better contrast */
+    padding: 15px;
+    border-radius: 8px;
+}
+
+.toastMessage {
+    margin: 0 0 10px 0;
+    font-size: 1rem;
+    color: #f9f5f5;
+}
+
+.rememberContainer {
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.rememberCheckbox {
+    margin-right: 5px;
+    width: 16px;
+    height: 16px;
+}
+
+.rememberLabel {
+    font-size: 0.9rem;
+    color: #000;
+}
+
+.toastButtons {
+    display: flex;
+    gap: 10px;
+}
+
+.toastButton {
+    padding: 8px 16px;
+    background-color: #0070f3;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background-color 0.3s ease;
+}
+
+.toastButton:hover {
+    background-color: #005bb5;
+}
+
+/* Option Labels and Inputs */
+.optionLabel {
+    color: #000;
+}
+
+.optionInput {
+    accent-color: #000;
+}
+
+/* ----------------- Media Queries for Enhanced Responsiveness ----------------- */
+
+/* Tablets and Small Desktops */
+@media (max-width: 1024px) {
+    .connectEmbed {
+        max-width: 90%;
+    }
+
+    .welcomeMessage {
+        font-size: 1.8em;
+        color: #fff;
+        /* Ensure text color is white */
+    }
+
+    .tagline {
+        font-size: 1.1em;
+    }
+}
+
+/* Mobile Phones */
+@media (max-width: 480px) {
+    .header {
+        padding: 5px;
+    }
+
+    .languageSelect {
+        width: 100%;
+        max-width: 180px;
+        font-size: 14px;
+    }
+
+    .welcomeMessage {
+        font-size: 1.3em;
+        margin-top: 70px;
+        color: #fff;
+        /* Ensure text color is white */
+    }
+
+    .tagline {
+        font-size: 0.95em;
+        margin-bottom: 15px;
+    }
+
+    .connectEmbed {
+        padding: 15px;
+    }
+
+    .instructionText {
+        font-size: 0.85em;
+    }
+
+    .quickDemoButton {
+        font-size: 13px;
+        padding: 6px 12px;
+    }
+
+    .hoverTooltip {
+        bottom: -35px;
+        padding: 6px 10px;
+        font-size: 0.85em;
+    }
+}
+
+/* ----------------- Additional Styles ----------------- */
+
+/* Centered Container for Quick Elements */
+.quickElementsContainer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+    width: 100%;
+    max-width: 600px;
+    padding: 20px;
+    box-sizing: border-box;
+}
+
+/* Ensuring Modal Content is Scrollable on Small Devices */
+.modalContent,
+.modalContent1 {
+    overflow-y: auto;
+}
+
+/* Ensure all text within .welcomeMessage is white */
+.welcomeMessage,
+.welcomeMessage * {
+    color: #fff;
+    z-index: 1000;
+}
+
+/* Ensure all text within .tagline is white */
+.tagline,
+.tagline * {
+    color: #fff !important;
+    z-index: 1000;
+}
+
+/* Signin.module.css */
+
+/* Container for Quick Demo Buttons */
+.quickDemoContainer {
+    display: flex;
+    flex-direction: row;
+    gap: 1rem;
+    /* Adjust the gap between buttons as needed */
+    justify-content: center;
+    /* Center the buttons horizontally */
+    align-items: center;
+    /* Align buttons vertically center */
+    margin-top: 1.5rem;
+    /* Add some top margin for spacing */
+}
+
+/* Existing Quick Demo Link Styles */
+.quickDemoLink {
+    text-decoration: none;
+    /* Remove underline from links */
+}
+
+/* Existing Quick Demo Button Styles */
+.quickDemoButton {
+    background-color: #1d039e;
+    /* Example background color */
+    color: white;
+    /* Text color */
+    padding: 0.5rem 1rem;
+    /* Padding inside the button */
+    border: none;
+    /* Remove default border */
+    border-radius: 4px;
+    /* Rounded corners */
+    cursor: pointer;
+    /* Pointer cursor on hover */
+    font-size: 16px;
+    /* Font size */
+    transition: background-color 0.3s ease;
+    /* Smooth transition */
+}
+
+.quickDemoButton:hover {
+    background-color: #218838;
+    /* Darker shade on hover */
+}
+
+/* Signin.module.css */
+
+/* ... Existing styles ... */
+
+/* ----------------- Responsive Styles for Quick Demo Buttons ----------------- */
+
+/* Tablets and Small Desktops (max-width: 600px) */
+@media (max-width: 600px) {
+    .quickDemoContainer {
+        flex-direction: column;
+        /* Stack buttons vertically */
+        gap: 0.5rem;
+        /* Reduce gap between buttons */
+        width: 100%;
+        /* Make container full width */
+        padding: 0 10px;
+        /* Add horizontal padding */
+    }
+
+    .quickDemoButton {
+        width: 100%;
+        /* Make buttons full width */
+        font-size: 14px;
+        /* Reduce font size for better fit */
+        padding: 0.5rem 0;
+        /* Adjust padding */
+    }
+}
+
+/* Mobile Phones (max-width: 480px) */
+@media (max-width: 480px) {
+    .quickDemoContainer {
+        flex-direction: column;
+        /* Stack buttons vertically */
+        gap: 0.3rem;
+        /* Further reduce gap between buttons */
+        width: 100%;
+        /* Ensure container spans full width */
+        padding: 0 5px;
+        /* Reduce horizontal padding */
+    }
+
+    .quickDemoButton {
+        width: 100%;
+        /* Ensure buttons are full width */
+        font-size: 12px;
+        /* Further reduce font size */
+        padding: 0.4rem 0;
+        /* Adjust padding for smaller screens */
+    }
+}
+
+/* Existing styles... */
+
+/* New styles for the welcome link */
+.welcomeLink {
+    color: white;
+    /* Inherit the color from parent */
+
+    /* Remove underline */
+    transition: color 0.3s ease, font-size 0.3s ease;
+    /* Smooth transition */
+    cursor: pointer;
+    display: block;
+    text-decoration: underline;
+    /* Change cursor to pointer */
+}
+
+.welcomeLink:hover,
+.welcomeLink:focus,
+.welcomeLink:active {
+    color: hsl(3, 100%, 50%);
+    /* Change text color to red on hover */
+    font-size: 0.95em;
+    /* Reduce font size slightly */
+    text-decoration: underline;
+    /* Optional: Add underline on hover */
+}
+
+/* Add this new class */
+.trustLink {
+    color: #f5f5fa;
+    /* Sets the text color to blue */
+    text-decoration: underline;
+    /* Underlines the text */
+    cursor: pointer;
+    /* Changes the cursor to a pointer on hover */
+    transition: color 0.3s ease;
+    /* Smooth transition for color change */
+}
+
+.trustLink:hover {
+    color: #0707f7;
+    /* Darkens the color on hover */
+}
+
+/* Container for ConnectEmbed and Award Logo */
+.authContainer {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 70px;
+    width: 100%;
+    max-width: 100%;
+    margin-bottom: 20px;
+}
+
+/* Award Logo Container */
+.awardLogoWrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 200px;
+    flex-shrink: 0;
+}
+
+/* Award Logo Styling */
+.awardLogo {
+    object-fit: contain;
+    max-width: 100%;
+    height: auto;
+    transition: transform 0.3s ease;
+}
+
+.awardLogo:hover {
+    transform: scale(1.05);
+}

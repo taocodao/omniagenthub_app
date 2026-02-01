@@ -1,0 +1,54 @@
+// File: pages/api/processEmailBatch.ts
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+import { processEmail } from '../../lib/processEmail';
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'POST') {
+        res.setHeader('Allow', 'POST');
+        return res.status(405).json({ error: 'Method not allowed. Use POST.' });
+    }
+
+    try {
+        const { senderName, isProd } = req.body;
+        if (!senderName) {
+            return res.status(400).json({ error: 'Missing senderName parameter' });
+        }
+
+        // Immediate response
+        res.status(202).json({ message: 'Batch processing started' });
+
+        // Async processing
+        const companySet = new Set<string>();
+        const iterator = kv.scanIterator({ match: "Company:*" });
+
+        for await (const key of iterator) {
+            const prefix = "Company:";
+            if (key.startsWith(prefix)) {
+                const companyName = key.substring(prefix.length).trim();
+                if (companyName) companySet.add(companyName);
+            }
+        }
+
+        const companies = Array.from(companySet).sort((a, b) => a.localeCompare(b));
+        const targetCompanies = isProd ? companies : companies.slice(10, 15);
+
+        // Process in background
+        Promise.all(targetCompanies.map(async (companyName) => {
+            try {
+                await processEmail(senderName, companyName, undefined, undefined, isProd);
+                console.log(`Processed ${companyName}`);
+            } catch (err: any) {
+                console.error(`Failed ${companyName}: ${err.message}`);
+            }
+        }));
+
+    } catch (error) {
+        console.error('Batch initialization error:', error);
+    }
+}

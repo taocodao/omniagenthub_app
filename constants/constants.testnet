@@ -1,0 +1,6 @@
+export const ACCOUNT_FACTORY_ADDRESS = "0x92214cE10F3f3c414F5338D52f58457bFDE442c8";
+export const ACTIVE_CHAIN = "mumbai";
+export const CONTRACT_ADDRESS = "0x24A57f97Cfc56982F5EDFfED719022AAAd07BfA3"
+export const PLATFORM_NAME = "taocodao"
+export const TRANSACTION_FEE = "0.003"
+export const ACTIVE_CHAIN_ID = "80001"

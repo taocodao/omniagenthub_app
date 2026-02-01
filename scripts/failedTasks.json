@@ -1,0 +1,47 @@
+[
+  {
+    "department": "Developing",
+    "role": "CMS Developer",
+    "task": "Customizing WooCommerce for a Client’s E-Commerce Site"
+  },
+  {
+    "department": "Education",
+    "role": "Curriculum Developer",
+    "task": "Incorporating Bloom’s Taxonomy into curriculum"
+  },
+  {
+    "department": "Entertainment",
+    "role": "TV/Film Director",
+    "task": "Oversee post-production to enhance the project’s vision"
+  },
+  {
+    "department": "Fitness",
+    "role": "Exercise Physiologist",
+    "task": "Conduct research on exercise’s impact on metabolism"
+  },
+  {
+    "department": "Legal",
+    "role": "Immigration Attorney",
+    "task": "Draft K-1 Fiancé(E) Visa Application Document"
+  },
+  {
+    "department": "Sales",
+    "role": "Account Manager",
+    "task": "Gather Client Feedback"
+  },
+  {
+    "department": "Skill and Knowledge Enhancement Program",
+    "role": "Strategic Thinking",
+    "task": "Brainstorm Solutions with Devil’s Advocacy"
+  },
+  {
+    "department": "Writing",
+    "role": "Young Adult Fiction Writer",
+    "task": "Exploring and avoiding YA clichés"
+  },
+  {
+    "department": "Writing",
+    "role": "Translator",
+    "task": "Translate children’s literature with age-appropriate language"
+  }
+]

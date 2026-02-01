@@ -1,0 +1,135 @@
+// pages/api/qa.ts
+import { NextApiRequest, NextApiResponse } from 'next';
+import { Pinecone } from '@pinecone-database/pinecone';
+import { OpenAI } from 'openai';
+import { UserQuestions, UserQA, QuestionAnswer } from '../../types';
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
+const index = pc.index("user-documents");
+const GPT_MODEL = process.env.GPT_MODEL || "gpt-4o-mini";
+
+async function embedText(text: string): Promise<number[]> {
+    const response = await openai.embeddings.create({
+        model: "text-embedding-ada-002",
+        input: text,
+    });
+    return response.data[0].embedding;
+}
+
+async function insertQA(userId: string, qa: QuestionAnswer): Promise<void> {
+    const questionEmbedding = await embedText(qa.question);
+    //console.log("Inserting/Updating question question:", qa.question);
+    //console.log("Inserting/Updating question answer:", qa.answer);
+    const id = `${userId}-${Buffer.from(qa.question).toString('base64')}`;
+
+    await index.namespace(userId).upsert([
+        {
+            id: id,
+            values: questionEmbedding,
+            metadata: { question: qa.question, answer: qa.answer, isEditedQA: true }
+        }
+    ]);
+    //console.log("Upserted record with questionEmbedding:", questionEmbedding);
+}
+
+async function retrieveQA(userId: string, question: string): Promise<QuestionAnswer | null> {
+    const questionEmbedding = await embedText(question);
+    const queryResponse = await index.namespace(userId).query({
+        vector: questionEmbedding,
+        topK: 10,
+        includeMetadata: true
+    });
+
+    if (!queryResponse.matches || queryResponse.matches.length === 0) {
+        return null;
+    }
+
+    // Check for edited Q&A matches with a similarity threshold
+    const editedMatches = queryResponse.matches.filter(match =>
+        (match.metadata as any).isEditedQA &&
+        match.score && match.score > 0.9  // Adjust this threshold as needed
+    );
+
+    if (editedMatches.length > 0) {
+        // Return the most similar edited match
+        const bestMatch = editedMatches[0];
+        return {
+            question: (bestMatch.metadata as any).question,
+            answer: (bestMatch.metadata as any).answer
+        };
+    }
+
+    // If no edited match, proceed with the existing logic
+    const relevantContent = queryResponse.matches
+        .map(match => (match.metadata as any).content || '')
+        .join('\n\n');
+
+    const answer = await generateAnswer(question, relevantContent);
+    return { question, answer };
+}
+
+async function generateAnswer(question: string, context: string): Promise<string> {
+    const prompt = `Context: ${context}\n\nQuestion: ${question}\n\nAnswer:`;
+    const completion = await openai.chat.completions.create({
+        model: GPT_MODEL,
+        messages: [
+            { role: "system", content: "You are a helpful assistant that answers only questions the user asked based on the given context. If unable to answer directly, guide the user towards finding the answer." },
+            { role: "user", content: prompt }
+        ],
+        max_tokens: 250,
+        temperature: 0.6,
+    });
+    return completion.choices[0].message.content || "Sorry, I couldn't generate an answer.";
+}
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'POST') {
+        return res.status(405).json({ message: 'Method not allowed' });
+    }
+
+    const body: UserQuestions | UserQA = req.body;
+    //console.log(" inside  qa.ts body is ", req.body);
+
+    if ('questions' in body) {
+        // Handle questions
+        const userQuestions: UserQuestions = body;
+        const answers: QuestionAnswer[] = await Promise.all(
+            userQuestions.questions.map(async (question) => {
+                const qa = await retrieveQA(userQuestions.userId, question.question);
+                if (qa) return qa;
+
+                // If no match found, retrieve relevant context
+                const contextEmbedding = await embedText(question.question);
+                const contextResponse = await index.namespace(userQuestions.userId).query({
+                    vector: contextEmbedding,
+                    topK: 5,
+                    includeMetadata: true
+                });
+
+                if (contextResponse.matches && contextResponse.matches.length > 0) {
+                    const context = contextResponse.matches
+                        .map(match => (match.metadata as { content: string }).content)
+                        .join("\n");
+
+                    const answer = await generateAnswer(question.question, context);
+                    return { question: question.question, answer };
+                } else {
+                    // If no relevant context found
+                    return { question: question.question, answer: "I'm sorry, but I don't have enough information to answer this question accurately." };
+                }
+            })
+        );
+        return res.status(200).json({ userId: userQuestions.userId, qa: answers });
+    }
+    else if ('qa' in body) {
+        // Handle answers
+        const userQA: UserQA = body;
+        for (const qa of userQA.qa) {
+            await insertQA(userQA.userId, qa);
+        }
+        return res.status(200).json({ message: 'QA pairs inserted successfully' });
+    } else {
+        return res.status(400).json({ message: 'Invalid request body' });
+    }
+}

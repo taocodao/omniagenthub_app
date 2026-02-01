@@ -1,0 +1,234 @@
+/* Home6.module.css */
+
+/* Container Styles */
+.container {
+    display: flex;
+    flex-direction: column;
+    height: 75vh;
+    width: 100%;
+    background-color: black;
+    font-size: large;
+    overflow-y: auto;
+}
+
+.qaContainer {
+    padding: 2px;
+    background-color: rgb(10, 0, 0);
+    overflow-y: auto;
+    /*font-size: 1.2rem;*/
+    /* Increased font size for text inside QA Container */
+    color: white;
+    /* Ensure text is visible against the dark background */
+
+}
+
+.qaHeader {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    /* Changed from space-between to flex-start */
+    margin-bottom: 1rem;
+    width: 100%;
+    /* Ensure the header takes full width */
+    position: relative;
+}
+
+.qaTitle {
+    margin: 0;
+    /*margin-left: 10px;*/
+    margin-left: 1%;
+    font-size: 1.5rem;
+    color: white;
+}
+
+.buttonContainer {
+    margin-left: 15%;
+    display: flex;
+    gap: 50%;
+    /* Increased gap for better spacing */
+    align-items: center;
+    flex-wrap: nowrap;
+    font-size: large;
+
+    /* Prevent wrapping */
+}
+
+/*.editButton,
+.submitButton {
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 4px;
+    background-color: #0070f3;
+    color: white;
+    font-weight: bold;
+    font-size: large;
+    cursor: pointer;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    box-shadow: 3px 6px #761e03f0;
+    flex: 0 0 auto;
+    /* Prevent buttons from growing or shrinking 
+    min-width: 120px;
+    /* Ensure buttons don't get too small 
+    max-width: 400px;
+    /* Prevent buttons from becoming too wide 
+}*/
+
+/* Edit Button Styles */
+.editButton {
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 4px;
+    background-color: #0070f3;
+    color: white;
+    font-weight: bold;
+    font-size: large;
+    cursor: pointer;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    box-shadow: 3px 6px #761e03f0;
+    flex: 0 0 auto;
+    min-width: 120px;
+    max-width: 200px;
+    /* Adjusted to prevent excessive width */
+    white-space: nowrap;
+    /* Prevent text wrapping */
+}
+
+/* Submit Button Styles */
+.submitButton {
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 4px;
+    background-color: #0070f3;
+    /* Different color for distinction */
+    color: white;
+    font-weight: bold;
+    font-size: large;
+    cursor: pointer;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    box-shadow: 3px 6px #761e03f0;
+    flex: 0 0 auto;
+    min-width: 120px;
+    max-width: 200px;
+    /* Adjusted to prevent excessive width */
+    white-space: nowrap;
+    /* Prevent text wrapping */
+}
+
+/* Removed margin-right: 900px; and position absolute from editButton and submitButton */
+
+.editButton:hover {
+    transform: scale(0.95);
+    background-color: rgba(0, 208, 255, 0.95);
+    color: rgb(241, 244, 245);
+    box-shadow: 4px 8px rgba(245, 56, 4, 0.918);
+}
+
+.submitButton:hover {
+    transform: scale(0.95);
+    background-color: rgba(0, 208, 255, 0.95);
+    color: rgb(241, 244, 245);
+    box-shadow: 4px 8px rgba(245, 56, 4, 0.918);
+}
+
+.chatStreamContainer {
+    display: flex;
+    flex-direction: row;
+    width: 102%;
+    height: 100vh;
+    background-color: black;
+    font-size: large;
+}
+
+.loadingIndicator {
+    text-align: center;
+    font-size: large;
+    font-weight: bold;
+    color: hsl(10, 94%, 50%);
+    margin: 2rem 0;
+}
+
+/* Responsive Styles for Mobile Devices */
+@media (max-width: 600px) {
+    .qaHeader {
+        flex-direction: row;
+        /* Keep row direction */
+        align-items: center;
+    }
+
+    .qaTitle {
+        margin-bottom: 0.5rem;
+        font-size: 1.5rem;
+    }
+
+    .buttonContainer {
+        flex-direction: row;
+        /* Keep buttons in a row */
+        flex-wrap: nowrap;
+        /* Prevent wrapping */
+        gap: 30%;
+        /* Slightly smaller gap on mobile */
+    }
+
+    .editButton,
+    .submitButton {
+        flex: 0 0 auto;
+        /* Maintain fixed sizing */
+        min-width: 100px;
+        /* Ensure buttons don't get too small */
+        max-width: 150px;
+        /* Reduce max-width for smaller screens */
+        font-size: 0.9rem;
+        /* Slightly smaller font */
+        padding: 0.4rem 0.8rem;
+        /* Adjust padding for smaller screens */
+    }
+}
+
+/* Home6.module.css */
+
+/* Tooltip Wrapper */
+.tooltipWrapper {
+    position: relative;
+    display: inline-block;
+    margin: 0 5px;
+}
+
+/* Tooltip Text */
+.tooltip {
+    visibility: hidden;
+    width: max-content;
+    background-color: rgb(43, 4, 133);
+    color: white;
+    text-align: center;
+    border-radius: 6px;
+    padding: 5px 8px;
+    position: absolute;
+    z-index: 100000;
+    bottom: -25px;
+    /* Adjust this value to position the tooltip below the button */
+    left: 50%;
+    transform: translateX(-50%);
+    opacity: 0;
+    transition: opacity 0.3s;
+    white-space: nowrap;
+    font-size: 15px;
+}
+
+/* Tooltip Arrow */
+.tooltip::after {
+    content: "";
+    position: absolute;
+    top: 1px;
+    /* Position the arrow above the tooltip */
+    left: 50%;
+    transform: translateX(-50%);
+    border-width: 5px;
+    border-style: solid;
+    border-color: transparent transparent black transparent;
+}
+
+/* Show Tooltip on Hover */
+.tooltipWrapper:hover .tooltip {
+    visibility: visible;
+    opacity: 1;
+}

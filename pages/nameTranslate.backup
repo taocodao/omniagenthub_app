@@ -1,0 +1,343 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { useContract, useShowConnectEmbed, useStorageUpload, useNFTs } from "@thirdweb-dev/react";
+import { FILEUPLOAD_ADDRESS, MULTILANGUAGE_CONTRACT_ADDRESS } from '../constants/constants';
+import styles from '../components/FormComponent.module.css';
+import SignIn from '../components/SignIn';
+import OpenAI from "openai";
+
+const PROXY_BASE_URL = "http://localhost:4000/proxy?url=";
+const IPFS_PREFIX = "ipfs://";
+
+function constructProxyUrl(ipfsUrl: string): string {
+    if (ipfsUrl.startsWith(IPFS_PREFIX)) {
+        const ipfsGatewayUrl = `https://ipfs.io/ipfs/${ipfsUrl.slice(IPFS_PREFIX.length)}`;
+        return `${PROXY_BASE_URL}${encodeURIComponent(ipfsGatewayUrl)}`;
+    }
+    return ipfsUrl;
+}
+
+interface JsonResponse {
+    data?: any;
+    error?: string;
+    name?: string;
+}
+
+const NameTranslate: React.FC = () => {
+    const showConnectEmbed = useShowConnectEmbed();
+    const uploadcontract = useContract(FILEUPLOAD_ADDRESS)?.contract;
+    const multiLanguageContract = useContract(MULTILANGUAGE_CONTRACT_ADDRESS)?.contract;
+    const { data: nfts, isLoading } = useNFTs(uploadcontract, { count: 300, start: 0 });
+    const [removedNFTIds, setRemovedNFTIds] = useState<string[]>([]);
+    const activeNftNames = nfts ? nfts.filter(nft => !removedNFTIds.includes(nft.metadata.id)).map(nft => nft.metadata.name) : [];
+    const [jasonMapping, setJasonMapping] = useState<Record<string, string>>({});
+    const [isFetching, setIsFetching] = useState<boolean>(false);
+    const [languages, setLanguages] = useState<string[]>([]);
+    const [name, setName] = useState<string>('');
+    const [content, setContent] = useState<string>('');
+    const [singleName, setSingleName] = useState<string>('');
+    const openaiApiKey = process.env.NEXT_PUBLIC_OPENAI_API_KEY;
+    const { mutateAsync: upload } = useStorageUpload();
+
+    const openai = new OpenAI({
+        apiKey: openaiApiKey,
+        dangerouslyAllowBrowser: true,
+    });
+
+    const fetchAllJasons = useCallback(async () => {
+        if (!uploadcontract) {
+            console.error('Upload contract not available');
+            return;
+        }
+
+        try {
+            const jasonsArray = await uploadcontract.call("getAllJasons");
+            const mapping: Record<string, string> = {};
+
+            for (const item of jasonsArray) {
+                const [name, uri] = item.split(" : ");
+                const proxyUrl = constructProxyUrl(uri);
+                console.log(`Fetching JSON from: ${proxyUrl}`);
+
+                try {
+                    const response = await fetch(proxyUrl, {
+                        method: 'GET',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                    });
+
+                    if (!response.ok) {
+                        console.error("Failed to resolve URI:", uri, `Status: ${response.status}`);
+                        mapping[name] = ""; // Use empty string to indicate failure
+                        continue;
+                    }
+
+                    const jsonData = await response.json();
+                    console.log(`Fetched data for ${name}:`, jsonData);
+
+                    mapping[name] = jsonData.url || proxyUrl; // Use jsonData.url or fallback to proxyUrl
+                } catch (error) {
+                    console.error(`Error fetching JSON for ${name}:`, error);
+                    mapping[name] = ""; // Use empty string to indicate failure
+                }
+            }
+
+            setJasonMapping(mapping);
+            console.log("Jason Mapping:", mapping);
+
+        } catch (error) {
+            console.error("Error while fetching all JSONs:", error);
+        }
+    }, [uploadcontract]);
+
+    const fetchLanguages = useCallback(async () => {
+        if (!multiLanguageContract) {
+            console.error('Multi-language contract not available');
+            return;
+        }
+
+        try {
+            const currentLanguages = await multiLanguageContract.call("getLanguages");
+            setLanguages(currentLanguages);
+            console.log("Fetched Languages:", currentLanguages);
+        } catch (error) {
+            console.error("Error fetching languages from contract:", error);
+        }
+    }, [multiLanguageContract]);
+
+    const translateAndStoreDescription = async (name: string, description: string, isUserInput: boolean) => {
+        const storageName = isUserInput ? name : `${name}Desc`;
+        for (const lang of languages) {
+            let translatedDescription;
+            if (lang === "English") {
+                translatedDescription = `${description}`;
+            } else {
+                translatedDescription = await translateDescription(storageName, description, lang);
+            }
+            if (translatedDescription.length > 50) {
+                const uri = await storeDescriptionOnIPFS(translatedDescription);
+                console.log(`Translated to ${lang}: ${translatedDescription}, IPFS URI: ${uri}`);
+                if (multiLanguageContract) {
+                    try {
+                        console.log(`Calling setContent with: ${storageName}, ${lang}, ${uri}`);
+                        await multiLanguageContract.call("setContent", [storageName, lang, uri]);
+                        console.log(`setContent call successful for: ${storageName}, ${lang}`);
+                    } catch (error) {
+                        console.error(`Error calling setContent for ${storageName} in ${lang}:`, error);
+                    }
+                }
+            } else {
+                if (multiLanguageContract) {
+                    try {
+                        console.log(`Calling setContent with: ${storageName}, ${lang}, ${translatedDescription}`);
+                        await multiLanguageContract.call("setContent", [storageName, lang, translatedDescription]);
+                        console.log(`setContent call successful for: ${storageName}, ${lang}`);
+                    } catch (error) {
+                        console.error(`Error calling setContent for ${storageName} in ${lang}:`, error);
+                    }
+                }
+            }
+        }
+    };
+
+    const translateDesc = async (name: string) => {
+        setIsFetching(true);
+        try {
+            const uriMapping = jasonMapping;
+
+            if (!uriMapping[name]) {
+                throw new Error(`No URI found for name: ${name}`);
+            }
+
+            const url = constructProxyUrl(uriMapping[name]);
+            if (!url) {
+                console.error(`URL not found for ${name}`);
+                setIsFetching(false);
+                return;
+            }
+
+            try {
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`Failed to fetch JSON: ${url}`);
+                const jsonData = await response.json();
+                const description = jsonData.description;
+                console.log(`Name: ${name}, Description: ${description}`);
+
+                await translateAndStoreDescription(name + "Desc", description, false); // Not user input
+                await translateAndStoreDescription(name, name, false); // Not user input
+            } catch (error) {
+                const message = (error instanceof Error) ? error.message : 'Unknown error';
+                console.error(`Error fetching JSON for ${name}: ${message}`);
+                alert(`Error fetching JSON for ${name}: ${message}`);
+            }
+        } catch (error) {
+            console.error('There was an error processing your request:', error);
+            alert(`There was an error processing your request: ${error}`);
+        } finally {
+            setIsFetching(false);
+        }
+    };
+
+    const translateDescription = async (name: string, description: string, language: string): Promise<string> => {
+        const prompt = `Translate the following text "${description}" to ${language}. Only output the translated text, nothing else.for something like \n, \${...} just leave it as it is `;
+
+        try {
+            const response = await openai.chat.completions.create({
+                model: 'gpt-4o',
+                messages: [{ role: 'user', content: prompt }],
+            });
+
+            const translatedText = response.choices[0]?.message?.content?.trim();
+            if (translatedText) {
+                return translatedText;
+            } else {
+                return `Failed to translate to ${language}`;
+            }
+
+
+            return translatedText || `Failed to translate to ${language}`;
+        } catch (error) {
+            console.error(`Error translating to ${language}:`, error);
+            return `Failed to translate to ${language}`;
+        }
+    };
+
+    const storeDescriptionOnIPFS = async (description: string): Promise<string> => {
+        const blob = new Blob([description], { type: "text/plain" });
+        const file = new File([blob], "description.txt", { type: "text/plain" });
+
+        try {
+            const uris = await upload({ data: [file] });
+
+            if (uris.length > 0) {
+                console.log('IPFS upload successful:', uris[0]);
+                return uris[0];
+            } else {
+                throw new Error("No URI returned from IPFS upload");
+            }
+        } catch (error) {
+            console.error('Error storing description on IPFS:', error);
+            return '';
+        }
+    };
+
+    const addLanguages = async () => {
+        if (!multiLanguageContract) {
+            console.error('Multi-language contract not available');
+            return;
+        }
+
+        try {
+            const currentLanguages = await multiLanguageContract.call("getLanguages");
+            console.log("Current Languages in Contract:", currentLanguages);
+
+            const supportedLanguages = [
+                "English", "Spanish", "French", "German", "Italian",
+                "Hindi", "Arabic", "Chinese", "Japanese", "Korean"
+            ];
+
+            const newLanguages = supportedLanguages.filter(lang => !currentLanguages.includes(lang));
+
+            console.log("Languages to be added:", newLanguages);
+
+            for (const lang of newLanguages) {
+                await multiLanguageContract.call("addLanguage", [lang]);
+            }
+
+            await fetchLanguages();
+        } catch (error) {
+            console.error("Error adding new languages:", error);
+            alert(`Error adding new languages: ${error}`);
+        }
+    };
+
+    useEffect(() => {
+        if (uploadcontract) {
+            fetchAllJasons();
+        }
+        if (multiLanguageContract) {
+            fetchLanguages();
+        }
+    }, [uploadcontract, multiLanguageContract, fetchAllJasons, fetchLanguages]);
+
+    const handleTranslate = async () => {
+        setIsFetching(true);
+        await translateAndStoreDescription(name, content, true); // User input
+        setIsFetching(false);
+    };
+
+    const handleTranslateAll = async () => {
+        setIsFetching(true);
+        try {
+            for (const nftName of activeNftNames) {
+                if (typeof nftName === 'string') {
+                    await translateDesc(nftName);
+                } else {
+                    console.warn(`Skipping invalid NFT name: ${nftName}`);
+                }
+            }
+        } catch (error) {
+            console.error("Error in handleTranslateAll:", error);
+        } finally {
+            setIsFetching(false);
+        }
+    };
+
+    return (
+        <main className={styles.main}>
+            <div className={styles.container}>
+                {showConnectEmbed ? <SignIn /> : (
+                    <div className={styles.centered}>
+                        <h1>Admin Page</h1>
+                        <div className={styles.inputGroup}>
+                            <input
+                                type="text"
+                                placeholder="Name"
+                                value={name}
+                                onChange={(e) => setName(e.target.value)}
+                                className={styles.inputField}
+                            />
+                            <textarea
+                                placeholder="Content"
+                                value={content}
+                                onChange={(e) => setContent(e.target.value)}
+                                className={styles.textArea}
+                            />
+                            <button onClick={handleTranslate} disabled={isFetching} className={styles.button}>
+                                {isFetching ? 'Processing...' : 'Translate'}
+                            </button>
+                        </div>
+                        <div className={styles.inputGroup}>
+                            <input
+                                type="text"
+                                placeholder="Name to Translate"
+                                value={singleName}
+                                onChange={(e) => setSingleName(e.target.value)}
+                                className={styles.inputField}
+                            />
+                            <button onClick={() => translateDesc(singleName)} disabled={isFetching} className={styles.button}>
+                                {isFetching ? 'Processing...' : 'Translate Description'}
+                            </button>
+                        </div>
+                        <div className={styles.inputGroup}>
+                            <button onClick={handleTranslateAll} disabled={isFetching} className={styles.button}>
+                                {isFetching ? 'Processing...' : 'Translate All Descriptions'}
+                            </button>
+                        </div>
+                        <div className={styles.inputGroup}>
+                            <h2>Language Management</h2>
+                            <select className={styles.select}>
+                                {languages.map((lang, index) => (
+                                    <option key={index} value={lang}>{lang}</option>
+                                ))}
+                            </select>
+                            <button onClick={addLanguages} className={styles.button}>Add All Languages</button>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </main>
+    );
+};
+
+export default NameTranslate;

@@ -1,0 +1,36 @@
+import type { NextApiRequest, NextApiResponse } from "next";
+import { createClient } from "@vercel/kv";
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+async function getUserAddressFromUserMapping(userName: string): Promise<string> {
+    const key = `userMapping:${userName.toLowerCase()}`;
+    const data = await kv.get(key);
+    if (!data) throw new Error("User address not found");
+    return data as string;
+}
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+    const { userName, sourceKey } = req.body as { userName: string; sourceKey: string };
+    if (!userName || !sourceKey) return res.status(400).json({ error: "Missing userName or sourceKey" });
+
+    try {
+        const userAddress = await getUserAddressFromUserMapping(userName);
+        const key = `selectedSources:${userAddress.toLowerCase()}`;
+        let current: string[] = [];
+        const data = await kv.get(key);
+        if (data) current = data as string[];
+        if (!current.includes(sourceKey)) {
+            current.push(sourceKey);
+            await kv.set(key, current);
+        }
+        return res.status(200).json({ selectedSources: current, message: "Shared user added successfully" });
+    } catch (error) {
+        console.error("Error adding shared user:", error);
+        return res.status(500).json({ error: "Error adding shared user" });
+    }
+}

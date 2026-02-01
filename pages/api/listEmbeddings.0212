@@ -1,0 +1,74 @@
+// pages/api/listEmbeddings.ts
+import type { NextApiRequest, NextApiResponse } from "next";
+import { createClient } from "@vercel/kv";
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+export default async function handler(
+    req: NextApiRequest,
+    res: NextApiResponse
+) {
+    // Expect query parameter "userAddress"
+    const userAddress = req.query.userAddress as string;
+    if (!userAddress) {
+        return res.status(400).json({ error: "Missing userAddress parameter" });
+    }
+
+    try {
+        console.log(`[listEmbeddings] Retrieving global embedding index for user ${userAddress}`);
+        const indexKey = "embeddingIndex";
+        const keysData = await kv.get(indexKey);
+        const keys: string[] = keysData ? (keysData as string[]) : [];
+        console.log(`[listEmbeddings] Global embedding index: ${JSON.stringify(keys)}`);
+
+        if (!keys || keys.length === 0) {
+            console.warn("[listEmbeddings] No keys found in the global embedding index.");
+            return res.status(200).json({ embeddings: [] });
+        }
+
+        // Process each sourceKey from the global index.
+        const items = await Promise.all(
+            keys.map(async (sourceKey: string) => {
+                console.log(`[listEmbeddings] Processing sourceKey: ${sourceKey}`);
+                // Retrieve the access mapping (shared user IDs) and owner mapping.
+                const mappingData = await kv.get(`embeddingMapping:${sourceKey}`);
+                const owner = await kv.get(`embeddingOwner:${sourceKey}`);
+                if (!mappingData || !owner) {
+                    console.warn(`[listEmbeddings] Missing mappingData or owner for sourceKey ${sourceKey}`);
+                    return null;
+                }
+                const shared = mappingData as string[];
+
+                // Retrieve metadata for this embedding for the current user.
+                const metaKey = `${sourceKey}:${userAddress}`;
+                const metadata = await kv.get(metaKey);
+                console.log(
+                    `[listEmbeddings] For sourceKey "${sourceKey}", shared: ${JSON.stringify(shared)}, owner: ${owner}, metadata: ${JSON.stringify(metadata)}`
+                );
+                return {
+                    key: sourceKey,
+                    shared,
+                    owner: owner as string,
+                    isOwner: (owner as string).toLowerCase() === userAddress.toLowerCase(),
+                    // For uploads, metadata should contain documentName, uploadedAt, and type.
+                    documentName: metadata ? (metadata as any).documentName : undefined,
+                    uploadedAt: metadata ? (metadata as any).uploadedAt : undefined,
+                    type: metadata ? (metadata as any).type : undefined,
+                };
+            })
+        );
+
+        // Filter out any null items.
+        const filteredItems = items.filter((item: any) => item !== null);
+        // Return only embeddings for which the current user is in the shared access list.
+        const result = filteredItems.filter((item: any) => item.shared.includes(userAddress));
+        console.log(`[listEmbeddings] Final embeddings result: ${JSON.stringify(result)}`);
+        res.status(200).json({ embeddings: result });
+    } catch (error) {
+        console.error("Error listing embeddings:", error);
+        res.status(500).json({ error: "Error listing embeddings" });
+    }
+}

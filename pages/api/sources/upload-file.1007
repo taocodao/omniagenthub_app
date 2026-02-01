@@ -1,0 +1,267 @@
+// pages/api/sources/upload-file.ts - USING AXIOS (WORKING VERSION)
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { IncomingForm, File as FormidableFile } from 'formidable';
+import fs from 'fs';
+import path from 'path';
+import { createClient } from '@vercel/kv';
+import axios from 'axios';
+import FormData from 'form-data';
+
+const kv = createClient({
+  url: process.env.KV_REST_API_URL!,
+  token: process.env.KV_REST_API_TOKEN!,
+});
+
+const SURFSENSE_API_URL = process.env.SURFSENSE_API_URL || 'https://surfsense-backend-6iucxb6k5a-uc.a.run.app';
+const SURFSENSE_JWT_TOKEN = process.env.SURFSENSE_JWT_TOKEN!;
+
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
+
+interface NotebookSource {
+  id: string;
+  title: string;
+  type: 'file' | 'website' | 'text';
+  status: 'uploading' | 'processing' | 'completed' | 'error';
+  progress: number;
+  fileSize?: string;
+  dateCreated: string;
+  fileName?: string;
+  selected: boolean;
+  surfsenseDocId?: number;
+  surfsenseSearchSpaceId?: number;
+  fileType?: string;
+}
+
+interface Notebook {
+  id: string;
+  title: string;
+  sources: NotebookSource[];
+  sourceCount: number;
+  created: string;
+  lastUpdated: string;
+  userAddress: string;
+  surfsenseSearchSpaceId?: number;
+}
+
+interface SurfSenseSearchSpace {
+  id: number;
+  name: string;
+  description?: string;
+  created_at: string;
+  user_id: string;
+}
+
+interface UploadResponse {
+  success: boolean;
+  source?: NotebookSource;
+  surfsenseDocId?: number;
+  searchSpaceId?: number;
+  message?: string;
+  error?: string;
+}
+
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse<UploadResponse>
+): Promise<void> {
+  if (req.method !== 'POST') {
+    res.status(405).json({ success: false, message: 'Method not allowed' });
+    return;
+  }
+
+  let file: FormidableFile | undefined;
+
+  try {
+    if (!SURFSENSE_JWT_TOKEN) {
+      throw new Error('SURFSENSE_JWT_TOKEN not configured');
+    }
+
+    const form = new IncomingForm({
+      uploadDir: path.join(process.cwd(), 'tmp'),
+      keepExtensions: true,
+      maxFileSize: 50 * 1024 * 1024,
+    });
+
+    const tmpDir = path.join(process.cwd(), 'tmp');
+    if (!fs.existsSync(tmpDir)) {
+      fs.mkdirSync(tmpDir, { recursive: true });
+    }
+
+    const [fields, files] = await form.parse(req);
+    
+    file = Array.isArray(files.file) ? files.file[0] : files.file;
+    const userKey = Array.isArray(fields.userKey) ? fields.userKey[0] : fields.userKey;
+    const sourceId = Array.isArray(fields.sourceId) ? fields.sourceId[0] : fields.sourceId;
+    const notebookId = Array.isArray(fields.notebookId) ? fields.notebookId[0] : fields.notebookId;
+    const userAddress = Array.isArray(fields.userAddress) ? fields.userAddress[0] : fields.userAddress;
+
+    if (!file || !userKey || !sourceId || !notebookId || !userAddress) {
+      res.status(400).json({
+        success: false,
+        error: 'Missing required parameters'
+      });
+      return;
+    }
+
+    console.log('📁 Processing file upload:', file.originalFilename);
+
+    const notebookKey = `${userKey}:notebook:${notebookId}`;
+    const notebookData = await kv.get(notebookKey);
+
+    if (!notebookData) {
+      if (file?.filepath && fs.existsSync(file.filepath)) {
+        fs.unlinkSync(file.filepath);
+      }
+      res.status(404).json({
+        success: false,
+        error: 'Notebook not found'
+      });
+      return;
+    }
+
+    const notebook: Notebook = typeof notebookData === 'string' 
+      ? JSON.parse(notebookData) 
+      : notebookData as Notebook;
+
+    // Create search space if needed
+    let searchSpaceId: number = notebook.surfsenseSearchSpaceId || 0;
+    
+    if (!searchSpaceId) {
+      console.log('🆕 Creating new SurfSense search space...');
+      
+      const searchSpaceResponse = await axios.post(
+        `${SURFSENSE_API_URL}/api/v1/searchspaces/`,
+        {
+          name: notebook.title,
+          description: `Knowledge base for ${userAddress}`
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${SURFSENSE_JWT_TOKEN}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      searchSpaceId = searchSpaceResponse.data.id;
+      notebook.surfsenseSearchSpaceId = searchSpaceId;
+      
+      console.log('✅ Created SurfSense search space:', searchSpaceId);
+    }
+
+    // ✅ Upload file using axios with form-data
+    console.log('📤 Uploading to SurfSense backend...');
+    
+    const formData = new FormData();
+    
+    // Create read stream
+    const fileStream = fs.createReadStream(file.filepath);
+    
+    // Append file
+    formData.append('files', fileStream, {
+      filename: file.originalFilename || 'document',
+      contentType: file.mimetype || 'application/octet-stream',
+    });
+    
+    // Append search_space_id
+    formData.append('search_space_id', searchSpaceId.toString());
+
+    console.log('📋 Uploading with axios...');
+
+    const uploadResponse = await axios.post(
+      `${SURFSENSE_API_URL}/api/v1/documents/fileupload`,
+      formData,
+      {
+        headers: {
+          'Authorization': `Bearer ${SURFSENSE_JWT_TOKEN}`,
+          ...formData.getHeaders()
+        },
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity
+      }
+    );
+
+    console.log('✅ File uploaded to SurfSense:', uploadResponse.data);
+
+    const uploadResult = uploadResponse.data;
+    const surfsenseDocId = uploadResult.document_id || uploadResult.id || uploadResult.documents?.[0]?.id || 0;
+
+    // Update notebook
+    const source: NotebookSource = {
+      id: sourceId,
+      title: file.originalFilename || 'Unknown File',
+      type: 'file',
+      status: 'completed',
+      progress: 100,
+      fileSize: formatFileSize(file.size),
+      dateCreated: new Date().toLocaleDateString(),
+      fileName: file.originalFilename || undefined,
+      selected: true,
+      surfsenseDocId: surfsenseDocId,
+      surfsenseSearchSpaceId: searchSpaceId,
+      fileType: path.extname(file.originalFilename || '').toLowerCase()
+    };
+
+    const existingSources = notebook.sources || [];
+    const existingIndex = existingSources.findIndex((s: NotebookSource) => s.id === sourceId);
+
+    if (existingIndex !== -1) {
+      existingSources[existingIndex] = source;
+    } else {
+      existingSources.push(source);
+    }
+
+    const updatedNotebook: Notebook = {
+      ...notebook,
+      sources: existingSources,
+      sourceCount: existingSources.length,
+      lastUpdated: new Date().toISOString(),
+      surfsenseSearchSpaceId: searchSpaceId
+    };
+
+    await kv.set(notebookKey, JSON.stringify(updatedNotebook));
+
+    // Clean up
+    if (file?.filepath && fs.existsSync(file.filepath)) {
+      fs.unlinkSync(file.filepath);
+    }
+
+    console.log('✅ Upload completed successfully');
+
+    res.status(200).json({
+      success: true,
+      source,
+      surfsenseDocId,
+      searchSpaceId,
+      message: 'File uploaded to SurfSense successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ Upload error:', error);
+    
+    if (axios.isAxiosError(error)) {
+      console.error('❌ Axios error details:', error.response?.data);
+    }
+    
+    if (file?.filepath && fs.existsSync(file.filepath)) {
+      fs.unlinkSync(file.filepath);
+    }
+
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Upload failed'
+    });
+  }
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}

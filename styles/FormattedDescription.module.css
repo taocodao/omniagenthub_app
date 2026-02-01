@@ -1,0 +1,31 @@
+/* styles/FormattedDescription.module.css */
+
+.container {
+    padding: 16px;
+    background-color: #f0f8ff;
+    /* Light blue background for better readability */
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    margin: 20px 0;
+}
+
+.intro {
+    font-size: 16px;
+    margin-bottom: 12px;
+    color: #333;
+}
+
+.orderedList {
+    padding-left: 20px;
+}
+
+.listItem {
+    font-size: 15px;
+    margin-bottom: 10px;
+    color: #555;
+    line-height: 1.6;
+}
+
+.listItem strong {
+    color: #000;
+}

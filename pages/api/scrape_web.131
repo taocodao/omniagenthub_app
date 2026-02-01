@@ -1,0 +1,278 @@
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { ApifyClient } from 'apify-client';
+import { Pinecone } from '@pinecone-database/pinecone';
+import { OpenAI } from 'openai';
+import { createClient } from '@vercel/kv';
+import crypto from 'crypto';
+
+// =====================
+// Matching "uploadFile" parameters
+// =====================
+const INDEX_NAME = 'user-documents'; // same as in uploadFile.ts
+const DIMENSION = 1536;              // for text-embedding-ada-002
+const CHUNK_SIZE = 1000;             // chunk size from uploadFile.ts
+const MAX_TOKENS = 8192;             // same used for token checks
+
+// Initialize clients
+const apifyClient = new ApifyClient({
+    token: process.env.APIFY_API_TOKEN!,
+});
+
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY!,
+});
+
+const pinecone = new Pinecone({
+    apiKey: process.env.PINECONE_API_KEY!,
+});
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+// =====================
+// Utility Functions
+// =====================
+
+// Ensure the Pinecone index is created if it doesn't exist
+async function getOrCreateIndex() {
+    try {
+        return await pinecone.Index(INDEX_NAME);
+    } catch (error) {
+        // If the index doesn't exist, create it
+        await pinecone.createIndex({
+            name: INDEX_NAME,
+            dimension: DIMENSION,
+            metric: 'cosine',
+            spec: {
+                serverless: {
+                    cloud: 'aws',
+                    region: 'us-east-1',
+                },
+            },
+        });
+        // Wait for the index to finish creating (60s is typical for Pinecone serverless)
+        await new Promise((resolve) => setTimeout(resolve, 60000));
+        return pinecone.Index(INDEX_NAME);
+    }
+}
+
+// Clean text (remove HTML tags, trim)
+function cleanText(text: string): string {
+    return text.replace(/<[^>]+>/g, '').trim();
+}
+
+// Normalize URLs (remove trailing slash, convert to lowercase)
+function normalizeUrl(url: string): string {
+    return url.replace(/\/$/, '').toLowerCase();
+}
+
+// Generate a unique hash (e.g., for very long doc IDs)
+function generateHash(input: string): string {
+    return crypto.createHash('sha256').update(input).digest('hex');
+}
+
+// Truncate text if it exceeds a max token limit
+function truncateText(text: string, maxTokens: number): string {
+    const words = text.split(' ');
+    if (words.length > maxTokens) {
+        return words.slice(0, maxTokens).join(' ') + '...';
+    }
+    return text;
+}
+
+// Calculate approximate token count using OpenAI embeddings
+async function calculateTokenCount(text: string): Promise<number> {
+    const response = await openai.embeddings.create({
+        model: 'text-embedding-ada-002',
+        input: text,
+    });
+    return response.data[0].embedding.length;
+}
+
+// Embed a single chunk of text
+async function getEmbedding(text: string): Promise<number[]> {
+    const response = await openai.embeddings.create({
+        model: 'text-embedding-ada-002',
+        input: text,
+    });
+    return response.data[0].embedding;
+}
+
+// Split text into ~1000-token chunks
+function splitTextIntoChunks(text: string, chunkSize: number = CHUNK_SIZE): string[] {
+    const words = text.split(/\s+/);
+    const chunks: string[] = [];
+    let currentChunk: string[] = [];
+
+    for (const word of words) {
+        if (currentChunk.join(' ').length + word.length > chunkSize) {
+            chunks.push(currentChunk.join(' '));
+            currentChunk = [];
+        }
+        currentChunk.push(word);
+    }
+    if (currentChunk.length > 0) {
+        chunks.push(currentChunk.join(' '));
+    }
+    return chunks;
+}
+
+// Store text in chunked format into Pinecone
+async function storeChunkedEmbeddings(docId: string, text: string, userId?: string) {
+    // 1. Create or get the Pinecone index
+    const index = await getOrCreateIndex();
+
+    // 2. Split into chunks
+    const textChunks = splitTextIntoChunks(text, CHUNK_SIZE);
+
+    // 3. For each chunk, embed and upsert into Pinecone
+    for (let i = 0; i < textChunks.length; i++) {
+        const chunkText = textChunks[i];
+        const embedding = await getEmbedding(chunkText);
+
+        // Build a chunk-based ID
+        const chunkId = `${docId}-chunk-${i}`;
+        const finalId = chunkId.length > 512 ? generateHash(chunkId) : chunkId;
+
+        const vectors = [
+            {
+                id: finalId,
+                values: embedding,
+                metadata: {
+                    docId,
+                    chunkIndex: i,
+                    content: chunkText,
+                    // e.g., userId, date, etc. can be added
+                },
+            },
+        ];
+
+        // If you want a user-based namespace:
+        // await index.namespace(userId ?? 'default').upsert(vectors);
+        // Otherwise, no namespace:
+        await index.upsert(vectors);
+
+        console.log(`[${new Date().toISOString()}] Upserted chunk ${i} for docId "${docId}".`);
+    }
+}
+
+// =====================
+// Main Handler
+// =====================
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed' });
+    }
+
+    // If needed, capture user address for Pinecone namespace
+    // const userId = req.headers['user-address'] as string || 'anonymous';
+
+    const { url } = req.body;
+    if (!url) {
+        return res.status(400).json({ error: 'Missing "url" in request body.' });
+    }
+
+    // Potential sitemaps
+    const sitemapUrls = [
+        `${url}/sitemap.xml`,
+        `${url}/page-sitemap.xml`,
+        `${url}/sitemap_index.xml`,
+    ];
+
+    try {
+        const normalizedUrl = normalizeUrl(url);
+
+        let items: any[] = [];
+        let sitemapCrawlSuccess = false;
+
+        // Attempt to crawl sitemaps
+        for (const sitemapUrl of sitemapUrls) {
+            try {
+                console.log(`Attempting to crawl: ${sitemapUrl}`);
+                const sitemapRun = await apifyClient.actor('apify/website-content-crawler').call({
+                    startUrls: [{ url: sitemapUrl }],
+                    maxCrawlPages: 20,
+                    maxRequestsPerCrawl: 20,
+                    maxCrawlDepth: 1,
+                });
+                const sitemapData = await apifyClient
+                    .dataset(sitemapRun.defaultDatasetId)
+                    .listItems();
+                items = sitemapData.items;
+                sitemapCrawlSuccess = true;
+                break;
+            } catch (error) {
+                console.warn(`Failed to crawl sitemap: ${sitemapUrl}`);
+            }
+        }
+
+        // If no valid sitemap was found, fallback
+        if (!sitemapCrawlSuccess) {
+            console.warn('No valid sitemap found. Falling back to predefined pages.');
+            const fallbackRun = await apifyClient.actor('apify/website-content-crawler').call({
+                startUrls: [
+                    { url },
+                    { url: `${url}/about` },
+                    { url: `${url}/services` },
+                    { url: `${url}/products` },
+                    { url: `${url}/solutions` },
+                ],
+                maxCrawlPages: 10,
+                maxCrawlDepth: 1,
+            });
+            const fallbackData = await apifyClient
+                .dataset(fallbackRun.defaultDatasetId)
+                .listItems();
+            items = fallbackData.items;
+        }
+
+        // Process each scraped page
+        let processedCount = 0;
+        for (const item of items) {
+            const cleanedText = cleanText(item.text || '');
+
+            // Possibly truncate if it exceeds token limit
+            let truncatedText = cleanedText;
+            try {
+                const tokenCount = await calculateTokenCount(cleanedText);
+                if (tokenCount > MAX_TOKENS) {
+                    truncatedText = truncateText(cleanedText, Math.floor(MAX_TOKENS * 0.9));
+                }
+            } catch (error) {
+                console.error(`Error calculating token count for URL "${item.url}":`, error);
+                continue;
+            }
+
+            // docId can be the URL or a hashed version if too long
+            const docId = item.url.length > 512 ? generateHash(item.url) : item.url;
+
+            // Actually store the chunked embeddings
+            try {
+                // user-based namespace if needed: await storeChunkedEmbeddings(docId, truncatedText, userId);
+                await storeChunkedEmbeddings(docId, truncatedText);
+                processedCount++;
+            } catch (error) {
+                console.error(`Error generating embeddings for URL "${item.url}":`, error);
+                continue;
+            }
+        }
+
+        // Optionally record the result in KV
+        await kv.set(`website:${normalizedUrl}`, {
+            scrapedAt: new Date().toISOString(),
+            pageCount: items.length,
+            embeddedCount: processedCount,
+        });
+
+        return res.status(200).json({
+            message: `Scraped ${items.length} pages; embedded: ${processedCount}.`,
+        });
+    } catch (error) {
+        console.error('Error:', error);
+        return res
+            .status(500)
+            .json({ error: 'An error occurred while scraping and storing the website content.' });
+    }
+}

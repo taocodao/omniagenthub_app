@@ -1,0 +1,9 @@
+// pages/index.tsx
+import React from 'react';
+import Shop from './shop'; // Adjust the path if necessary
+
+const IndexPage: React.FC = () => {
+    return <Shop />;
+};
+
+export default IndexPage;

@@ -1,0 +1,71 @@
+{
+    "compilerOptions": {
+        "allowImportingTsExtensions": true,
+        "target": "es2022", // Specify ECMAScript target version
+        /* "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],*/ // Include standard library files
+        "lib": [
+            "ES2020",
+            "DOM"
+        ],
+        "types": [
+            "node"
+        ],
+        "allowJs": true, // Allow JavaScript files to be compiled
+        "skipLibCheck": true, // Skip type checking of declaration files
+        "strict": true, // Enable all strict type-checking options
+        "forceConsistentCasingInFileNames": true, // Disallow inconsistently-cased references
+        "noEmit": true, // Do not emit outputs
+        "esModuleInterop": true, // Enables emit interoperability between CommonJS and ES Modules
+        "module": "esnext", // Specify module code generation
+        "moduleResolution": "node", // Use Node.js-style module resolution
+        "resolveJsonModule": true, // Include modules that resolve .json files
+        "isolatedModules": true, // Ensure each file can be transpiled by itself
+        "incremental": true, // Enable incremental compilation
+        "sourceMap": false, // Disable source maps
+        "jsx": "preserve", // Preserve JSX as is (React-specific setting)
+        "paths": {
+            "@/*": [
+                "./src/*"
+            ], // Setup path aliases
+            "@public/*": [
+                "./public/*"
+            ]
+        },
+        "typeRoots": [
+            "./node_modules/@types", // Include default type definitions
+            "./types" // Include custom type definitions
+        ],
+        "plugins": [
+            {
+                "name": "next" // Use Next.js specific TypeScript plugin
+            }
+        ]
+    },
+    "include": [
+        "next-env.d.ts", // Include Next.js environment types
+        "**/*.ts", // Include all .ts files
+        "**/*.tsx" // Include all .tsx files
+        ,
+        "app",
+        ".next/types/**/*.ts",
+        "components/SendFunds.backup",
+        "pages/nameTranslate.backup",
+        "pages/api/get_task_description.0926",
+        "pages/api/get_content_by_language.0926",
+        "components/OpenWebsiteToast.backup",
+        "pages/api/convert-prompt,1015",
+        "pages/convert-prompt.1009",
+        "pages/convert-prompt.1019.tsx",
+        "pages/api/getCompanyUsers.0211",
+        "pages/ChatHome.0201",
+        "pages/api/sendEmail.0414",
+        "pages/api/send-payment.0414"
+    ],
+    "exclude": [
+        "node_modules" // Exclude node_modules from compilation
+    ]
+}

@@ -1,0 +1,64 @@
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+interface TransferRequest {
+    recipientId: string;
+    freeTrades?: number;
+    freeUploads?: number;
+    freeWebScrape?: number;
+    source?: string;
+}
+
+// Define interface for updated balances object
+interface UpdatedBalances {
+    freeTrades?: number;
+    freeUploads?: number;
+    freeWebScrape?: number;
+}
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'POST') {
+        res.setHeader('Allow', 'POST');
+        return res.status(405).json({ success: false, message: 'Method Not Allowed' });
+    }
+
+    const { recipientId, freeTrades, freeUploads, freeWebScrape, source } = req.body as TransferRequest;
+
+    if (!recipientId) {
+        return res.status(400).json({ success: false, message: 'Missing recipientId parameter' });
+    }
+
+    try {
+        // Initialize with the proper type
+        const updatedBalances: UpdatedBalances = {};
+
+        if (freeTrades && freeTrades > 0) {
+            const freeTradesKey = `${recipientId}:freeTrades`;
+            updatedBalances.freeTrades = await kv.incrby(freeTradesKey, freeTrades);
+        }
+
+        if (freeUploads && freeUploads > 0) {
+            const freeUploadsKey = `${recipientId}:freeUploads`;
+            updatedBalances.freeUploads = await kv.incrby(freeUploadsKey, freeUploads);
+        }
+
+        if (freeWebScrape && freeWebScrape > 0) {
+            const freeWebScrapeKey = `${recipientId}:freeWebScrape`;
+            updatedBalances.freeWebScrape = await kv.incrby(freeWebScrapeKey, freeWebScrape);
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: 'Perks transferred successfully',
+            updatedBalances
+        });
+    } catch (error) {
+        console.error('Error transferring perks:', error);
+        return res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+}

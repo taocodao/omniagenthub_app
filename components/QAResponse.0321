@@ -1,0 +1,138 @@
+// components/QAResponse.tsx
+
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import ReactMarkdown from 'react-markdown';
+import { QuestionAnswer } from '../types';
+import styles from "../styles/Home5.module.css";
+import { LocalizedText, getLocalizedString } from "../util/LocalizedText";
+
+interface QAResponseProps {
+    qaResponse: string;
+    isEditing: boolean;
+    toggleEdit: () => void;
+    editableQA: QuestionAnswer[];
+    editableQAForEmbed: QuestionAnswer[];
+    handleAnswerChange: (index: number, newAnswer: string) => void;
+    handleAnswerSubmit: (saveToTaskChecks?: boolean[]) => void;
+    numQuestions: number;
+    isLoading: boolean;
+    saveToTaskChecks: boolean[]; // Add this line
+    setSaveToTaskChecks: React.Dispatch<React.SetStateAction<boolean[]>>; // Add this line
+}
+
+const QAResponse: React.FC<QAResponseProps> = ({
+    qaResponse,
+    isEditing,
+    toggleEdit,
+    editableQA,
+    handleAnswerChange,
+    handleAnswerSubmit,
+    numQuestions,
+    isLoading,
+}) => {
+
+    // ✅ Move hook INSIDE component body
+    const [saveToTaskChecks, setSaveToTaskChecks] = useState<boolean[]>(new Array(editableQA.length).fill(false));
+
+    const textareaRefs = useRef<(HTMLTextAreaElement | null)[]>([]);
+
+    const setTextAreaRef = useCallback((el: HTMLTextAreaElement | null, index: number) => {
+        textareaRefs.current[index] = el;
+    }, []);
+
+
+
+    useEffect(() => {
+        if (isEditing) {
+            textareaRefs.current.forEach((textarea) => {
+                if (textarea) {
+                    textarea.style.height = 'auto';
+                    textarea.style.height = `${textarea.scrollHeight}px`;
+                }
+            });
+        }
+    }, [isEditing, editableQA]);
+
+    useEffect(() => {
+        if (editableQA.length > 0 && saveToTaskChecks.length !== editableQA.length) {
+            setSaveToTaskChecks(new Array(editableQA.length).fill(true));
+        }
+    }, [editableQA]);
+
+
+
+    const handleTextareaResize = (index: number) => {
+        const textarea = textareaRefs.current[index];
+        if (textarea) {
+            textarea.style.height = 'auto';
+            textarea.style.height = `${textarea.scrollHeight}px`;
+        }
+    };
+
+    const handleCheckboxChange = (index: number) => {
+        const updatedChecks = [...saveToTaskChecks];
+        updatedChecks[index] = !updatedChecks[index];
+        setSaveToTaskChecks(updatedChecks);
+        // Trigger save or remove based on checkbox state
+        // handleAnswerSubmit(updatedChecks);
+    };
+
+    useEffect(() => {
+        if (editableQA.length > 0 && saveToTaskChecks.length !== editableQA.length) {
+            const updatedSaveToTaskChecks = editableQA.map(() => true); // Always check by default when editing
+            setSaveToTaskChecks(updatedSaveToTaskChecks);
+        }
+    }, [editableQA]);
+
+
+    return (
+        <div>
+            {isEditing ? (
+                <form onSubmit={(e) => { e.preventDefault(); handleAnswerSubmit(saveToTaskChecks); }}>
+                    {editableQA.map((qa, index) => (
+                        <div key={index} className="mb-8">
+                            <div className="font-bold">Q: {qa.question}</div>
+                            <label className="flex items-center mb-2">
+                                <input
+                                    type="checkbox"
+                                    checked={saveToTaskChecks[index]}
+                                    onChange={() => handleCheckboxChange(index)}
+                                    className="mr-2"
+                                />
+                                <LocalizedText name="Save this Q&A for future use with this task" />
+                            </label>
+                            <div>A:</div>
+                            <textarea
+                                ref={(el) => setTextAreaRef(el, index)}
+                                value={qa.answer.replace(/\*\*/g, '')}
+                                onChange={(e) => {
+                                    handleAnswerChange(index, e.target.value);
+                                    handleTextareaResize(index);
+                                }}
+                                className={`w-full p-2 border rounded ${styles.textarea}`}
+                                style={{
+                                    minHeight: '100px',
+                                    whiteSpace: 'pre-wrap',
+                                    minWidth: '90%',
+                                    maxHeight: '700px',
+                                    overflowX: 'hidden',
+                                    fontSize: '18px',
+                                    fontWeight: 'bold',
+                                }}
+                            />
+                        </div>
+                    ))}
+                    <button type="submit" className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
+                        Save Answers
+                    </button>
+                </form>
+            ) : (
+                <ReactMarkdown>
+                    {editableQA.map(qa => `**Q: ${qa.question}**\n\nA: ${qa.answer}`).join('\n\n')}
+                </ReactMarkdown>
+            )}
+        </div>
+    );
+};
+
+export default QAResponse;

@@ -1,0 +1,27 @@
+//api/selectedSources/get.ts
+import type { NextApiRequest, NextApiResponse } from "next";
+import { createClient } from "@vercel/kv";
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+export default async function handler(
+    req: NextApiRequest,
+    res: NextApiResponse
+) {
+    const userAddress = req.query.userAddress as string;
+    if (!userAddress) {
+        return res.status(400).json({ error: "Missing userAddress parameter" });
+    }
+    try {
+        const key = `selectedSources1:${userAddress}`;
+        const data = await kv.get(key);
+        const selectedSources = data ? (data as string[]) : [];
+        res.status(200).json({ selectedSources });
+    } catch (error) {
+        console.error("Error retrieving selected sources:", error);
+        res.status(500).json({ error: "Error retrieving selected sources" });
+    }
+}

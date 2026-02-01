@@ -1,0 +1,495 @@
+'use client';
+
+import React, { useState, useEffect, useRef, useContext, useMemo } from 'react';
+import ReactMarkdown from 'react-markdown';
+import rehypeRaw from 'rehype-raw';
+import remarkGfm from 'remark-gfm';
+import styles from "../styles/Home5.module.css";
+import HashUtil from '../util/hashToFixedDigits';
+import { useActiveAccount } from 'thirdweb/react';
+import ReactDOM from 'react-dom/client';
+import { ThirdwebSDK, SmartContract } from '@thirdweb-dev/sdk';
+import { PLATFORM_NAME, TRANSACTION_FEE_RATE } from "../constants/constants";
+import { LocalizedText, useLocalizedString, getLocalizedString } from '../util/LocalizedText';
+import { LocalizationContext } from '../util/LocalizationContext';
+import { ThirdwebContract } from "thirdweb";
+import { ethers } from "ethers";
+import { ACTIVE_CHAIN } from "../constants/constants";
+import { polygonAmoy, polygon, Chain } from "thirdweb/chains";
+import { BaseContract } from "ethers";
+import { usePayment } from '../hook/Payment_Process'; // Adjust the path if necessary
+import { Message, useAssistant } from 'ai/react';
+
+
+interface ChatBaseStreamProps {
+    role: string;
+    task: string;
+    initialMessage: string;
+    department: string; // Add this line
+    user: string | null;
+    price: number | null;
+}
+
+const options = [
+    'Enhance Based on Previous Feedback or Additional Input',
+    'Conduct a More Rigorous Assessment',
+    'Gather Detail for Customization by Answering More Questions',
+    'Simulate Comprehensive Focus Group Insights For Better Work',
+    'Replicate Diverse Expert Opinions to Improve',
+    'Explore Innovative Approaches to be Creative',
+    'Adjust Presentation Style, Tone, or Scope',
+    'Optimize for Peak Performance',
+];
+
+const optionShortNames: { [key: string]: string } = {
+    'Enhance Based on Previous Feedback or Additional Input': 'Refine',
+    'Conduct a More Rigorous Assessment': 'Evaluate',
+    'Gather Detail for Customization by Answering More Questions': 'Personalize',
+    'Simulate Comprehensive Focus Group Insights For Better Work': 'Focus Group',
+    'Replicate Diverse Expert Opinions to Improve': 'Expert Feedback',
+    'Explore Innovative Approaches to be Creative': 'Creative',
+    'Adjust Presentation Style, Tone, or Scope': 'Modify',
+    'Optimize for Peak Performance': 'Auto Improve',
+};
+
+const CustomTable: React.FC<React.TableHTMLAttributes<HTMLTableElement>> = ({ children, ...props }) => (
+    <table className={styles.customTable} {...props}>
+        {children}
+    </table>
+);
+
+
+
+export function ChatBaseStream({ role, task, initialMessage, department, user,
+    price }: ChatBaseStreamProps) {
+    const { process_payment, isPaymentProcessing } = usePayment();
+    const [messages, setMessages] = useState<Array<{ role: string; content: string }>>([]);
+    const [input, setInput] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+    const [isRefining, setIsRefining] = useState(false);
+    const account = useActiveAccount();
+    const userAddress = account?.address;
+    const assistantId = HashUtil.hashTo(role + task);
+    const generatedThreadId = HashUtil.hashTo(role + task + userAddress);
+    const initialMessageSentRef = useRef(false);
+    const inputRef = useRef<HTMLTextAreaElement>(null);
+    const [renderKey, setRenderKey] = useState(0);
+
+    const [tokenBalance, setTokenBalance] = useState<{ displayValue: string; symbol: string } | null>(null);
+    //const { data: balanceData, isLoading: isBalanceLoading } = useBalanceForAddress(String(address));
+    const { language, setLanguage } = useContext(LocalizationContext);
+    const chainMap: { [key: string]: Chain } = {
+        "polygon-amoy-testnet": polygonAmoy,
+        "polygon": polygon, // Add Polygon mainnet
+    };
+    // Ensure activeChain is a Chain object
+    const activeChain: Chain = chainMap[ACTIVE_CHAIN];
+
+    const [balanceData, setBalanceData] = useState<string | null>(null);
+    const [isBalanceLoading, setIsBalanceLoading] = useState<boolean>(true);
+    // Now place the hook at the top level
+    const { status, submitMessage, handleInputChange } = useAssistant({
+        api: '/api/assistant1',
+        body: {
+            assistantId: assistantId, // Replace with your actual assistant ID
+            threadId: null, // Ensure this is passed in the request
+        }
+    });
+
+    useEffect(() => {
+        if (initialMessage && !initialMessageSentRef.current) {
+            handleSend(initialMessage);
+            initialMessageSentRef.current = true;
+        }
+    }, [initialMessage]);
+
+
+    /*const handleSend = async (message: string) => {
+        try {
+            setIsLoading(true);
+            // setInput('');
+            setIsRefining(false);
+
+            if (inputRef.current) {
+                inputRef.current.focus(); // Ensure input gets focus
+            }
+
+
+            let currentUser = user;
+            let currentPrice = price;
+
+            // Now you can access user and price here
+            if (currentUser === null || currentPrice === null) {
+                console.log('User or price information not available');
+                return; // Exit the function if data is still not available
+            }
+
+            if (currentPrice) {
+                const freeChatsUsed = await process_payment(String(userAddress), currentPrice, currentUser);
+                if (!freeChatsUsed) {
+                    const message = 'Insufficient balance. Unable to proceed with the request.';
+                    alert(await getLocalizedString(message, language));
+                    return;
+                }
+            }
+            // Add user message to the messages array immediately
+            // setMessages(prev => [...prev, { role: 'user', content: message }]);
+            if (message && optionShortNames[message]) {
+                console.log("click on the button, the message is ", message);
+                try {
+                    const localizedMessage = await getLocalizedString(message, language);
+                    setMessages(prev => [...prev, {
+                        role: 'user',
+                        content: localizedMessage
+                        //originalContent: message
+                    }]);
+                } catch (error) {
+                    console.error('Error localizing message:', error);
+                    setMessages(prev => [...prev, {
+                        role: 'user',
+                        content: message,
+                        originalContent: message
+                    }]);
+                }
+            } else {
+                setMessages(prev => [...prev, { role: 'user', content: message }]);
+            }
+            const userMessage = optionShortNames[message] ? optionShortNames[message] : message;
+            console.log(" inside handleSend  the userMessage is ", userMessage);
+            /*const response = await fetch('/api/assistant', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ assistantId, threadId: generatedThreadId, userMessage: userMessage }),
+            });
+
+            if (message && optionShortNames[message]) {
+                const localizedMessage = await getLocalizedString(message, language);
+                setMessages(prev => [...prev, { role: 'user', content: localizedMessage }]);
+            } else {
+                setMessages(prev => [...prev, { role: 'user', content: message }]);
+            }
+
+            // Submit the message using the assistant hook
+            await submitMessage();
+
+            //if (!response.ok) {
+            //    throw new Error('Failed to run assistant');
+            //}
+
+            /* const reader = response.body?.getReader();
+             const decoder = new TextDecoder();
+ 
+             if (reader) {
+                 let accumulatedResponse = '';
+ 
+                 while (true) {
+                     const { done, value } = await reader.read();
+                     if (done) break;
+                     const decodedChunk = decoder.decode(value);
+                     accumulatedResponse += decodedChunk;
+                     setMessages(prev => {
+                         const newMessages = [...prev];
+                         if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === 'assistant') {
+                             newMessages[newMessages.length - 1].content = accumulatedResponse;
+                         } else {
+                             newMessages.push({ role: 'assistant', content: accumulatedResponse });
+                         }
+                         return newMessages;
+                     });
+                 }
+             }
+
+            setIsLoading(false);
+
+        } catch (error) {
+            console.error('Error:', error);
+            // alert('Error: ' + (error as Error).message);
+        } finally {
+            setIsLoading(false);
+        }
+    };*/
+    const handleSend = async (message: string) => {
+        try {
+            setIsLoading(true);
+            setIsRefining(false);
+
+            if (inputRef.current) {
+                inputRef.current.focus(); // Ensure input gets focus
+            }
+
+            // Check user and price before proceeding
+            let currentUser = user;
+            let currentPrice = price;
+
+            if (currentUser === null || currentPrice === null) {
+                console.log('User or price information not available');
+                return; // Exit the function if data is still not available
+            }
+
+            if (currentPrice) {
+                const freeChatsUsed = await process_payment(String(userAddress), currentPrice, currentUser);
+                if (!freeChatsUsed) {
+                    const message = 'Insufficient balance. Unable to proceed with the request.';
+                    alert(await getLocalizedString(message, language));
+                    return;
+                }
+            }
+
+            // Add user message to the messages array immediately
+            const userMessage = optionShortNames[message] ? optionShortNames[message] : message;
+            setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+
+            // Manually call the backend API
+            const response = await fetch('/api/assistant1', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    assistantId: assistantId,  // Pass the assistantId
+                    threadId: null, // Pass the threadId
+                    message: userMessage       // Pass the user message here
+                }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to send message to assistant');
+            }
+
+            // Handle the assistant's streamed response
+            const reader = response.body?.getReader();
+            const decoder = new TextDecoder();
+            let accumulatedResponse = '';
+
+            if (reader) {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    const decodedChunk = decoder.decode(value);
+                    accumulatedResponse += decodedChunk;
+                    setMessages(prev => {
+                        const newMessages = [...prev];
+                        if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === 'assistant') {
+                            newMessages[newMessages.length - 1].content = accumulatedResponse;
+                        } else {
+                            newMessages.push({ role: 'assistant', content: accumulatedResponse });
+                        }
+                        return newMessages;
+                    });
+                }
+            }
+
+            setIsLoading(false);
+        } catch (error) {
+            console.error('Error:', error);
+            setMessages(prev => [...prev, { role: 'assistant', content: 'Error occurred while sending the message' }]);
+            setIsLoading(false);
+        }
+    };
+
+
+    const handleInputChange1 = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+        setInput(e.target.value);
+        if (inputRef.current) {
+            inputRef.current.style.height = 'auto';
+            inputRef.current.style.height = `${inputRef.current.scrollHeight}px`;
+        }
+    };
+
+    const handleButtonClick = async (action: string) => {
+        if (optionShortNames[action] === 'Refine') {
+            setRenderKey(prevKey => prevKey + 1);
+            setIsRefining(true);
+            setInput("");
+            try {
+                const placeholder = await getLocalizedString('Please type in your feedback or leave it blank', language);
+                if (inputRef.current)
+                    inputRef.current.placeholder = placeholder;
+            } catch (error) {
+                console.error('Error setting localized placeholder:', error);
+                // Fallback to default English text if localization fails
+                if (inputRef.current)
+                    inputRef.current.placeholder = 'Please type in your feedback or leave it blank';
+            }
+
+        } else {
+
+            try {
+                //await handleSend(optionShortNames[action]);
+                await handleSend(action);
+            } finally {
+                setIsLoading(false);
+            }
+        }
+    };
+
+
+    const handleRefineSubmit = async () => {
+        await handleSend('Refine ' + input);
+    };
+
+    const copyToClipboard = async (content: string) => {
+        try {
+            // Create a temporary element to render the markdown content
+            const tempElement = document.createElement('div');
+            tempElement.innerHTML = await renderMarkdownToHTML(content);
+
+            // Copy both HTML and plain text to clipboard
+            await navigator.clipboard.write([
+                new ClipboardItem({
+                    'text/html': new Blob([tempElement.innerHTML], { type: 'text/html' }),
+                    'text/plain': new Blob([content], { type: 'text/plain' })
+                })
+            ]);
+            //alert("Copied to clipboard with formatting");
+            const message = 'Copied to clipboard with formatting';
+            alert(await getLocalizedString(message, language));
+        } catch (err) {
+            console.error("Failed to copy: ", err);
+            // Fallback to copying plain text
+            navigator.clipboard.writeText(content);
+            //alert("Copied plain text to clipboard");
+            const message = 'Copied plain text to clipboard';
+            alert(await getLocalizedString(message, language));
+
+        }
+    };
+
+    const feedbackPlaceholder = useLocalizedString("Please type feedback or leave blank");
+    const messagePlaceholder = useLocalizedString("Type your message");
+
+    const renderMarkdownToHTML = async (markdown: string): Promise<string> => {
+        return new Promise((resolve) => {
+            const tempElement = document.createElement('div');
+
+            // Create a root for React rendering
+            const root = ReactDOM.createRoot(tempElement);
+
+            const markdownElement = (
+                <ReactMarkdown
+                    rehypePlugins={[rehypeRaw]}
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                        table: ({ children, ...props }) => (
+                            <table style={{ borderCollapse: 'collapse', width: '100%' }} {...props}>
+                                {children}
+                            </table>
+                        ),
+                        th: ({ children, ...props }) => (
+                            <th style={{ border: '1px solid black', padding: '8px', backgroundColor: '#f2f2f2' }} {...props}>
+                                {children}
+                            </th>
+                        ),
+                        td: ({ children, ...props }) => (
+                            <td style={{ border: '1px solid black', padding: '8px' }} {...props}>
+                                {children}
+                            </td>
+                        ),
+                    }}
+                >
+                    {markdown}
+                </ReactMarkdown>
+            );
+
+            // Render the element and then resolve the innerHTML
+            root.render(markdownElement);
+            resolve(tempElement.innerHTML);
+        });
+    };
+
+
+    return (
+        <div key={renderKey}>
+            <div className={styles.container}>
+                <div className={styles.chatContainer}>
+                    {messages.map((message, index) => (
+                        <div key={index} className={`${styles.message} ${message.role === 'user' ? styles.userMessage : styles.aiMessage}`}>
+                            <div className={styles.messageRole}>
+                                {message.role === 'user' ? <LocalizedText name={`User: ${task}`} /> : <LocalizedText name={role} />}
+                            </div>
+                            <ReactMarkdown
+                                remarkPlugins={[remarkGfm]}
+                                rehypePlugins={[rehypeRaw]}
+                                components={{
+                                    table: ({ children, ...props }) => (
+                                        <table className={styles.customTable} {...props}>
+                                            {children}
+                                        </table>
+                                    ),
+                                    thead: ({ children, ...props }) => (
+                                        <thead {...props}>{children}</thead>
+                                    ),
+                                    tbody: ({ children, ...props }) => (
+                                        <tbody {...props}>{children}</tbody>
+                                    ),
+                                    tr: ({ children, ...props }) => (
+                                        <tr {...props}>{children}</tr>
+                                    ),
+                                    th: ({ children, ...props }) => (
+                                        <th {...props}>{children}</th>
+                                    ),
+                                    td: ({ children, ...props }) => (
+                                        <td {...props}>{children}</td>
+                                    ),
+                                    code: ({ node, className, children, ...props }) => {
+                                        const match = /language-(\w+)/.exec(className || '');
+                                        if (match && match[1] === 'html') {
+                                            return <div dangerouslySetInnerHTML={{ __html: String(children).replace(/\n$/, '') }} />;
+                                        }
+                                        return <code className={className} {...props}>{children}</code>;
+                                    },
+                                }}
+                            >
+                                {message.content}
+
+                            </ReactMarkdown>
+
+                            {message.role === 'assistant' && (
+                                <button
+                                    onClick={() => copyToClipboard(message.content)}
+                                    className={styles.copyButton}
+                                >
+                                    <LocalizedText name="Copy" />
+                                </button>
+                            )}
+                        </div>
+                    ))}
+                    {isLoading && <div className={styles.loadingIndicator}> <LocalizedText name="AI is thinking..." /></div>}
+                </div>
+
+                <div className={styles.buttonContainer}>
+                    {options.map((option) => (
+                        <div key={option} className={styles.buttonWrapper}>
+                            <button
+                                onClick={() => handleButtonClick(option)}
+                                className={styles.cardButton}
+                                disabled={isLoading || isRefining}
+                            >
+                                <LocalizedText name={optionShortNames[option]} />
+                            </button>
+                            <div className={styles.buttonTooltip}>
+                                <LocalizedText name={option} />
+                            </div>
+                        </div>
+                    ))}
+                </div>
+
+                <form onSubmit={(e) => { e.preventDefault(); isRefining ? handleRefineSubmit() : handleSend(input); }} className={styles.inputForm}>
+                    <textarea
+                        ref={inputRef}
+                        className={`${styles.input} ${isRefining ? styles.refineInput : ''}`}
+                        value={input}
+                        onChange={handleInputChange}
+                        placeholder={isRefining ? feedbackPlaceholder : messagePlaceholder}
+                        rows={1}
+                    />
+                    <button type="submit" className={`${styles.cardButton} ${styles.fixedHeightButton}`}>
+                        <LocalizedText name={isRefining ? 'refine' : 'send'} />
+                    </button>
+                </form>
+            </div>
+        </div>
+    );
+}

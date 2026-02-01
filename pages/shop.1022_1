@@ -1,0 +1,752 @@
+// pages/Shop.tsx
+
+import React, { useState, useEffect, ChangeEvent, useContext } from 'react';
+import SignIn from '../components/SignIn';
+import Navbar from '../components/Navbar';
+import styles from '../styles/Shop.module.css';
+import { useActiveAccount } from 'thirdweb/react';
+import { useRouter } from 'next/router';
+import { LocalizedText } from '../util/LocalizedText';
+import { toast } from 'react-toastify';
+import { LocalizationContext } from '../util/LocalizationContext';
+import { getLocalizedString } from '../util/LocalizedText';
+import AutoFitText from '../components/AutoFitText';
+import { useChat } from 'ai/react'; // For handling chat interactions
+import { Message } from 'ai'; // Message type
+
+interface RoleMapping {
+    department: string;
+    role: string;
+    apiKey: string;
+    user: string;
+    price: string;
+    image: string;
+    usage: number; // New field for tracking usage
+}
+
+interface RoleData {
+    department: string;
+    role: string;
+}
+
+const Shop = () => {
+    const [categories, setCategories] = useState<string[]>([]);
+    const [selectedCategory, setSelectedCategory] = useState<string>('Favorited');
+    const [roles, setRoles] = useState<RoleData[]>([]);
+    const [roleMappings, setRoleMappings] = useState<Record<string, RoleMapping[]>>({});
+    const [favoritedRoleMappings, setFavoritedRoleMappings] = useState<RoleMapping[]>([]);
+    const [imageMapping, setImageMapping] = useState<Record<string, string>>({});
+    const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
+    const [ratings, setRatings] = useState<Record<string, number>>({});
+    const [usage, setUsage] = useState<Record<string, number>>({}); // New state for usage
+    const [hoveredImage, setHoveredImage] = useState<string | null>(null); // For image tooltip
+    const [hoveredRole, setHoveredRole] = useState<string | null>(null); // For role name tooltip
+    const [activeRoleButton, setActiveRoleButton] = useState<string | null>(null); // Track the active role button
+    const address = useActiveAccount()?.address;
+    const router = useRouter();
+    const [isRoleModalOpen, setIsRoleModalOpen] = useState<boolean>(false);
+    const [currentRoleDescription, setCurrentRoleDescription] = useState<string>('');
+    const [currentRole, setCurrentRole] = useState<string>('');
+    const [selectedLanguage, setSelectedLanguage] = useState<string>("English"); // Added selectedLanguage
+    const [roleModalPosition, setRoleModalPosition] = useState({ top: 0, left: 0 });
+    const { language } = useContext(LocalizationContext);
+    const [isChatModalOpen, setIsChatModalOpen] = useState<boolean>(false);
+
+    // Use the useChat hook
+    const { messages, input, handleInputChange, handleSubmit } = useChat({
+        api: '/api/chatbot',
+    });
+
+
+    useEffect(() => {
+        const fetchUserSelectedRoles = async () => {
+            if (!address) return;
+
+            try {
+                const response = await fetch('/api/get-role-mapping', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userAddress: address }),
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to fetch selected roles');
+                }
+
+                const data = await response.json();
+                const selectedRoleKeys = data.map((item: { department: string; role: string }) => `${item.department}:${item.role}`);
+                setSelectedRoles(selectedRoleKeys);
+            } catch (error) {
+                console.error('Error fetching user selected roles:', error);
+                setSelectedRoles([]);
+            }
+        };
+
+        fetchUserSelectedRoles();
+    }, [address]);
+
+    useEffect(() => {
+        if (selectedCategory === 'Favorited') {
+            fetchFavoritedRoleMappings();
+        } else {
+            fetchRolesInCategory();
+        }
+    }, [address, selectedCategory]);
+
+    const fetchRolesInCategory = async () => {
+        if (!selectedCategory) return;
+
+        try {
+            const roles = await fetchRoles(selectedCategory);
+            setRoles(roles);
+
+            const mappings = await Promise.all(roles.map(({ department, role }) => fetchRoleMapping(department, role)));
+            setRoleMappings((prev) => ({ ...prev, [selectedCategory]: mappings }));
+
+            const imageMap: Record<string, string> = {};
+            mappings.forEach((mapping) => {
+                imageMap[`${mapping.department}:${mapping.role}`] = mapping.image;
+            });
+            setImageMapping(imageMap);
+
+            await fetchRatingsAndUsage(roles);
+        } catch (error) {
+            console.error('Error fetching roles in category:', error);
+        }
+    };
+
+
+    useEffect(() => {
+        const fetchCategories = async () => {
+            try {
+                const response = await fetch('/api/get-departments');
+                if (!response.ok) {
+                    throw new Error('Failed to fetch categories');
+                }
+                const categoryData = await response.json();
+                setCategories(categoryData);
+            } catch (error) {
+                console.error('Error fetching categories:', error);
+            }
+        };
+        fetchCategories();
+    }, []);
+
+    useEffect(() => {
+        if (selectedCategory === 'Favorited') {
+            fetchFavoritedRoleMappings();
+        } else {
+            fetchRolesInCategory();
+        }
+    }, [address, selectedCategory]);
+
+    const fetchRoles = async (category: string): Promise<RoleData[]> => {
+        try {
+            const response = await fetch('/api/get-roles', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ department: category }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch roles');
+            }
+
+            const data = await response.json();
+            return Array.isArray(data.roles) ? data.roles.map((role: string) => ({ department: category, role })) : [];
+        } catch (error) {
+            console.error('Error fetching roles:', error);
+            return [];
+        }
+    };
+
+    const fetchRoleMapping = async (department: string, role: string): Promise<RoleMapping> => {
+        try {
+            const response = await fetch('/api/get-role-mappings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ department, role }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch role mapping');
+            }
+
+            const data = await response.json();
+            return { ...data, department, role, usage: data.usage || 0 };
+        } catch (error) {
+            console.error('Error fetching role mapping:', error);
+            return { department, role, apiKey: '', user: '', price: '', image: '', usage: 0 };
+        }
+    };
+
+    const fetchFavoritedRoleMappings = async () => {
+        if (!address) return;
+
+        try {
+            const response = await fetch('/api/get-role-by-address', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ address }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch favorited roles');
+            }
+
+            let roleData: RoleData[] = await response.json();
+
+            // Remove duplicates from roleData
+            roleData = Array.from(
+                new Map(roleData.map(item => [`${item.department}:${item.role}`, item])).values()
+            );
+
+            setRoles(roleData);
+
+            const allMappings: RoleMapping[] = [];
+            for (const { department, role } of roleData) {
+                const mapping = await fetchRoleMapping(department, role);
+                allMappings.push(mapping);
+            }
+
+            setFavoritedRoleMappings(allMappings);
+
+            const imageMap: Record<string, string> = {};
+            allMappings.forEach((mapping) => {
+                const key = `${mapping.department}:${mapping.role}`;
+                imageMap[key] = mapping.image;
+            });
+            setImageMapping(imageMap);
+
+            await fetchRatingsAndUsage(roleData);
+
+            // Automatically check favorited roles
+            const uniqueSelectedRoles = Array.from(
+                new Set(allMappings.map(mapping => `${mapping.department}:${mapping.role}`))
+            );
+            setSelectedRoles(uniqueSelectedRoles);
+        } catch (error) {
+            console.error('Error fetching favorited roles:', error);
+        }
+    };
+
+    const fetchRatingsAndUsage = async (roles: RoleData[]) => {
+        const ratingsMap: Record<string, number> = {};
+        const usageMap: Record<string, number> = {};
+
+        for (const { department, role } of roles) {
+            try {
+                // Fetch average rating
+                const ratingResponse = await fetch('/api/getAvgRating', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ department, role }),
+                });
+
+                if (!ratingResponse.ok) {
+                    throw new Error(`Failed to fetch rating for role: ${role}`);
+                }
+
+                const ratingData = await ratingResponse.json();
+                ratingsMap[`${department}:${role}`] = ratingData.averageRating;
+
+                // Fetch usage
+                const usageResponse = await fetch('/api/getUsage', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ department, role }),
+                });
+
+                if (!usageResponse.ok) {
+                    throw new Error(`Failed to fetch usage for role: ${role}`);
+                }
+
+                const usageData = await usageResponse.json();
+                usageMap[`${department}:${role}`] = usageData.usage;
+            } catch (error) {
+                console.error(`Error fetching data for role ${role}:`, error);
+            }
+        }
+
+        setRatings(ratingsMap);
+        setUsage(usageMap);
+    };
+
+    const handleCategoryChange = async (event: ChangeEvent<HTMLSelectElement>) => {
+        const category = event.target.value;
+        setSelectedCategory(category);
+        setRoles([]);
+        setImageMapping({});
+        setActiveRoleButton(null); // Reset activeRoleButton when category changes
+
+        if (category === 'Favorited') {
+            await fetchFavoritedRoleMappings();
+        } else {
+            const roles = await fetchRoles(category);
+            setRoles(roles);
+
+            const mappings = await Promise.all(roles.map(({ department, role }) => fetchRoleMapping(department, role)));
+            setRoleMappings((prev) => ({ ...prev, [category]: mappings }));
+
+            const imageMap: Record<string, string> = {};
+            mappings.forEach((mapping) => {
+                imageMap[`${mapping.department}:${mapping.role}`] = mapping.image;
+            });
+            setImageMapping(imageMap);
+
+            await fetchRatingsAndUsage(roles);
+        }
+    };
+
+    const handleRoleToggle = async (role: string, department: string) => {
+        if (!address) {
+            toast.info('Please connect your wallet.');
+            return;
+        }
+
+        const roleKey = `${department}:${role}`;
+        const isSelected = selectedRoles.includes(roleKey);
+        const newSelectedRoles = isSelected
+            ? selectedRoles.filter((r) => r !== roleKey)
+            : [...selectedRoles, roleKey];
+
+        setSelectedRoles(newSelectedRoles);
+
+        const selectedLocalizedMessage = await getLocalizedString('got selected', language);
+        const deselectedLocalizedMessage = await getLocalizedString('got deselected', language);
+
+        const localizedRole = await getLocalizedString(role, language);
+
+        if (isSelected) {
+            toast.info(`${localizedRole} ${deselectedLocalizedMessage}`, { autoClose: 5000 });
+        } else {
+            toast.success(`${localizedRole} ${selectedLocalizedMessage}`, { autoClose: 5000 });
+        }
+
+        const endpoint = isSelected ? '/api/remove-role-mapping' : '/api/add-role-mapping';
+        try {
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userAddress: address, department, role }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to update role mapping');
+            }
+
+            if (!isSelected) {
+                // If role is being selected, increment usage by 1
+                const increment = 1;
+                //await updateUsage(department, role, increment);
+            }
+
+            if (isSelected && selectedCategory === 'Favorited') {
+                await fetchFavoritedRoleMappings(); // Refresh favorited roles
+            }
+        } catch (error) {
+            console.error(`Error ${isSelected ? 'removing' : 'adding'} role mapping:`, error);
+            // Optionally, revert the selection state if the API call fails
+            setSelectedRoles(isSelected ? [...newSelectedRoles, roleKey] : newSelectedRoles.filter(r => r !== roleKey));
+            toast.error('Failed to update role selection.');
+        }
+    };
+
+    const handleRoleSelect = async (role: string, department: string, isImageClick: boolean = false) => {
+        if (!address) {
+            toast.info('Please connect your wallet.');
+            return;
+        }
+
+        const roleKey = `${department}:${role}`;
+        const isSelected = selectedRoles.includes(roleKey);
+
+        if (isImageClick) {
+            if (!isSelected) {
+                // **Add the role to selectedRoles**
+                setSelectedRoles([...selectedRoles, roleKey]);
+
+                // **Show success toast**
+                const selectedLocalizedMessage = await getLocalizedString('got selected', language);
+                const localizedRole = await getLocalizedString(role, language);
+                toast.success(`${localizedRole} ${selectedLocalizedMessage}`, { autoClose: 5000 });
+
+                // **Call add-role-mapping API**
+                try {
+                    const response = await fetch('/api/add-role-mapping', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ userAddress: address, department, role }),
+                    });
+
+                    if (!response.ok) {
+                        throw new Error('Failed to add role mapping');
+                    }
+
+                    // **If adding to 'Favorited', refresh favorited roles**
+                    if (selectedCategory === 'Favorited') {
+                        await fetchFavoritedRoleMappings();
+                    }
+                } catch (error) {
+                    console.error(`Error adding role mapping:`, error);
+                    // **Revert selection if API call fails**
+                    setSelectedRoles(selectedRoles.filter(r => r !== roleKey));
+                    toast.error('Failed to select role.');
+                }
+            }
+            // **If already selected, do nothing**
+            return;
+        }
+
+        // **Existing toggle logic for non-image clicks**
+        if (isSelected && selectedCategory === 'Favorited') {
+            return; // Prevent unselecting in 'Favorited' category
+        }
+
+        const newSelectedRoles = isSelected
+            ? selectedRoles.filter((r) => r !== roleKey)
+            : [...selectedRoles, roleKey];
+
+        setSelectedRoles(newSelectedRoles);
+
+        // **Fetch localized messages**
+        const selectedLocalizedMessage = await getLocalizedString('got selected', language);
+        const deselectedLocalizedMessage = await getLocalizedString('got deselected', language);
+
+        // **Localize the role name**
+        const localizedRole = await getLocalizedString(role, language);
+
+        // **Show appropriate toast message**
+        if (isSelected) {
+            toast.info(`${localizedRole} ${deselectedLocalizedMessage}`, { autoClose: 5000 });
+        } else {
+            toast.success(`${localizedRole} ${selectedLocalizedMessage}`, { autoClose: 5000 });
+        }
+
+        // **Determine API endpoint based on selection state**
+        const endpoint = isSelected ? '/api/remove-role-mapping' : '/api/add-role-mapping';
+        try {
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userAddress: address, department, role }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to update role mapping');
+            }
+
+            if (!isSelected) {
+                // If role is being selected, increment usage by 1
+                const increment = 1;
+                //await updateUsage(department, role, increment);
+            }
+
+            if (isSelected && selectedCategory === 'Favorited') {
+                await fetchFavoritedRoleMappings(); // Refresh favorited roles
+            }
+        } catch (error) {
+            console.error(`Error ${isSelected ? 'removing' : 'adding'} role mapping:`, error);
+            // **Revert selection if API call fails**
+            setSelectedRoles(isSelected ? [...newSelectedRoles, roleKey] : newSelectedRoles.filter(r => r !== roleKey));
+            toast.error('Failed to update role selection.');
+        }
+    };
+
+    // Function to navigate to the chat window
+    const navigateToChat = async (role: string, department: string) => {
+        const roleKey = `${department}:${role}`;
+        if (!selectedRoles.includes(roleKey)) {
+            await handleRoleSelect(role, department, true); // Pass isImageClick=true
+        }
+        router.push({
+            pathname: '/ChatHome',
+            query: { selectedRole: role, selectedCategory: department }
+        });
+    };
+
+
+    // Function to open the role description modal
+    const openRoleDescription = async (role: string, department: string) => {
+        setIsRoleModalOpen(true);
+        setCurrentRoleDescription(''); // Reset previous description
+        setCurrentRole("Persona Description: " + role);
+        try {
+            const response = await fetch('/api/get_role_description', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    department,
+                    role,
+                    language: language, // Now defined
+                }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch role description');
+            }
+
+            const data = await response.json();
+            setCurrentRoleDescription(
+                data.description // Use LocalizedText for localization
+            );
+        } catch (error) {
+            console.error('Error fetching role description:', error);
+            setCurrentRoleDescription("");
+        }
+    };
+
+    // Function to close the role description modal
+    const closeRoleModal = () => {
+        setIsRoleModalOpen(false);
+        setCurrentRoleDescription('');
+        setActiveRoleButton(null);
+    };
+
+    return (
+        <main className={styles.main}>
+            <div className={styles.container}>
+                {!address ? (
+                    <SignIn />
+                ) : (
+                    <>
+                        <Navbar />
+
+                        {/* Category Selection Section */}
+                        <div className={styles.categorySection}>
+                            <div className={styles.categorySectionInner}>
+                                <label htmlFor="categorySelect" className={styles.categoryLabel}>
+                                    <LocalizedText name="Category" />:
+                                </label>
+                                <select
+                                    id="categorySelect"
+                                    className={styles.categorySelect}
+                                    value={selectedCategory}
+                                    onChange={handleCategoryChange}
+                                >
+                                    {/* Always include "Favorited" and "My Customized GPT" below it */}
+                                    <option key="Favorited" value="Favorited">
+                                        <LocalizedText name="Favorited" />
+                                    </option>
+                                    <option key="My Customized GPT" value="My Customized GPT">
+                                        <LocalizedText name="My Customized GPT" />
+                                    </option>
+                                    {/* Render other categories excluding "Favorited" and "My Customized GPT" */}
+                                    {categories.filter(c => c !== "Favorited" && c !== "My Customized GPT").map(category => (
+                                        <option key={category} value={category}>
+                                            <LocalizedText name={category} />
+                                        </option>
+                                    ))}
+                                </select>
+                                {/* Spacer */}
+                                <div style={{ width: '40px' }}></div>
+
+                                {/* "Ask AI" Button */}
+                                <button
+                                    className={styles.askAIButton}
+                                    onClick={() => setIsChatModalOpen(true)}
+                                >
+                                    <LocalizedText name="Ask AI" />
+                                </button>
+
+                            </div>
+                        </div>
+
+
+                        {/* NFT Grid */}
+                        <div className={styles.grid}>
+                            {roles.length > 0 ? (
+                                roles.map(({ department, role }) => {
+                                    const roleKey = `${department}:${role}`;
+                                    const imageSrc = imageMapping[roleKey];
+                                    const altText = role;
+                                    const price = roleMappings[department]?.find(mapping => mapping.role === role)?.price
+                                        || favoritedRoleMappings.find(mapping => mapping.role === role)?.price || "";
+                                    const rating = ratings[roleKey] || 0;
+                                    const roleUsage = usage[roleKey] || 0; // Get usage
+                                    const isSelected = selectedRoles.includes(roleKey);
+
+                                    // Determine the current mapping for this role
+                                    const currentMapping = roleMappings[department]?.find(mapping => mapping.role === role)
+                                        || favoritedRoleMappings.find(mapping => mapping.role === role)
+                                        || { department, role, apiKey: '', user: '', price: '', image: '', usage: 0 };
+
+                                    return (
+                                        <div
+                                            key={roleKey}
+                                            className={styles.nftContainer}
+                                        >
+                                            <div
+                                                className={`${styles.nftImageWrapper} ${isSelected ? styles.selected : ''}`}
+                                            >
+                                                {/* 1. Checkbox Overlay */}
+                                                <div className={styles.tooltipContainer}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={isSelected}
+                                                        onChange={(e) => {
+                                                            e.stopPropagation(); // Prevent triggering image click if necessary
+                                                            handleRoleToggle(role, department);
+                                                        }}
+                                                        className={styles.roleCheckbox}
+                                                        aria-label={isSelected ? 'Uncheck to deselect this role' : 'Check to select this role'}
+                                                    />
+                                                    <span className={styles.tooltipText}>
+                                                        {isSelected ? <LocalizedText name='Uncheck to deselect this role' /> : <LocalizedText name='Check to select this role' />}
+                                                    </span>
+                                                </div>
+                                                {/* 2. Image with onClick to navigate to chat */}
+                                                <img
+                                                    src={imageSrc}
+                                                    onClick={() => navigateToChat(role, department)}
+                                                    alt={altText}
+                                                    className={styles.nftImage}
+                                                />
+
+                                                {/* 4. Image Tooltip */}
+                                                <div className={styles.hoverTooltip}>
+                                                    <LocalizedText name="Click the image to open the chat." />
+                                                </div>
+
+                                                {/* Usage Count Overlay */}
+                                                <div className={styles.usageOverlay}>
+                                                    <LocalizedText name="Usage" />: {roleUsage}
+                                                </div>
+                                            </div>
+
+                                            <div className={styles.nftInfo}>
+                                                <div className={styles.nftNameWrapper}>
+                                                    {/* 3. Role Name with onClick to open description */}
+                                                    <AutoFitText
+                                                        maxFontSize={19}
+                                                        minFontSize={8}
+                                                        maxLines={2}
+                                                        className={styles.nftName}
+                                                        onClick={() => openRoleDescription(role, department)}
+                                                    >
+                                                        <LocalizedText name={role} />
+                                                    </AutoFitText>
+                                                    {/* Role Name Tooltip */}
+                                                    <div className={styles.hoverTooltip}>
+                                                        <LocalizedText name="Click to view this persona's description." />
+                                                    </div>
+                                                </div>
+
+                                                <div className={styles.ratingAndAmount}>
+                                                    {rating ? (
+                                                        <>
+                                                            <span className={styles.ratingValue}>
+                                                                <LocalizedText name="Rating" />: {rating.toFixed(1)}
+                                                            </span>
+                                                            <Rating value={Math.round(rating)} />
+                                                            {price && (
+                                                                <span className={styles.sendAmount}>
+                                                                    <LocalizedText name="Price" />:{price} /Chat
+                                                                </span>
+                                                            )}
+                                                        </>
+                                                    ) : (
+                                                        price && (
+                                                            <div className={styles.centeredSendAmount}>
+                                                                <LocalizedText name="Price" />: {price} /Chat
+                                                            </div>
+                                                        )
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })
+                            ) : (
+                                <p>No roles available</p>
+                            )}
+                        </div>
+                        {isChatModalOpen && (
+                            <div className={styles.modalOverlay}>
+                                <div className={styles.modalContent}>
+                                    <button
+                                        className={styles.closeButton}
+                                        onClick={() => setIsChatModalOpen(false)}
+                                    >
+                                        <LocalizedText name="Close" />
+                                    </button>
+                                    <div className={styles.chatContainer}>
+                                        {/* Chat messages */}
+                                        {messages.map((message, index) => (
+                                            <div
+                                                key={index}
+                                                className={
+                                                    message.role === 'user'
+                                                        ? styles.userMessage
+                                                        : styles.assistantMessage
+                                                }
+                                            >
+                                                {message.content}
+                                            </div>
+                                        ))}
+                                        {/* Chat input */}
+                                        <form onSubmit={handleSubmit} className={styles.chatInputForm}>
+                                            <input
+                                                value={input}
+                                                onChange={handleInputChange}
+                                                placeholder="Type your message..."
+                                                className={styles.chatInput}
+                                            />
+                                            <button type="submit" className={styles.sendButton}>
+                                                <LocalizedText name="Send" />
+                                            </button>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                    </>
+                )}
+            </div>
+
+            {/* Role Description Modal */}
+            {isRoleModalOpen && (
+                <div className={styles.modalOverlay}>
+                    <div className={styles.modalContent} style={{ top: roleModalPosition.top, left: roleModalPosition.left }}>
+                        <button className={styles.closeButton} onClick={closeRoleModal}>
+                            <LocalizedText name="Close" />
+                        </button>
+                        {/* Center the currentRole in the modal */}
+                        <h2 className={styles.modalTitle}>
+                            <LocalizedText name={currentRole} />
+                        </h2>
+                        <p className={styles.modalDescription}>
+                            {currentRoleDescription ? (
+                                currentRoleDescription
+                            ) : (
+                                <LocalizedText name="Please wait, still loading ...." />
+                            )}
+                        </p>
+                    </div>
+                </div>
+            )}
+        </main>
+    );
+
+};
+
+export default Shop;
+
+// Rating Component
+interface RatingProps {
+    value: number;
+}
+
+const Rating = ({ value }: RatingProps) => {
+    const totalStars = 5;
+    return (
+        <div>
+            {[...Array(totalStars)].map((_, i) => (
+                <span key={i} style={{ color: i < value ? 'gold' : 'grey' }}>
+                    ★
+                </span>
+            ))}
+        </div>
+    );
+};

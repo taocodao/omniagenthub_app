@@ -1,0 +1,90 @@
+import { createClient } from '@vercel/kv';
+import { Assistant } from 'experts';
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL,
+    token: process.env.KV_REST_API_TOKEN,
+});
+
+class MyAssistant extends Assistant {
+    constructor(options) {
+        super(options);
+    }
+}
+
+async function createAssistant(assistantId) {
+
+    const existingInstructions = await kv.get(`assistant:${assistantId}:instructions`);
+
+    if (!existingInstructions) {
+        throw new Error(`Instructions not found for assistant ID: ${assistantId}`);
+    }
+
+    const instructionsString = typeof existingInstructions === 'object' ? JSON.stringify(existingInstructions) : String(existingInstructions);
+    let realAssistantId = await kv.get(`assistant-mapping:${assistantId}`);
+    let assistantInstance;
+
+    if (realAssistantId) {
+        try {
+            assistantInstance = await MyAssistant.create({
+                llm: true,
+                id: realAssistantId,
+                name: `Assistant_${assistantId}`,
+                instructions: instructionsString,
+                model: process.env.GPT_MODEL,
+                temperature: 0.5,
+                apiKey: process.env.OPENAI_API_KEY,
+            });
+            return assistantInstance;
+        } catch (error) {
+            console.error('Error retrieving existing assistant, creating new one:', error);
+            realAssistantId = null; // Reset to create new assistant
+        }
+    } else {
+        const maxRetries = 5;
+        const retryDelay = 1000; // 1 second
+
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+            try {
+                const lockKey = `lock:assistant:${assistantId}`;
+                const lockAcquired = await kv.set(lockKey, 'locked', { nx: true, ex: 30 }); // 30 seconds lock
+
+                if (!lockAcquired) {
+                    console.log(`Lock not acquired, attempt ${attempt + 1} of ${maxRetries}`);
+                    if (attempt === maxRetries - 1) {
+                        throw new Error('Failed to acquire lock after multiple attempts');
+                    }
+                    await new Promise(resolve => setTimeout(resolve, retryDelay));
+                    continue;
+                }
+
+                try {
+                    assistantInstance = await MyAssistant.create({
+                        name: `Assistant_${assistantId}`,
+                        instructions: instructionsString,
+                        model: process.env.GPT_MODEL,
+                        temperature: 0.5,
+                        apiKey: process.env.OPENAI_API_KEY,
+                    });
+
+                    await assistantInstance.init();
+
+                    const newRealAssistantId = assistantInstance.id;
+                    await kv.set(`assistant-mapping:${assistantId}`, newRealAssistantId);
+
+                    return assistantInstance;
+                } finally {
+                    await kv.del(lockKey); // Release the lock
+                }
+            } catch (error) {
+                if (attempt === maxRetries - 1) {
+                    throw error; // Rethrow the error on the last attempt
+                }
+                console.error(`Error during attempt ${attempt + 1}:`, error);
+                await new Promise(resolve => setTimeout(resolve, retryDelay));
+            }
+        }
+    }
+
+};
+export default createAssistant;

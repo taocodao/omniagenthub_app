@@ -1,0 +1,173 @@
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+interface ProfileData {
+    id: string;
+    name: string;
+    business: {
+        name: string;
+        product: string;
+    };
+    persona: {
+        title: string;
+        industry: string;
+        company_size: string;
+        location: string;
+        pain_points_role: string;
+    };
+    USP: string;
+    challenges: string[];
+    websiteUrl?: string;
+    description?: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
+type ResponseData = {
+    message: string;
+    success: boolean;
+    profiles?: ProfileData[];
+};
+
+// Helper function to parse business field
+function parseBusiness(businessText: string) {
+    // Extract company name and product from business description
+    const lines = businessText.split('\n').filter(line => line.trim());
+    const firstLine = lines[0] || businessText.substring(0, 100);
+
+    // Try to extract company name (usually first sentence or company mentioned)
+    const companyMatch = firstLine.match(/([A-Z][a-zA-Z\s]+(?:Technology|Company|Corp|Inc|Ltd|LLC)?)/);
+    const companyName = companyMatch ? companyMatch[1].trim() : 'Company';
+
+    // Use the business description as product description
+    const product = businessText.trim();
+
+    return {
+        name: companyName,
+        product: product
+    };
+}
+
+// Helper function to parse persona field
+function parsePersona(personaText: string) {
+    const defaultPersona = {
+        title: 'Manager',
+        industry: 'Technology',
+        company_size: 'Medium',
+        location: 'Global',
+        pain_points_role: personaText
+    };
+
+    // Try to extract title
+    const titleMatch = personaText.match(/(?:is a|as a|The primary customer persona.*?is a)\s*([^.]*?)(?:\s+at|\.)/i);
+    if (titleMatch) {
+        defaultPersona.title = titleMatch[1].trim();
+    }
+
+    // Try to extract industry
+    const industryMatch = personaText.match(/(?:in the|industry|broadcasting|media|technology|finance|healthcare|education|retail)\s+(\w+)/i);
+    if (industryMatch) {
+        defaultPersona.industry = industryMatch[1];
+    }
+
+    // Try to extract company size
+    const sizeMatch = personaText.match(/(?:leading|large|medium|small|startup|enterprise)\s+(?:company|organization|business)/i);
+    if (sizeMatch) {
+        defaultPersona.company_size = sizeMatch[0].split(' ')[0];
+    }
+
+    return defaultPersona;
+}
+
+// Helper function to parse challenges
+function parseChallenges(challengeText: string): string[] {
+    // Split by numbered lists or bullet points
+    const challenges = challengeText
+        .split(/\d+\.|•|-|\n/)
+        .map(challenge => challenge.trim())
+        .filter(challenge => challenge.length > 10) // Filter out short/empty items
+        .slice(0, 3); // Take top 3 challenges
+
+    return challenges.length > 0 ? challenges : [challengeText.trim()];
+}
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse<ResponseData>) {
+    if (req.method !== 'GET') {
+        return res.status(405).json({
+            message: 'Method not allowed',
+            success: false
+        });
+    }
+
+    const { userAddress } = req.query;
+
+    if (!userAddress || typeof userAddress !== 'string') {
+        return res.status(400).json({
+            message: 'User address is required.',
+            success: false
+        });
+    }
+
+    try {
+        // Get user's profile list
+        const userProfiles = await kv.get(`userProfiles:${userAddress}`) as string[];
+
+        if (!userProfiles || !Array.isArray(userProfiles) || userProfiles.length === 0) {
+            return res.status(200).json({
+                message: 'No profiles found for this user.',
+                success: true,
+                profiles: []
+            });
+        }
+
+        // Fetch all profiles
+        const profiles: ProfileData[] = [];
+
+        for (const profileId of userProfiles) {
+            try {
+                const profileData = await kv.get(`userProfile:${userAddress}:${profileId}`) as any;
+
+                if (profileData) {
+                    // Transform the raw profile data into the expected format
+                    const transformedProfile: ProfileData = {
+                        id: profileId,
+                        name: profileData.name,
+                        business: parseBusiness(profileData.business),
+                        persona: parsePersona(profileData.persona),
+                        USP: profileData.ups || profileData.USP || '',
+                        challenges: parseChallenges(profileData.challenge),
+                        websiteUrl: profileData.websiteUrl || '',
+                        description: profileData.rawContent || '',
+                        createdAt: profileData.createdAt || new Date().toISOString(),
+                        updatedAt: profileData.updatedAt || new Date().toISOString()
+                    };
+
+                    profiles.push(transformedProfile);
+                }
+            } catch (error) {
+                console.error(`Error fetching profile ${profileId}:`, error);
+                // Continue with other profiles
+            }
+        }
+
+        console.log(`Retrieved ${profiles.length} profiles for user: ${userAddress}`);
+
+        return res.status(200).json({
+            message: 'Profiles retrieved successfully',
+            success: true,
+            profiles: profiles
+        });
+
+    } catch (error) {
+        console.error('Error retrieving profiles:', error);
+        return res.status(500).json({
+            message: 'Internal server error while retrieving profiles',
+            success: false
+        });
+    }
+}

@@ -1,0 +1,1027 @@
+// pages/convert-prompt.tsx
+
+import React, { useState, useEffect, useCallback } from 'react';
+import Head from 'next/head';
+import styles from '../styles/Home3.module.css';
+import HashUtil from '../util/hashToFixedDigits'; // Ensure the correct path to HashUtil
+import { put } from '@vercel/blob';
+import { toast } from 'react-toastify';
+
+const ConvertPrompt: React.FC = () => {
+    // State Variables
+    const [inputPrompt, setInputPrompt] = useState<string>('');
+    const [outputMessage, setOutputMessage] = useState<string>('');
+    const [department, setDepartment] = useState<string>('');
+    const [role, setRole] = useState<string>('');
+    const [task, setTask] = useState<string>('');
+    const [inputTask, setInputTask] = useState<string>('');
+    const [departments, setDepartments] = useState<string[]>([]);
+    const [roles, setRoles] = useState<string[]>([]);
+    const [tasks, setTasks] = useState<string[]>([]);
+    const [apiKey, setApiKey] = useState<string>('');
+    const [user, setUser] = useState<string>('eric');
+    const [price, setPrice] = useState<string>('0.01');
+    const [image, setImage] = useState<File | null>(null);
+    const [uploadedImageUrl, setUploadedImageUrl] = useState<string>('');
+    const [newDepartment, setNewDepartment] = useState<string>('');
+    const [newRole, setNewRole] = useState<string>('');
+    const [translateName, setTranslateName] = useState<string>('');
+    const [translateContent, setTranslateContent] = useState<string>('');
+    const [translatedNames, setTranslatedNames] = useState<string[]>([]);
+    const [selectedTranslatedName, setSelectedTranslatedName] = useState<string>('');
+    const [isConverting, setIsConverting] = useState<boolean>(false);
+    const [isUploading, setIsUploading] = useState<boolean>(false);
+    const [uploadedImageUrlTemp, setUploadedImageUrlTemp] = useState<string>(''); // Temporary image URL for preview
+
+    // Fetch Roles based on Department
+    const fetchRoles = useCallback(async (dept: string) => {
+        try {
+            const response = await fetch('/api/get-roles', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ department: dept }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch roles.');
+            }
+
+            const data: { roles: string[] } = await response.json();
+            setRoles(Array.isArray(data.roles) ? data.roles : []);
+            if (data.roles.length > 0) {
+                const initialRole = data.roles[data.roles.length - 1];
+                setRole(initialRole);
+                await fetchTasks(dept, initialRole);
+            } else {
+                setRole('');
+                setTasks([]);
+            }
+        } catch (error) {
+            console.error('Error fetching roles:', error);
+            toast.error('Error fetching roles.');
+            setRoles([]);
+        }
+    }, []);
+
+    // Fetch Translated Names on Mount
+    useEffect(() => {
+        fetchTranslatedNames();
+    }, []);
+
+    const fetchTranslatedNames = useCallback(async () => {
+        try {
+            const response = await fetch('/api/get-translated-names');
+            if (response.ok) {
+                const names: string[] = await response.json();
+                setTranslatedNames(names);
+            } else {
+                throw new Error('Failed to fetch translated names.');
+            }
+        } catch (error) {
+            console.error('Error fetching translated names:', error);
+            toast.error('Error fetching translated names.');
+        }
+    }, []);
+
+    // Fetch Departments and Initial Roles
+    useEffect(() => {
+        const fetchData = async () => {
+            try {
+                const departmentResponse = await fetch('/api/get-departments');
+                if (!departmentResponse.ok) {
+                    throw new Error('Failed to fetch departments.');
+                }
+                const departmentData: string[] = await departmentResponse.json();
+                setDepartments(departmentData);
+                if (departmentData.length > 0) {
+                    const initialDepartment = departmentData[departmentData.length - 1];
+                    setDepartment(initialDepartment);
+                    await fetchRoles(initialDepartment);
+                }
+            } catch (error) {
+                console.error('Error fetching departments:', error);
+                toast.error('Error fetching departments.');
+            }
+        };
+
+        fetchData();
+    }, [fetchRoles]);
+
+
+
+    // Fetch Tasks based on Department and Role
+    const fetchTasks = useCallback(async (dept: string, rl: string) => {
+        try {
+            const response = await fetch('/api/get-tasks', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ department: dept, role: rl }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch tasks.');
+            }
+
+            const data: { tasks: string[] } = await response.json();
+            setTasks(Array.isArray(data.tasks) ? data.tasks : []);
+            if (data.tasks.length > 0) {
+                setTask(data.tasks[data.tasks.length - 1]);
+            } else {
+                setTask('');
+            }
+        } catch (error) {
+            console.error('Error fetching tasks:', error);
+            toast.error('Error fetching tasks.');
+            setTasks([]);
+        }
+    }, []);
+
+    // Translate and Store Content
+    const translateAndStoreContent = useCallback(async (name: string, content: string) => {
+        try {
+            const response = await fetch('/api/set_content_in_language', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ name, content }),
+            });
+
+            if (!response.ok) {
+                throw new Error(`Failed to translate and store content for name: ${name}`);
+            }
+
+            const result = await response.json();
+            console.log(`Content translated and stored for all languages`, result);
+            toast.success(`Content translated and stored for all languages for name ${name}`);
+        } catch (error) {
+            console.error('Error translating and storing content:', error);
+            toast.error(`Error translating and storing content for name ${name}.`);
+        }
+    }, []);
+
+    // Handle Translation
+    const handleTranslate = useCallback(async () => {
+        if (translateName && translateContent) {
+            const labeledName = `label:${translateName.trim()}`;
+            await translateAndStoreContent(labeledName, translateContent);
+            setTranslateName('');
+            setTranslateContent('');
+            fetchTranslatedNames();
+        } else {
+            toast.warning('Please provide both name and content for translation.');
+        }
+    }, [translateName, translateContent, translateAndStoreContent, fetchTranslatedNames]);
+
+    // Handle Convert Prompt
+    const handleConvert = useCallback(async () => {
+        if (!inputPrompt.trim()) {
+            toast.warning('Please enter a prompt.');
+            return;
+        }
+
+        if (!department || !role || !task) {
+            toast.warning('Please select a department, role, and task.');
+            return;
+        }
+
+        setIsConverting(true);
+
+        try {
+            const response = await fetch('/api/convert-prompt', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ department, role, task, prompt: inputPrompt.trim() }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to convert prompt.');
+            }
+
+            const data: { instruction: string | object } = await response.json();
+            const instruction = data.instruction;
+
+            if (typeof instruction === 'object') {
+                setOutputMessage(JSON.stringify(instruction, null, 2));
+            } else {
+                setOutputMessage(instruction);
+            }
+
+            setInputPrompt('');
+            // Optionally reset task or keep it based on desired behavior
+            // setTask('');
+            // setInputTask('');
+            toast.success('Prompt converted successfully.');
+        } catch (error) {
+            console.error('Error converting prompt:', error);
+            setOutputMessage('An error occurred while converting the prompt.');
+            toast.error('Error converting prompt.');
+        } finally {
+            setIsConverting(false);
+        }
+    }, [inputPrompt, department, role, task]);
+
+    // Handle Add Prompt
+    const handleAddPrompt = useCallback(async () => {
+        if (!inputTask.trim()) {
+            toast.warning('Please enter a task name.');
+            return;
+        }
+
+        if (!inputPrompt.trim()) {
+            toast.warning('Please enter a prompt.');
+            return;
+        }
+
+        if (!department || !role) {
+            toast.warning('Please select a department and role.');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/convert-prompt', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ department, role, task: inputTask.trim(), prompt: inputPrompt.trim() }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to add prompt.');
+            }
+
+            const data: { instruction: string | object } = await response.json();
+            const instruction = data.instruction;
+
+            if (typeof instruction === 'object') {
+                setOutputMessage(JSON.stringify(instruction, null, 2));
+            } else {
+                setOutputMessage(instruction);
+            }
+
+            setInputPrompt('');
+            setInputTask('');
+            setTask('');
+
+            // Add the new task to the dropdown list if it doesn't exist
+            if (!tasks.includes(inputTask.trim())) {
+                setTasks((prevTasks) => [...prevTasks, inputTask.trim()]);
+                // Optionally translate and store the new task
+                // await translateAndStoreContent(inputTask.trim(), inputTask.trim());
+            }
+
+            toast.success('Prompt added successfully.');
+        } catch (error) {
+            console.error('Error adding prompt:', error);
+            setOutputMessage('Error adding prompt.');
+            toast.error('Error adding prompt.');
+        }
+    }, [inputTask, inputPrompt, department, role, tasks, translateAndStoreContent]);
+
+    // Handle Add Department
+    const handleAddDepartment = useCallback(async () => {
+        const trimmedDepartment = newDepartment.trim();
+        if (trimmedDepartment && !departments.includes(trimmedDepartment)) {
+            try {
+                // Optionally, make an API call to add the department to the backend
+                // await fetch('/api/add-department', { ... });
+
+                // Translate and store the new department
+                // await translateAndStoreContent(trimmedDepartment, trimmedDepartment);
+
+                setDepartments((prev) => [...prev, trimmedDepartment]);
+                setDepartment(trimmedDepartment);
+                setRoles([]);
+                setTasks([]);
+                setNewDepartment('');
+                resetFields();
+                toast.success('Department added successfully.');
+            } catch (error) {
+                console.error('Error adding department:', error);
+                toast.error('Error adding department.');
+            }
+        } else if (departments.includes(trimmedDepartment)) {
+            toast.warning('Department already exists.');
+        } else {
+            toast.warning('Please enter a valid department name.');
+        }
+    }, [newDepartment, departments, translateAndStoreContent]);
+
+    // Handle Add Role
+    const handleAddRole = async () => {
+        if (newRole && !roles.includes(newRole)) {
+            try {
+                // Ensure that new role is added without resetting existing tasks
+                setRoles((prev) => [...prev, newRole]);  // Add the new role to the existing list
+                setRole(newRole);  // Set the newly added role as the selected one
+
+                // Here we need to preserve the tasks that belong to the previous role
+                const response = await fetch('/api/get-tasks', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ department, role: newRole }),
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to fetch tasks for the new role');
+                }
+
+                const data = await response.json();
+                setTasks(Array.isArray(data.tasks) ? data.tasks : []);  // Set the tasks associated with the new role
+
+                setNewRole('');  // Clear the newRole input field after adding
+            } catch (error) {
+                console.error('Error adding role:', error);
+            }
+        } else if (roles.includes(newRole)) {
+            alert('Role already exists');
+        }
+    };
+
+
+    // Handle Add Role Mappings
+    const handleAddRoleMappings = useCallback(async () => {
+        if (!department || !role || !user) {
+            toast.warning('Department, Role, and User are required fields.');
+            return;
+        }
+
+        try {
+            // Check if the role already exists by reusing the get-roles API
+            const existingRolesResponse = await fetch('/api/get-roles', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ department }),
+            });
+
+            if (!existingRolesResponse.ok) {
+                throw new Error('Failed to fetch existing roles.');
+            }
+
+            const { roles } = await existingRolesResponse.json();
+
+            // If the role already exists, display a warning and return early
+            if (roles.includes(role)) {
+                toast.warning('Role already exists. Please update the existing role mapping.');
+                return;
+            }
+
+            let imageUrl = uploadedImageUrl;
+
+            // Upload image if selected and not yet uploaded
+            if (image && !imageUrl) {
+                setIsUploading(true);
+                try {
+                    const blob = await put(image.name, image, {
+                        access: 'public',
+                        token: process.env.NEXT_PUBLIC_BLOB_READ_WRITE_TOKEN || '',
+                    });
+                    imageUrl = blob.url;
+                    setUploadedImageUrl(imageUrl);
+                } catch (uploadError) {
+                    console.error('Error uploading image:', uploadError);
+                    toast.error('Failed to upload image. Please try again.');
+                    return;
+                } finally {
+                    setIsUploading(false);
+                }
+            }
+
+            // Prepare form data
+            const formData = new FormData();
+            formData.append('department', department);
+            formData.append('role', role);
+            formData.append('apiKey', apiKey || '');
+            formData.append('user', user);
+            formData.append('price', price);
+            if (imageUrl) {
+                formData.append('image', imageUrl);
+            }
+
+            const response = await fetch('/api/add-role-mappings', {
+                method: 'POST',
+                body: formData,
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to add role mappings.');
+            }
+
+            await fetchRoles(department);
+
+            // Reset fields after successful addition
+            resetFields();
+            setUploadedImageUrl('');
+            toast.success('Role mappings added successfully.');
+        } catch (error) {
+            console.error('Error adding role mappings:', error);
+            toast.error('Error adding role mappings.');
+        }
+    }, [
+        department,
+        role,
+        user,
+        apiKey,
+        price,
+        image,
+        uploadedImageUrl,
+        fetchRoles,
+        translateAndStoreContent,
+    ]);
+
+
+
+
+    // Handle Refresh Departments
+    const handleRefreshDepartments = useCallback(async () => {
+        try {
+            const response = await fetch('/api/get-departments');
+            if (!response.ok) {
+                throw new Error('Failed to fetch departments.');
+            }
+            const data: string[] = await response.json();
+            setDepartments(data);
+            if (data.length > 0) {
+                setDepartment(data[0]);
+                await fetchRoles(data[0]);
+            }
+            toast.success('Departments refreshed successfully.');
+        } catch (error) {
+            console.error('Error refreshing departments:', error);
+            toast.error('Error refreshing departments.');
+        }
+    }, [fetchRoles]);
+
+    // Handle Refresh Roles
+    const handleRefreshRoles = useCallback(async () => {
+        if (department) {
+            await fetchRoles(department);
+            toast.success('Roles refreshed successfully.');
+        } else {
+            toast.warning('No department selected.');
+        }
+    }, [department, fetchRoles]);
+
+    // Handle Retrieve Role Mappings
+    const handleRetrieve = useCallback(async () => {
+        if (!department || !role) {
+            toast.warning('Please select a department and role.');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/get-role-mappings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ department, role }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to retrieve role mappings.');
+            }
+
+            const data: {
+                apiKey?: string;
+                user?: string;
+                price?: string;
+                image?: string;
+            } = await response.json();
+
+            setApiKey(data.apiKey || '');
+            setUser(data.user || 'eric');
+            setPrice(data.price || '0.01');
+            if (data.image) {
+                setUploadedImageUrl(data.image);
+            } else {
+                setUploadedImageUrl('');
+            }
+
+            toast.success('Role mappings retrieved successfully.');
+        } catch (error) {
+            console.error('Error retrieving role mappings:', error);
+            toast.error('Error retrieving role mappings.');
+        }
+    }, [department, role]);
+
+    // Handle Update Role Mappings
+    const handleUpdate = useCallback(async () => {
+        if (!department || !role) {
+            toast.warning('Please select a department and role.');
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('department', department);
+        formData.append('role', role);
+        formData.append('apiKey', apiKey);
+        formData.append('user', user);
+        formData.append('price', price);
+        if (uploadedImageUrl) {
+            formData.append('image', uploadedImageUrl);
+        }
+
+        try {
+            const response = await fetch('/api/update-role-mappings', {
+                method: 'POST',
+                body: formData,
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to update role mappings.');
+            }
+
+            await fetchRoles(department);
+            setUploadedImageUrl('');
+
+            toast.success('Role mappings updated successfully.');
+        } catch (error) {
+            console.error('Error updating role mappings:', error);
+            toast.error('Error updating role mappings.');
+        }
+    }, [department, role, apiKey, user, price, uploadedImageUrl, fetchRoles]);
+
+    // Handle Department Change
+    const handleDepartmentChange = useCallback(
+        async (value: string) => {
+            setDepartment(value);
+            if (value) {
+                await fetchRoles(value);
+            }
+            resetFields();
+        },
+        [fetchRoles]
+    );
+
+    // Handle Role Change
+    const handleRoleChange = useCallback(
+        async (value: string) => {
+            setRole(value);
+            if (department && value) {
+                await fetchTasks(department, value);
+            }
+            resetFields();
+        },
+        [department, fetchTasks]
+    );
+
+    // Handle Image Upload
+    const handleImageUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        try {
+            setIsUploading(true);
+
+            // Upload to Vercel Blob
+            const blob = await put(file.name, file, {
+                access: 'public',
+                token: process.env.NEXT_PUBLIC_BLOB_READ_WRITE_TOKEN || '',
+            });
+
+            setUploadedImageUrl(blob.url);
+            setUploadedImageUrlTemp(blob.url); // For preview
+            toast.success('Image uploaded successfully.');
+        } catch (error) {
+            console.error('Error uploading image:', error);
+            toast.error('Failed to upload image. Please try again.');
+        } finally {
+            setIsUploading(false);
+        }
+    }, []);
+
+    // Handle Input Prompt Change
+    const handleInputPromptChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+        const prompt = e.target.value;
+        setInputPrompt(prompt);
+        // Optionally parse prompt if needed
+        // const parsedPrompt = parsePrompt(prompt);
+        // setInputTask(parsedPrompt.task);
+    }, []);
+
+    // Handle Retrieve Instruction
+    const handleRetrieveInstruction = useCallback(async () => {
+        if (!role || !task) {
+            toast.warning('Please select a role and task.');
+            return;
+        }
+
+        try {
+            const assistantId = HashUtil.hashTo(`${role}${task}`);
+            const response = await fetch('/api/get-instruction', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ assistantId }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to retrieve instruction.');
+            }
+
+            const data: { instruction?: string } = await response.json();
+            setOutputMessage(data.instruction || '');
+            toast.success('Instruction retrieved successfully.');
+        } catch (error) {
+            console.error('Error retrieving instruction:', error);
+            toast.error('Error retrieving instruction.');
+        }
+    }, [role, task]);
+
+    // Handle Update Instruction
+    const handleUpdateInstruction = useCallback(async () => {
+        if (!role || !task) {
+            toast.warning('Please select a role and task.');
+            return;
+        }
+
+        try {
+            const assistantId = HashUtil.hashTo(`${role}${task}`);
+            const response = await fetch('/api/update-instruction', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ assistantId, instruction: outputMessage }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to update instruction.');
+            }
+
+            toast.success('Instruction updated successfully.');
+        } catch (error) {
+            console.error('Error updating instruction:', error);
+            toast.error('Error updating instruction.');
+        }
+    }, [role, task, outputMessage]);
+
+    // Handle Retrieve Translation
+    const handleRetrieveTranslation = useCallback(async () => {
+        if (selectedTranslatedName) {
+            try {
+                const response = await fetch('/api/get_content_in_language', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: selectedTranslatedName,
+                        language: 'English',
+                    }),
+                });
+
+                if (response.ok) {
+                    const data: { content?: string } = await response.json();
+                    if (data.content) {
+                        setTranslateName(selectedTranslatedName.replace('label:', ''));
+                        setTranslateContent(data.content);
+                        toast.success('Translation retrieved successfully.');
+                    } else {
+                        throw new Error(`No content found for the selected name ${selectedTranslatedName}`);
+                    }
+                } else {
+                    throw new Error('Failed to retrieve translation.');
+                }
+            } catch (error) {
+                console.error('Error retrieving translation:', error);
+                toast.error(`Error retrieving translation: ${error}`);
+            }
+        } else {
+            toast.warning('Please select a translated name.');
+        }
+    }, [selectedTranslatedName]);
+
+    // Reset Fields
+    const resetFields = useCallback(() => {
+        setApiKey('');
+        setUser('eric');
+        setPrice('0.01');
+        setImage(null);
+        setUploadedImageUrlTemp('');
+        // setImagePreview(null); // If image preview is used
+    }, []);
+
+    // Parse Prompt (Utility Function - If Needed)
+    const parsePrompt = useCallback((prompt: string) => {
+        const roleMatch = prompt.match(/"role":"([^"]+)"/);
+        const departmentMatch = prompt.match(/"department":"([^"]+)"/);
+        const taskMatch = prompt.match(/"task":"([^"]+)"/);
+
+        return {
+            role: roleMatch ? roleMatch[1] : '',
+            department: departmentMatch ? departmentMatch[1] : '',
+            task: taskMatch ? taskMatch[1] : '',
+        };
+    }, []);
+
+    return (
+        <div className={styles.container}>
+            <Head>
+                <title>Convert Prompt</title>
+                <meta name="description" content="Convert Prompt to structured format" />
+                <link rel="icon" href="/favicon.ico" />
+            </Head>
+
+            <main className={styles.main}>
+                <h1 className={styles.title} style={{ textAlign: 'center' }}>
+                    Convert Prompt
+                </h1>
+
+                <div className={styles.grid}>
+                    {/* Section 1: Department, Role, API Key, User, Price, Image */}
+                    <div className={styles.section1}>
+                        <div className={`${styles.card} ${styles.row}`}>
+                            {/* Department Management */}
+                            <div className={styles.inputGroup}>
+                                <label htmlFor="department-select"><h3>Department</h3></label>
+                                <select
+                                    id="department-select"
+                                    value={department}
+                                    onChange={(e) => handleDepartmentChange(e.target.value)}
+                                    style={{ padding: '8px', marginBottom: '10px' }}
+                                >
+                                    {departments.map((dep, index) => (
+                                        <option key={index} value={dep}>
+                                            {dep}
+                                        </option>
+                                    ))}
+                                </select>
+                                <input
+                                    type="text"
+                                    value={newDepartment}
+                                    onChange={(e) => setNewDepartment(e.target.value)}
+                                    placeholder="New Department"
+                                    style={{ padding: '8px', marginBottom: '10px' }}
+                                />
+                                <button onClick={handleAddDepartment} style={{ marginTop: '10px' }}>
+                                    Add
+                                </button>
+                            </div>
+
+                            {/* Role Management */}
+                            <div className={styles.inputGroup}>
+                                <label htmlFor="role-select"><h3>Role</h3></label>
+                                <select
+                                    id="role-select"
+                                    value={role}
+                                    onChange={(e) => handleRoleChange(e.target.value)}
+                                    style={{ padding: '8px', marginBottom: '10px' }}
+                                >
+                                    {roles.map((rl, index) => (
+                                        <option key={index} value={rl}>
+                                            {rl}
+                                        </option>
+                                    ))}
+                                </select>
+                                <input
+                                    type="text"
+                                    value={newRole}
+                                    onChange={(e) => setNewRole(e.target.value)}
+                                    placeholder="New Role"
+                                    style={{ padding: '8px', marginBottom: '10px' }}
+                                />
+                                <button onClick={handleAddRole} style={{ marginTop: '10px' }}>
+                                    Add
+                                </button>
+                            </div>
+
+                            {/* API Key */}
+                            <div className={styles.inputGroup}>
+                                <label htmlFor="apiKey-input"><h3>API Key</h3></label>
+                                <input
+                                    id="apiKey-input"
+                                    type="text"
+                                    value={apiKey}
+                                    onChange={(e) => setApiKey(e.target.value)}
+                                    style={{ padding: '8px', marginBottom: '10px' }}
+                                    placeholder="Enter API Key"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Additional Inputs for Section 1 */}
+                        <div className={`${styles.card} ${styles.row}`}>
+                            {/* User */}
+                            <div className={styles.inputGroup}>
+                                <label htmlFor="user-input"><h3>User</h3></label>
+                                <input
+                                    id="user-input"
+                                    type="text"
+                                    value={user}
+                                    onChange={(e) => setUser(e.target.value)}
+                                    style={{ padding: '8px', marginBottom: '10px' }}
+                                    placeholder="Enter User"
+                                />
+                            </div>
+
+                            {/* Price */}
+                            <div className={styles.inputGroup}>
+                                <label htmlFor="price-input"><h3>Price</h3></label>
+                                <input
+                                    id="price-input"
+                                    type="text"
+                                    value={price}
+                                    onChange={(e) => setPrice(e.target.value)}
+                                    style={{ padding: '8px', marginBottom: '10px' }}
+                                    placeholder="Enter Price"
+                                />
+                            </div>
+
+                            {/* Image Upload */}
+                            <div className={styles.inputGroup}>
+                                <label htmlFor="image-upload"><h3>Image</h3></label>
+                                {uploadedImageUrl && (
+                                    <div className="mt-4">
+                                        <img
+                                            src={uploadedImageUrl}
+                                            alt="Uploaded"
+                                            style={{ width: '100px', marginBottom: '10px' }}
+                                            className="max-w-full h-auto"
+                                        />
+                                    </div>
+                                )}
+                                <input
+                                    id="image-upload"
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={handleImageUpload}
+                                    style={{ padding: '8px', marginBottom: '10px' }}
+                                />
+                                {isUploading && <p>Uploading image...</p>}
+                            </div>
+                        </div>
+
+                        {/* Buttons for Section 1 */}
+                        <div className={`${styles.card} ${styles.row}`} style={{ justifyContent: 'center' }}>
+                            <button onClick={handleAddRoleMappings} style={{ margin: '10px' }}>
+                                Add Role
+                            </button>
+                            <button onClick={handleRetrieve} style={{ margin: '10px' }}>
+                                Retrieve
+                            </button>
+                            <button onClick={handleUpdate} style={{ margin: '10px' }}>
+                                Update
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Section 2: Department, Role, Task Selection with Refresh Buttons */}
+                    <div className={`${styles.card} ${styles.row}`}>
+                        {/* Department Selection */}
+                        <div className={styles.inputGroup}>
+                            <label htmlFor="department-select-2"><h3>Department</h3></label>
+                            <select
+                                id="department-select-2"
+                                value={department}
+                                onChange={(e) => handleDepartmentChange(e.target.value)}
+                                style={{ padding: '8px', marginBottom: '10px' }}
+                            >
+                                {departments.map((dep, index) => (
+                                    <option key={index} value={dep}>
+                                        {dep}
+                                    </option>
+                                ))}
+                            </select>
+                            <button onClick={handleRefreshDepartments} style={{ marginTop: '10px' }}>
+                                Refresh
+                            </button>
+                        </div>
+
+                        {/* Role Selection */}
+                        <div className={styles.inputGroup}>
+                            <label htmlFor="role-select-2"><h3>Role</h3></label>
+                            <select
+                                id="role-select-2"
+                                value={role}
+                                onChange={(e) => handleRoleChange(e.target.value)}
+                                style={{ padding: '8px', marginBottom: '10px' }}
+                            >
+                                {roles.map((rl, index) => (
+                                    <option key={index} value={rl}>
+                                        {rl}
+                                    </option>
+                                ))}
+                            </select>
+                            <button onClick={handleRefreshRoles} style={{ marginTop: '10px' }}>
+                                Refresh
+                            </button>
+                        </div>
+
+                        {/* Task Selection */}
+                        <div className={styles.inputGroup}>
+                            <label htmlFor="task-select"><h3>Task</h3></label>
+                            <select
+                                id="task-select"
+                                value={task}
+                                onChange={(e) => setTask(e.target.value)}
+                                style={{ padding: '8px', marginBottom: '10px' }}
+                            >
+                                {tasks.map((tk, index) => (
+                                    <option key={index} value={tk}>
+                                        {tk}
+                                    </option>
+                                ))}
+                            </select>
+                            <input
+                                type="text"
+                                value={inputTask}
+                                onChange={(e) => setInputTask(e.target.value)}
+                                placeholder="New Task"
+                                style={{ padding: '8px', marginBottom: '10px' }}
+                            />
+                        </div>
+                    </div>
+
+                    {/* Section 3: Input Prompt and Output Message */}
+                    <div className={styles.card}>
+                        {/* Input Prompt */}
+                        <h3>Input Prompt</h3>
+                        <textarea
+                            value={inputPrompt}
+                            onChange={handleInputPromptChange}
+                            rows={10}
+                            cols={50}
+                            style={{ width: '90%', padding: '8px', marginBottom: '10px' }}
+                            placeholder="Enter your prompt here..."
+                        />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+                            <button onClick={handleConvert} style={{ marginRight: '10px' }} disabled={isConverting}>
+                                {isConverting ? 'Converting...' : 'Convert'}
+                            </button>
+                            <button onClick={handleAddPrompt} style={{ marginRight: '10px' }}>
+                                Add
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className={styles.card} style={{ width: '100%' }}>
+                        {/* Output Message */}
+                        <h3>Output Message</h3>
+                        <textarea
+                            value={outputMessage}
+                            onChange={(e) => setOutputMessage(e.target.value)}
+                            rows={10}
+                            cols={50}
+                            style={{ width: '90%', padding: '8px', marginTop: '10px' }}
+                            placeholder="Output will appear here..."
+                        />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '10px' }}>
+                            <button onClick={handleRetrieveInstruction} style={{ marginRight: '10px' }}>
+                                Retrieve
+                            </button>
+                            <button onClick={handleUpdateInstruction} style={{ marginRight: '10px' }}>
+                                Update
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Section 4: Translation */}
+                    <div className={styles.card} style={{ width: '100%' }}>
+                        <h3>Translate</h3>
+                        <label htmlFor="translate-name"><strong>Name:</strong></label>
+                        <input
+                            id="translate-name"
+                            type="text"
+                            value={translateName}
+                            onChange={(e) => setTranslateName(e.target.value)}
+                            placeholder="Enter name"
+                            style={{ width: '90%', padding: '8px', marginTop: '10px' }}
+                        />
+                        <label htmlFor="translate-content"><strong>Content:</strong></label>
+                        <textarea
+                            id="translate-content"
+                            value={translateContent}
+                            onChange={(e) => setTranslateContent(e.target.value)}
+                            rows={10}
+                            cols={50}
+                            placeholder="Enter content to translate"
+                            style={{ width: '90%', padding: '8px', marginTop: '10px' }}
+                        />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '10px' }}>
+                            <button onClick={handleTranslate} style={{ marginRight: '10px' }}>
+                                Translate
+                            </button>
+                            <button onClick={handleRetrieveTranslation} style={{ marginRight: '10px' }}>
+                                Retrieve
+                            </button>
+                        </div>
+                        <select
+                            value={selectedTranslatedName}
+                            onChange={(e) => setSelectedTranslatedName(e.target.value)}
+                            style={{ width: '90%', padding: '8px', marginTop: '10px' }}
+                        >
+                            <option value="">Select a translated name</option>
+                            {translatedNames.map((name) => (
+                                <option key={name} value={name}>
+                                    {name}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                </div>
+            </main>
+        </div>
+    );
+};
+
+export default ConvertPrompt;

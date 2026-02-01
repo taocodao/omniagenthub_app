@@ -1,0 +1,2988 @@
+/* eslint-disable react-hooks/rules-of-hooks */
+/* eslint-disable react-hooks/exhaustive-deps */
+// components/NotebookManager.tsx - COMPLETE FIX WITH USER ADDRESS HANDLING
+'use client';
+
+import React, { useState, useEffect, useRef, DragEvent, ChangeEvent } from 'react';
+import { toast } from 'react-toastify';
+import { LocalizedText, getLocalizedString } from '../util/LocalizedText';
+import HashUtil from '../util/hashToFixedDigits';
+import { useActiveAccount } from 'thirdweb/react';
+import Web3SignIn from './Web3SignIn'; // ✅ Updated import to use Web3SignIn component
+import styles from '../styles/NotebookManager.module.css';
+import { string } from 'zod';
+
+// Type definitions
+interface NotebookSource {
+  id: string;
+  title: string;
+  type: 'file' | 'website' | 'text';
+  status: 'uploading' | 'processing' | 'completed' | 'error';
+  progress: number;
+  fileSize?: string;
+  dateCreated: string;
+  error?: string;
+  url?: string;
+  fileName?: string;
+  content?: string;
+  selected: boolean;
+  pineconeFileId?: string;
+}
+
+interface Notebook {
+  id: string;
+  title: string;
+  sources: NotebookSource[];
+  created: string;
+  sourceCount: number;
+  pineconeAssistantId?: string;
+  lastUpdated: string;
+}
+
+interface NotebookManagerProps {
+  isOpen: boolean;
+  onClose: () => void;
+  userAddress: any;
+  language?: string; // ✅ Made language optional with default
+}
+
+// ✅ NEW: Upload Progress Modal Component
+interface UploadProgressModalProps {
+  isOpen: boolean;
+  files: Array<{
+    name: string;
+    progress: number;
+    status: 'uploading' | 'completed' | 'error';
+    error?: string;
+  }>;
+  onClose: () => void;
+}
+
+const UploadProgressModal: React.FC<UploadProgressModalProps> = ({ isOpen, files, onClose }) => {
+  if (!isOpen || files.length === 0) return null;
+
+  const allCompleted = files.every(f => f.status === 'completed' || f.status === 'error');
+  const hasErrors = files.some(f => f.status === 'error');
+
+  return (
+    <div style={{
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 10001
+    }}>
+      <div style={{
+        backgroundColor: 'white',
+        borderRadius: '12px',
+        padding: '24px',
+        width: '400px',
+        maxHeight: '500px',
+        overflowY: 'auto',
+        boxShadow: '0 10px 30px rgba(0, 0, 0, 0.3)'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+          <h3 style={{ margin: 0, color: '#333', fontSize: '18px' }}>
+            {allCompleted ? 'Upload Complete' : 'Uploading Files...'}
+          </h3>
+          {allCompleted && (
+            <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#666', padding: '4px' }}>
+              ✕
+            </button>
+          )}
+        </div>
+
+        {files.map((file, index) => (
+          <div key={index} style={{ marginBottom: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+              <span style={{ fontSize: '14px', color: '#333', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {file.name}
+              </span>
+              <span style={{ fontSize: '12px', color: '#666', marginLeft: '8px' }}>
+                {file.status === 'uploading' && '⏳'}
+                {file.status === 'completed' && '✅'}
+                {file.status === 'error' && '❌'}
+              </span>
+            </div>
+
+            {/* Progress bar */}
+            <div style={{
+              width: '100%',
+              height: '6px',
+              backgroundColor: '#f0f0f0',
+              borderRadius: '3px',
+              overflow: 'hidden'
+            }}>
+              <div style={{
+                width: `${file.progress}%`,
+                height: '100%',
+                backgroundColor: file.status === 'error' ? '#ff4444' : '#4CAF50',
+                transition: 'width 0.3s ease'
+              }} />
+            </div>
+
+            {/* Progress percentage */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
+              <span style={{ fontSize: '12px', color: '#666' }}>
+                {file.progress}%
+              </span>
+              {file.error && (
+                <span style={{ fontSize: '12px', color: '#ff4444' }}>
+                  {file.error}
+                </span>
+              )}
+            </div>
+          </div>
+        ))}
+
+        {allCompleted && (
+          <div style={{ marginTop: '20px', textAlign: 'center' }}>
+            <button onClick={onClose} style={{
+              backgroundColor: hasErrors ? '#ff4444' : '#4CAF50',
+              color: 'white',
+              border: 'none',
+              padding: '10px 20px',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '14px'
+            }}>
+              {hasErrors ? 'Close (Some files failed)' : 'Close'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+
+const NotebookManager: React.FC<NotebookManagerProps> = ({
+  isOpen,
+  onClose,
+  userAddress : any,
+  language = 'en'
+}) => {
+  // Web3 Authentication - ✅ FIXED: Use only useActiveAccount for consistency
+  const activeAccount = useActiveAccount();
+  const address = activeAccount?.address;
+  // ✅ ADD: Upload progress modal state
+const [showUploadModal, setShowUploadModal] = useState(false);
+const [uploadingFiles, setUploadingFiles] = useState<Array<{
+  name: string;
+  progress: number;
+  status: 'uploading' | 'completed' | 'error';
+  error?: string;
+}>>([]);
+
+  // State management
+  const [view, setView] = useState<'grid' | 'notebook' | 'add-sources'>('grid');
+  const [notebooks, setNotebooks] = useState<Notebook[]>([]);
+  const [currentNotebook, setCurrentNotebook] = useState<Notebook | null>(null);
+  const [sources, setSources] = useState<NotebookSource[]>([]);
+  const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set());
+  const [dragActive, setDragActive] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [websiteUrl, setWebsiteUrl] = useState('');
+  const [pastedText, setPastedText] = useState('');
+  const [pastedTitle, setPastedTitle] = useState('');
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [sortBy, setSortBy] = useState<'recent' | 'title' | 'sources'>('recent');
+  const [newNotebookTitle, setNewNotebookTitle] = useState('');
+  const [showCreateNotebook, setShowCreateNotebook] = useState(false);
+  const [chatQuery, setChatQuery] = useState('');
+  const [chatResponse, setChatResponse] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
+
+  // Refs
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ✅ ADD: New helper function to call the add source API
+const addSourceToNotebook = async (source: NotebookSource) => {
+  if (!address || !currentNotebook) {
+    throw new Error('Wallet not connected or no notebook selected');
+  }
+
+  try {
+    const hashedUserKey = HashUtil.hashTo(address);
+    const response = await fetch('/api/sources/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userKey: hashedUserKey,
+        notebookId: currentNotebook.id,
+        source: source,
+        userAddress: address
+      })
+    });
+
+    const data = await response.json();
+    
+    if (!data.success) {
+      throw new Error(data.message || 'Failed to add source');
+    }
+
+    console.log('✅ Source added via API:', data.source.id);
+    return data;
+  } catch (error) {
+    console.error('❌ Error adding source via API:', error);
+    throw error;
+  }
+};
+
+
+  // Load notebooks on mount and when wallet connects - ✅ FIXED
+  useEffect(() => {
+    if (isOpen && address) {
+      console.log('Loading notebooks for user:', address);
+      fetchNotebooks();
+    }
+  }, [isOpen, address]);
+
+  // Fetch user's notebooks - ✅ FIXED: Better error handling and logging
+  const fetchNotebooks = async () => {
+    if (!address) {
+      console.warn('No wallet address available for fetching notebooks');
+      return;
+    }
+
+    try {
+      const hashedUserKey = HashUtil.hashTo(address);
+      console.log('Fetching notebooks with:', { address, hashedUserKey });
+
+      const response = await fetch(`/api/notebooks/list?userKey=${hashedUserKey}`);
+      if (response.ok) {
+        const data = await response.json();
+        setNotebooks(data.notebooks || []);
+        console.log('Notebooks loaded:', data.notebooks?.length || 0);
+      } else {
+        console.error('Failed to fetch notebooks:', response.status);
+        toast.error('Failed to load notebooks');
+      }
+    } catch (error) {
+      console.error('Error fetching notebooks:', error);
+      toast.error('Failed to load notebooks');
+    }
+  };
+
+  // Create new notebook - ✅ FIXED: Now passes userAddress
+  const createNotebook = async () => {
+    if (!newNotebookTitle.trim()) {
+      toast.error('Please enter a notebook title');
+      return;
+    }
+
+    if (!address) {
+      toast.error('Please connect your wallet first');
+      return;
+    }
+
+    try {
+      const hashedUserKey = HashUtil.hashTo(address);
+      console.log('Creating notebook with:', { 
+        address, 
+        hashedUserKey, 
+        title: newNotebookTitle.trim() 
+      });
+
+      // ✅ CRITICAL FIX: Include userAddress in request body
+      const requestBody = {
+        userKey: hashedUserKey,
+        title: newNotebookTitle.trim(),
+        userAddress: address // ✅ This was missing!
+      };
+
+      console.log('Create notebook request body:', requestBody);
+
+      const response = await fetch('/api/notebooks/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody)
+      });
+
+      const data = await response.json();
+      console.log('Create notebook response:', data);
+
+      if (data.success) {
+        await fetchNotebooks();
+        setNewNotebookTitle('');
+        setShowCreateNotebook(false);
+        toast.success('Notebook created successfully');
+
+        // Open the new notebook
+        const newNotebook = data.notebook;
+        openNotebook(newNotebook);
+      } else {
+        throw new Error(data.message || 'Failed to create notebook');
+      }
+    } catch (error) {
+      console.error('Error creating notebook:', error);
+      toast.error('Failed to create notebook');
+    }
+  };
+
+// Open notebook and load its sources
+const openNotebook = async (notebook: Notebook) => {
+  setCurrentNotebook(notebook);
+  setView('notebook');
+  
+  // Load sources from database
+  if (address) {
+    try {
+      const hashedUserKey = HashUtil.hashTo(address);
+      const response = await fetch(`/api/sources/list?userKey=${hashedUserKey}&notebookId=${notebook.id}`);
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          console.log('✅ Loaded', data.sources.length, 'sources from database');
+          setSources(data.sources);
+          setSelectedSources(new Set(data.sources?.filter((s: any) => s.selected).map((s: any) => s.id)));
+        }
+      }
+    } catch (error) {
+      console.error('Error loading sources:', error);
+      // Fallback to notebook sources if API fails
+      setSources(notebook.sources || []);
+      setSelectedSources(new Set(notebook.sources?.filter((s: any) => s.selected).map((s: any) => s.id)));
+    }
+  } else {
+    // Fallback to notebook sources
+    setSources(notebook.sources || []);
+    setSelectedSources(new Set(notebook.sources?.filter((s: any) => s.selected).map((s: any) => s.id)));
+  }
+};
+
+
+  // Update notebook - ✅ FIXED: Now passes userAddress
+  const updateNotebook = async (notebookId: string, updates: Partial<Notebook>) => {
+    if (!address) {
+      toast.error('Please connect your wallet first');
+      return;
+    }
+
+    try {
+      const hashedUserKey = HashUtil.hashTo(address);
+      const response = await fetch('/api/notebooks/update', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userKey: hashedUserKey,
+          notebookId,
+          updates,
+          userAddress: address // ✅ Added userAddress
+        })
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        await fetchNotebooks();
+        if (currentNotebook && currentNotebook.id === notebookId) {
+          setCurrentNotebook(data.notebook);
+        }
+      }
+    } catch (error) {
+      console.error('Error updating notebook:', error);
+    }
+  };
+  const [activeTab, setActiveTab] = useState<'website' | 'paste'>('website');
+
+  // Delete notebook - ✅ FIXED: Now passes userAddress
+  const deleteNotebook = async (notebookId: string) => {
+    if (!confirm('Are you sure you want to delete this notebook? This action cannot be undone.')) {
+      return;
+    }
+
+    if (!address) {
+      toast.error('Please connect your wallet first');
+      return;
+    }
+
+    try {
+      const hashedUserKey = HashUtil.hashTo(address);
+      const response = await fetch('/api/notebooks/delete', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userKey: hashedUserKey,
+          notebookId,
+          userAddress: address // ✅ Added userAddress
+        })
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        await fetchNotebooks();
+        if (currentNotebook && currentNotebook.id === notebookId) {
+          setCurrentNotebook(null);
+          setView('grid');
+        }
+        toast.success('Notebook deleted successfully');
+      }
+    } catch (error) {
+      console.error('Error deleting notebook:', error);
+      toast.error('Failed to delete notebook');
+    }
+  };
+
+// ✅ ADD: Success notification useEffect
+useEffect(() => {
+  const allProcessed = uploadingFiles.every(f => f.status === 'completed' || f.status === 'error');
+  const hasSuccessful = uploadingFiles.some(f => f.status === 'completed');
+  
+  if (allProcessed && uploadingFiles.length > 0 && hasSuccessful) {
+    const successCount = uploadingFiles.filter(f => f.status === 'completed').length;
+    toast.success(`Successfully uploaded ${successCount} file(s)`);
+  }
+}, [uploadingFiles]);
+
+// ✅ ENHANCED: Handle file upload with progress modal - COMPLETELY FIXED VERSION
+const handleFiles = async (files: FileList) => {
+  if (!currentNotebook) {
+    toast.error('Please open a notebook first');
+    return;
+  }
+
+  if (!address) {
+    toast.error('Please connect your wallet first');
+    return;
+  }
+
+  const sourceLimit = 50;
+  if (sources.length + files.length > sourceLimit) {
+    toast.error(`Source limit exceeded. Maximum ${sourceLimit} sources allowed.`);
+    return;
+  }
+
+  // ✅ Initialize upload modal
+  const fileList = Array.from(files).map(file => ({
+    name: file.name,
+    progress: 0,
+    status: 'uploading' as const,
+    error: undefined
+  }));
+
+  setUploadingFiles(fileList);
+  setShowUploadModal(true);
+  setUploading(true);
+
+  // ✅ Close the "Add Sources" view
+  setView('notebook');
+
+  // ✅ Process files sequentially to avoid overwhelming the system
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+
+    // Validate file type
+    const allowedTypes = ['.pdf', '.txt', '.md', '.docx', '.json'];
+    const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
+
+    if (!allowedTypes.includes(fileExtension)) {
+      // ✅ Update file status to error
+      setUploadingFiles(prev => prev.map((f, idx) => 
+        idx === i ? { ...f, status: 'error', error: `Unsupported file type: ${fileExtension}` } : f
+      ));
+      continue;
+    }
+
+    const sourceId = `file_${Date.now()}_${i}`;
+
+    try {
+      console.log(`📁 Starting upload for: ${file.name}`);
+      
+      // ✅ Update progress: Starting
+      setUploadingFiles(prev => prev.map((f, idx) => 
+        idx === i ? { ...f, progress: 10 } : f
+      ));
+
+      // ✅ Upload file with progress tracking - NOW RETURNS RESULT
+      const uploadResult = await uploadFileToNotebook(file, sourceId, currentNotebook.id, (progress) => {
+        // ✅ Update progress during upload
+        setUploadingFiles(prev => prev.map((f, idx) => 
+          idx === i ? { ...f, progress: Math.min(progress, 95) } : f
+        ));
+      });
+
+      // ✅ Update status to completed
+      setUploadingFiles(prev => prev.map((f, idx) => 
+        idx === i ? { ...f, status: 'completed', progress: 100 } : f
+      ));
+
+      console.log(`✅ Upload completed for: ${file.name}`);
+      
+      // ✅ FIXED: Check if upload was successful and add to UI immediately
+      if (uploadResult?.success && uploadResult?.source) {
+        const completedSource: NotebookSource = {
+          ...uploadResult.source,
+          status: 'completed',
+          progress: 100,
+          selected: true
+        };
+        
+        
+  // ✅ NEW: Use the add source API to ensure persistence
+  try {
+    await addSourceToNotebook(completedSource);
+    console.log('✅ Source persisted to database:', completedSource.id);
+  } catch (error) {
+    console.warn('⚠️ Failed to persist source, but upload succeeded:', error);
+  }
+   
+  // Update sources list immediately
+        setSources(prev => {
+          const existingIndex = prev.findIndex(s => s.id === sourceId);
+          if (existingIndex !== -1) {
+            const updated = [...prev];
+            updated[existingIndex] = completedSource;
+            return updated;
+          } else {
+            return [...prev, completedSource];
+          }
+        });
+        
+        // Add to selected sources
+        setSelectedSources(prev => new Set([...prev, sourceId]));
+        
+        console.log(`✅ Source added to UI immediately: ${completedSource.title}`);
+      }
+
+      // ✅ Force refresh - get fresh notebook data
+      try {
+        const hashedUserKey = HashUtil.hashTo(address);
+        const response = await fetch(`/api/notebooks/get?userKey=${hashedUserKey}&notebookId=${currentNotebook.id}`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.notebook) {
+            // Only update if we have more sources than currently displayed
+            if (data.notebook.sources && data.notebook.sources.length > sources.length) {
+              setSources(data.notebook.sources);
+              setCurrentNotebook(data.notebook);
+              console.log(`✅ Refreshed notebook with ${data.notebook.sources.length} sources`);
+            }
+          }
+        }
+      } catch (error) {
+        console.warn('⚠️ Error refreshing notebook:', error);
+        // Don't fail the whole upload process for refresh errors
+      }
+
+      // ✅ DISABLED: Skip status polling to avoid 404 errors until assistant creation is fixed
+      // if (uploadResult?.source?.pineconeFileId) {
+      //   pollProcessingStatus(sourceId, uploadResult.source.pineconeFileId);
+      // }
+
+    } catch (error) {
+      console.error(`❌ Upload failed for ${file.name}:`, error);
+      const errorMessage = error instanceof Error ? error.message : 'Upload failed';
+      
+      // ✅ Update file status to error
+      setUploadingFiles(prev => prev.map((f, idx) => 
+        idx === i ? { ...f, status: 'error', error: errorMessage, progress: 0 } : f
+      ));
+
+      toast.error(`Failed to upload "${file.name}": ${errorMessage}`);
+    }
+
+    // ✅ Small delay between files to prevent overwhelming the server
+    if (i < files.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  }
+
+  setUploading(false);
+
+ // ✅ FIXED - No toast calls here, just state updates
+  setTimeout(() => {
+    setUploadingFiles(current => {
+      const allProcessed = current.every(f => f.status === 'completed' || f.status === 'error');
+      
+      if (allProcessed) {
+        setShowUploadModal(false);
+        return [];
+      }
+      
+      return current;
+    });
+  }, 3000);
+};
+
+
+
+// ✅ FIXED: Upload file to notebook - NOW RETURNS RESULT
+const uploadFileToNotebook = async (
+  file: File, 
+  sourceId: string, 
+  notebookId: string, 
+  onProgress?: (progress: number) => void
+): Promise<{success: boolean, source?: NotebookSource, message?: string} | null> => {
+  if (!address) {
+    throw new Error('Wallet not connected');
+  }
+
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('userKey', HashUtil.hashTo(address));
+  formData.append('sourceId', sourceId);
+  formData.append('notebookId', notebookId);
+  formData.append('userAddress', address); // Added userAddress
+
+  try {
+    updateSourceStatus(sourceId, 'uploading', 25);
+    onProgress?.(25);
+
+    const response = await fetch('/api/sources/upload-file', {
+      method: 'POST',
+      body: formData
+    });
+
+    const data = await response.json();
+
+    if (data.success) {
+      updateSourceStatus(sourceId, 'processing', 75);
+      onProgress?.(75);
+
+      // ✅ RETURN THE RESULT instead of void
+      return {
+        success: true,
+        source: data.source,
+        message: data.message
+      };
+    } else {
+      throw new Error(data.error || 'Upload failed');
+    }
+  } catch (error) {
+    updateSourceStatus(sourceId, 'error', 0, error instanceof Error ? error.message : 'Upload failed');
+    throw error;
+  }
+};
+
+
+  // Handle website scraping - ✅ FIXED: Now passes userAddress
+  const handleWebsiteUpload = async () => {
+    if (!currentNotebook || !websiteUrl.trim()) {
+      toast.error('Please open a notebook and enter a URL');
+      return;
+    }
+
+    if (!address) {
+      toast.error('Please connect your wallet first');
+      return;
+    }
+
+    const sourceItem: NotebookSource = {
+      id: `website_${Date.now()}`,
+      title: websiteUrl,
+      type: 'website',
+      status: 'uploading',
+      progress: 0,
+      dateCreated: new Date().toLocaleDateString(),
+      url: websiteUrl,
+      selected: true
+    };
+
+    
+ console.log('🔍 BEFORE setSources - Current sources:', sources);
+  console.log('🔍 Adding sourceItem:', sourceItem);
+  
+  setSources(prev => {
+    const newSources = [...prev, sourceItem];
+    console.log('🔍 AFTER setSources - New sources:', newSources);
+    return newSources;
+  });
+  
+  console.log('🔍 AFTER setSources call - sources.length should update on next render');
+
+    
+    setSelectedSources(prev => new Set([...prev, sourceItem.id]));
+    setWebsiteUrl('');
+
+    try {
+      const response = await fetch('/api/sources/scrape-website', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: websiteUrl,
+          userKey: HashUtil.hashTo(address),
+          sourceId: sourceItem.id,
+          notebookId: currentNotebook.id,
+          userAddress: address // ✅ Added userAddress
+        })
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        updateSourceStatus(sourceItem.id, 'processing', 50);
+          // ✅ NEW: Add the source to the notebook via API
+  try {
+    const completedSource = { ...sourceItem, status: 'completed' as const, progress: 100 };
+    await addSourceToNotebook(completedSource);
+    console.log('✅ Website source persisted to database:', sourceItem.id);
+  } catch (error) {
+    console.warn('⚠️ Failed to persist website source:', error);
+  }
+
+        await pollProcessingStatus(sourceItem.id, data.jobId);
+
+        // Update notebook's Pinecone assistant
+        await updateNotebookEmbeddings(currentNotebook.id);
+      } else {
+        throw new Error(data.message || 'Website scraping failed');
+      }
+    } catch (error) {
+      updateSourceStatus(sourceItem.id, 'error', 0, error instanceof Error ? error.message : 'Website scraping failed');
+    }
+  };
+
+  // Handle pasted text - ✅ FIXED: Now passes userAddress
+  const handlePastedText = async () => {
+    if (!currentNotebook || !pastedText.trim() || !pastedTitle.trim()) {
+      toast.error('Please open a notebook and fill in all fields');
+      return;
+    }
+
+    if (!address) {
+      toast.error('Please connect your wallet first');
+      return;
+    }
+
+    const sourceItem: NotebookSource = {
+      id: `text_${Date.now()}`,
+      title: pastedTitle,
+      type: 'text',
+      status: 'uploading',
+      progress: 0,
+      dateCreated: new Date().toLocaleDateString(),
+      content: pastedText,
+      selected: true
+    };
+
+    setSources(prev => [...prev, sourceItem]);
+    setSelectedSources(prev => new Set([...prev, sourceItem.id]));
+    setPastedText('');
+    setPastedTitle('');
+
+    try {
+      const response = await fetch('/api/sources/upload-text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: pastedTitle,
+          content: pastedText,
+          userKey: HashUtil.hashTo(address),
+          sourceId: sourceItem.id,
+          notebookId: currentNotebook.id,
+          userAddress: address // ✅ Added userAddress
+        })
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        updateSourceStatus(sourceItem.id, 'processing', 75);
+        // ✅ NEW: Add the source to the notebook via API
+  try {
+    const completedSource = { ...sourceItem, status: 'completed' as const, progress: 100 };
+    await addSourceToNotebook(completedSource);
+    console.log('✅ Text source persisted to database:', sourceItem.id);
+  } catch (error) {
+    console.warn('⚠️ Failed to persist text source:', error);
+  }
+        await pollProcessingStatus(sourceItem.id, data.fileId);
+
+        // Update notebook's Pinecone assistant
+        await updateNotebookEmbeddings(currentNotebook.id);
+      } else {
+        throw new Error(data.message || 'Text upload failed');
+      }
+    } catch (error) {
+      updateSourceStatus(sourceItem.id, 'error', 0, error instanceof Error ? error.message : 'Text upload failed');
+    }
+  };
+
+  // Update notebook embeddings with all sources - ✅ FIXED: Now passes userAddress
+  const updateNotebookEmbeddings = async (notebookId: string) => {
+    if (!address) {
+      console.warn('No wallet address for updating embeddings');
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/notebooks/update-embeddings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userKey: HashUtil.hashTo(address),
+          notebookId,
+          userAddress: address // ✅ Added userAddress
+        })
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        console.log('Notebook embeddings updated:', data.assistantId);
+      }
+    } catch (error) {
+      console.error('Error updating embeddings:', error);
+    }
+  };
+
+  // Chat with notebook - ✅ FIXED: Now passes userAddress
+  const handleChatQuery = async () => {
+    if (!chatQuery.trim() || !currentNotebook || chatLoading) {
+      return;
+    }
+
+    if (!address) {
+      toast.error('Please connect your wallet first');
+      return;
+    }
+
+    setChatLoading(true);
+
+    try {
+      const response = await fetch('/api/notebooks/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userKey: HashUtil.hashTo(address),
+          notebookId: currentNotebook.id,
+          query: chatQuery.trim(),
+          selectedSources: Array.from(selectedSources),
+          userAddress: address // ✅ Added userAddress
+        })
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setChatResponse(data.response);
+      } else {
+        toast.error(data.message || 'Chat failed');
+      }
+    } catch (error) {
+      console.error('Chat error:', error);
+      toast.error('Failed to get response');
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  // Delete source - ✅ FIXED: Now passes userAddress
+  const deleteSource = async (sourceId: string) => {
+    if (!currentNotebook) return;
+
+    if (!address) {
+      toast.error('Please connect your wallet first');
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/sources/delete', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sourceId,
+          userKey: HashUtil.hashTo(address),
+          notebookId: currentNotebook.id,
+          userAddress: address // ✅ Added userAddress
+        })
+      });
+
+      if (response.ok) {
+        setSources(prev => prev.filter(source => source.id !== sourceId));
+        const newSelected = new Set(selectedSources);
+        newSelected.delete(sourceId);
+        setSelectedSources(newSelected);
+
+        // Update notebook embeddings
+        await updateNotebookEmbeddings(currentNotebook.id);
+        toast.success('Source deleted successfully');
+      } else {
+        throw new Error('Delete failed');
+      }
+    } catch (error) {
+      toast.error('Failed to delete source');
+    }
+  };
+
+// Poll processing status - ✅ FIXED VERSION
+const pollProcessingStatus = async (sourceId: string, fileId: string) => {
+  const maxAttempts = 30;
+  let attempts = 0;
+
+  const poll = async () => {
+    try {
+      // ✅ FIXED: Include required parameters for assistant name lookup
+     // ✅ FIXED: Handle potentially undefined address
+const hashedUserKey = address ? HashUtil.hashTo(address) : '';
+if (!hashedUserKey || !currentNotebook?.id) {
+  console.warn('⚠️ Missing address or notebook ID for status check');
+  return;
+}
+
+      const response = await fetch(`/api/sources/processing-status?fileId=${fileId}&notebookId=${currentNotebook?.id}&userKey=${hashedUserKey}`);
+      
+      const data = await response.json();
+
+      if (data.status === 'completed') {
+        updateSourceStatus(sourceId, 'completed', 100);
+        
+        // Refresh notebook data
+        if (currentNotebook) {
+          const updatedNotebook = await fetchNotebookDetails(currentNotebook.id);
+          if (updatedNotebook) {
+            setCurrentNotebook(updatedNotebook);
+            setSources(updatedNotebook.sources || []);
+          }
+        }
+        return;
+      } else if (data.status === 'error') {
+        updateSourceStatus(sourceId, 'error', 0, data.error);
+        return;
+      }
+
+      // Continue polling if still processing
+      attempts++;
+      if (attempts < maxAttempts) {
+        setTimeout(poll, 2000);
+      } else {
+        updateSourceStatus(sourceId, 'error', 0, 'Processing timeout');
+      }
+    } catch (error) {
+      console.error('❌ Processing status check error:', error);
+      updateSourceStatus(sourceId, 'error', 0, 'Status check failed');
+    }
+  };
+
+  poll();
+};
+
+// ✅ ADD: Handle add note function
+const handleAddNote = () => {
+  if (!currentNotebook) {
+    toast.error('Please open a notebook first');
+    return;
+  }
+
+  const noteTitle = prompt('Enter note title:');
+  if (!noteTitle?.trim()) return;
+
+  const noteContent = prompt('Enter note content:');
+  if (!noteContent?.trim()) return;
+
+  // Create note source
+  const noteSource: NotebookSource = {
+    id: `note_${Date.now()}`,
+    title: noteTitle.trim(),
+    type: 'text',
+    status: 'completed',
+    progress: 100,
+    dateCreated: new Date().toLocaleDateString(),
+    content: noteContent.trim(),
+    selected: true
+  };
+
+ // ✅ NEW: Add to database first, then update UI
+try {
+   addSourceToNotebook(noteSource);
+  
+  // Add to sources
+  setSources(prev => [...prev, noteSource]);
+  setSelectedSources(prev => new Set([...prev, noteSource.id]));
+  toast.success('Note added successfully');
+  console.log('✅ Note persisted to database:', noteSource.id);
+} catch (error) {
+  console.error('❌ Failed to add note:', error);
+  toast.error('Failed to add note');
+}
+
+};
+
+
+  // Fetch notebook details - ✅ FIXED: Better error handling
+  const fetchNotebookDetails = async (notebookId: string): Promise<Notebook | null> => {
+    if (!address) {
+      return null;
+    }
+
+    try {
+      const hashedUserKey = HashUtil.hashTo(address);
+      const response = await fetch(`/api/notebooks/get?userKey=${hashedUserKey}&notebookId=${notebookId}`);
+
+      if (response.ok) {
+        const data = await response.json();
+        return data.notebook;
+      }
+    } catch (error) {
+      console.error('Error fetching notebook details:', error);
+    }
+    return null;
+  };
+
+  // Update source status
+  const updateSourceStatus = (sourceId: string, status: NotebookSource['status'], progress: number, error?: string) => {
+    setSources(prev => prev.map(source => 
+      source.id === sourceId 
+        ? { ...source, status, progress, error }
+        : source
+    ));
+  };
+
+  // Toggle source selection
+  const toggleSourceSelection = (sourceId: string) => {
+    const newSelected = new Set(selectedSources);
+    if (newSelected.has(sourceId)) {
+      newSelected.delete(sourceId);
+    } else {
+      newSelected.add(sourceId);
+    }
+    setSelectedSources(newSelected);
+  };
+
+  // Select all sources
+  const selectAllSources = () => {
+    if (selectedSources.size === sources.filter(s => s.status === 'completed').length) {
+      setSelectedSources(new Set());
+    } else {
+      setSelectedSources(new Set(sources.filter(s => s.status === 'completed').map(s => s.id)));
+    }
+  };
+
+  // Utility functions
+  const formatFileSize = (bytes: number): string => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  // Drag and drop handlers
+  const handleDragOver = (e: DragEvent) => {
+    e.preventDefault();
+    setDragActive(true);
+  };
+
+  const handleDragLeave = (e: DragEvent) => {
+    e.preventDefault();
+    setDragActive(false);
+  };
+
+  const handleDrop = (e: DragEvent) => {
+    e.preventDefault();
+    setDragActive(false);
+
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      handleFiles(files);
+    }
+  };
+
+  const handleFileInputChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      handleFiles(files);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className={styles.container}>
+      {/* ✅ FIXED: Show Web3SignIn when wallet not connected */}
+      {!address ? (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.9)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 10000
+        }}>
+          <div style={{
+            backgroundColor: '#f8f9fa',
+            borderRadius: '16px',
+            padding: '40px',
+            maxWidth: '500px',
+            width: '90%',
+            position: 'relative'
+          }}>
+            <Web3SignIn 
+              showCloseButton={true}
+              onClose={onClose}
+              title="Connect Your Wallet"
+              subtitle="Connect your Web3 wallet to access your notebooks and manage your knowledge base."
+            />
+          </div>
+        </div>
+      ) : (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.9)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 10000
+        }}>
+          <div style={{
+            backgroundColor: '#f8f9fa',
+            borderRadius: '16px',
+            width: view === 'notebook' ? '95vw' : '90vw',
+            height: view === 'notebook' ? '95vh' : '90vh',
+            maxWidth: view === 'notebook' ? '1400px' : '1200px',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)'
+          }}>
+            {/* Header */}
+            <div style={{
+              padding: '20px 32px',
+              borderBottom: '1px solid #e9ecef',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              backgroundColor: 'white'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center' }}>
+                <span style={{ fontSize: '28px', marginRight: '12px' }}>📚</span>
+                <h1 style={{ margin: 0, color: '#1a1a1a', fontSize: '24px', fontWeight: '600' }}>
+                  My Knowledge Base
+                </h1>
+                {/* ✅ Show connected address */}
+                <div style={{
+                  marginLeft: '16px',
+                  padding: '4px 12px',
+                  backgroundColor: '#e3f2fd',
+                  color: '#1976d2',
+                  borderRadius: '16px',
+                  fontSize: '12px',
+                  fontFamily: 'monospace'
+                }}>
+                  {address.substring(0, 6)}...{address.substring(address.length - 4)}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                {view === 'grid' && (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <button
+                        onClick={() => setViewMode('grid')}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: viewMode === 'grid' ? '#1976d2' : '#666',
+                          fontSize: '20px',
+                          cursor: 'pointer',
+                          padding: '8px'
+                        }}
+                      >
+                        ⊞
+                      </button>
+                      <button
+                        onClick={() => setViewMode('list')}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: viewMode === 'list' ? '#1976d2' : '#666',
+                          fontSize: '20px',
+                          cursor: 'pointer',
+                          padding: '8px'
+                        }}
+                      >
+                        ☰
+                      </button>
+                    </div>
+
+                    <select
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value as any)}
+                      style={{
+                        backgroundColor: 'white',
+                        border: '1px solid #ddd',
+                        color: '#333',
+                        padding: '8px 12px',
+                        borderRadius: '8px',
+                        fontSize: '14px'
+                      }}
+                    >
+                      <option value="recent">Most recent</option>
+                      <option value="title">Title</option>
+                      <option value="sources">Sources</option>
+                    </select>
+
+                    <button
+                      onClick={() => setShowCreateNotebook(true)}
+                      style={{
+                        backgroundColor: '#1976d2',
+                        color: 'white',
+                        border: 'none',
+                        padding: '12px 20px',
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        fontWeight: '500',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}
+                    >
+                      <span style={{ fontSize: '16px' }}>+</span>
+                      Create new
+                    </button>
+                  </>
+                )}
+
+                <button
+                  onClick={onClose}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    fontSize: '24px',
+                    cursor: 'pointer',
+                    color: '#666',
+                    padding: '8px'
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Content Area */}
+            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', backgroundColor: 'white' }}>
+              {/* Grid View - Notebooks List */}
+              {view === 'grid' && (
+                <NotebooksGridView
+                  notebooks={notebooks}
+                  viewMode={viewMode}
+                  sortBy={sortBy}
+                  onOpenNotebook={openNotebook}
+                  onDeleteNotebook={deleteNotebook}
+                  showCreateNotebook={showCreateNotebook}
+                  newNotebookTitle={newNotebookTitle}
+                  setNewNotebookTitle={setNewNotebookTitle}
+                  onCreateNotebook={createNotebook}
+                  onCancelCreate={() => setShowCreateNotebook(false)}
+                />
+              )}
+
+              {/* Individual Notebook View */}
+              {view === 'notebook' && currentNotebook && (
+                <>
+                  {/* Sources Sidebar */}
+                  <div style={{
+                    width: '350px',
+                    backgroundColor: '#f8f9fa',
+                    borderRight: '1px solid #e9ecef',
+                    display: 'flex',
+                    flexDirection: 'column'
+                  }}>
+                    <div style={{
+                      padding: '20px',
+                      borderBottom: '1px solid #e9ecef'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                        <button
+                          onClick={() => setView('grid')}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: '#666',
+                            fontSize: '18px',
+                            cursor: 'pointer',
+                            padding: '4px'
+                          }}
+                        >
+                          ←
+                        </button>
+                        <h3 style={{ margin: 0, color: '#333', fontSize: '16px', fontWeight: '600' }}>
+                          Sources
+                        </h3>
+                        <button
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: '#666',
+                            fontSize: '16px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          ⋮
+                        </button>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                        <button
+                          onClick={() => setView('add-sources')}
+                          style={{
+                            backgroundColor: '#1976d2',
+                            color: 'white',
+                            border: 'none',
+                            padding: '8px 16px',
+                            borderRadius: '6px',
+                            fontSize: '14px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px'
+                          }}
+                        >
+                          <span>+</span>
+                          Add
+                        </button>
+                        <button
+                          style={{
+                            backgroundColor: 'white',
+                            color: '#666',
+                            border: '1px solid #ddd',
+                            padding: '8px 16px',
+                            borderRadius: '6px',
+                            fontSize: '14px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px'
+                          }}
+                        >
+                          <span>🔍</span>
+                          Discover
+                        </button>
+                      </div>
+
+                      <label style={{
+                        color: '#666',
+                        fontSize: '14px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        cursor: 'pointer'
+                      }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedSources.size === sources.filter(s => s.status === 'completed').length && sources.filter(s => s.status === 'completed').length > 0}
+                          onChange={selectAllSources}
+                        />
+                        Select all sources
+                      </label>
+                    </div>
+
+                    <div style={{ flex: 1, overflowY: 'auto', padding: '0 20px' }}>
+                      {sources.map((source) => (
+                        <SourceItem
+                          key={source.id}
+                          source={source}
+                          selected={selectedSources.has(source.id)}
+                          onToggle={() => toggleSourceSelection(source.id)}
+                          onDelete={() => deleteSource(source.id)}
+                        />
+                      ))}
+
+                      {sources.length === 0 && (
+                        <div style={{
+                          textAlign: 'center',
+                          padding: '40px 20px',
+                          color: '#666'
+                        }}>
+                          <div style={{ fontSize: '48px', marginBottom: '16px' }}>📄</div>
+                          <p style={{ marginBottom: '16px' }}>No sources yet</p>
+                          <button
+                            onClick={() => setView('add-sources')}
+                            style={{
+                              backgroundColor: '#1976d2',
+                              color: 'white',
+                              border: 'none',
+                              padding: '10px 20px',
+                              borderRadius: '8px',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            Add your first source
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Chat Area */}
+                  <div style={{
+                    flex: 1,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    backgroundColor: 'white'
+                  }}>
+                    {/* Chat Header */}
+                    <div style={{
+                      padding: '32px',
+                      textAlign: 'center',
+                      borderBottom: '1px solid #f0f0f0'
+                    }}>
+                      <div style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        width: '80px',
+                        height: '80px',
+                        borderRadius: '50%',
+                        backgroundColor: '#e3f2fd',
+                        marginBottom: '16px',
+                        fontSize: '36px'
+                      }}>
+                        🤖
+                      </div>
+                      <h2 style={{ color: '#1a1a1a', fontSize: '28px', margin: '0 0 8px 0', fontWeight: '400' }}>
+                        {currentNotebook.title}
+                      </h2>
+                      <p style={{ color: '#666', margin: 0, fontSize: '16px' }}>
+                        {selectedSources.size} of {sources.filter(s => s.status === 'completed').length} sources selected
+                      </p>
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div style={{
+                      padding: '24px',
+                      display: 'flex',
+                      justifyContent: 'center',
+                      gap: '12px',
+                      borderBottom: '1px solid #f0f0f0'
+                    }}>
+                      <button
+                       onClick={handleAddNote}  // ✅ Add click handler
+                        style={{
+                          backgroundColor: 'white',
+                          color: '#333',
+                          border: '1px solid #ddd',
+                          padding: '12px 24px',
+                          borderRadius: '8px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          fontSize: '14px'
+                        }}
+                      >
+                        <span>📝</span>
+                        Add note
+                      </button>
+                      <button
+                        disabled
+                        style={{
+                          backgroundColor: '#f5f5f5',
+                          color: '#999',
+                          border: '1px solid #e0e0e0',
+                          padding: '12px 24px',
+                          borderRadius: '8px',
+                          cursor: 'not-allowed',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          fontSize: '14px'
+                        }}
+                      >
+                        <span>🎵</span>
+                        Audio Overview
+                      </button>
+                      <button
+                        disabled
+                        style={{
+                          backgroundColor: '#f5f5f5',
+                          color: '#999',
+                          border: '1px solid #e0e0e0',
+                          padding: '12px 24px',
+                          borderRadius: '8px',
+                          cursor: 'not-allowed',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          fontSize: '14px'
+                        }}
+                      >
+                        <span>🗺️</span>
+                        Mind Map
+                      </button>
+                    </div>
+
+                    {/* Chat Response Area */}
+                    {chatResponse && (
+                      <div style={{
+                        flex: 1,
+                        padding: '24px',
+                        overflowY: 'auto'
+                      }}>
+                        <div style={{
+                          backgroundColor: '#f8f9fa',
+                          padding: '20px',
+                          borderRadius: '12px',
+                          border: '1px solid #e9ecef'
+                        }}>
+                          <div style={{
+                            color: '#333',
+                            fontSize: '16px',
+                            lineHeight: '1.6',
+                            whiteSpace: 'pre-wrap'
+                          }}>
+                            {chatResponse}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Chat Input */}
+                    <div style={{ padding: '24px' }}>
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        backgroundColor: '#f8f9fa',
+                        borderRadius: '24px',
+                        padding: '12px 20px',
+                        border: '1px solid #e9ecef',
+                        gap: '12px'
+                      }}>
+                        <input
+                          type="text"
+                          placeholder="Start typing..."
+                          value={chatQuery}
+                          onChange={(e) => setChatQuery(e.target.value)}
+                          onKeyPress={(e) => e.key === 'Enter' && handleChatQuery()}
+                          disabled={chatLoading}
+                          style={{
+                            flex: 1,
+                            background: 'none',
+                            border: 'none',
+                            color: '#333',
+                            fontSize: '16px',
+                            outline: 'none'
+                          }}
+                        />
+                        <div style={{
+                          fontSize: '12px',
+                          color: '#999',
+                          marginRight: '8px'
+                        }}>
+                          {selectedSources.size}/{sources.length} sources
+                        </div>
+                        <button
+                          onClick={handleChatQuery}
+                          disabled={!chatQuery.trim() || chatLoading}
+                          style={{
+                            backgroundColor: chatQuery.trim() && !chatLoading ? '#1976d2' : '#ccc',
+                            color: 'white',
+                            border: 'none',
+                            width: '40px',
+                            height: '40px',
+                            borderRadius: '50%',
+                            cursor: chatQuery.trim() && !chatLoading ? 'pointer' : 'not-allowed',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '18px'
+                          }}
+                        >
+                          {chatLoading ? '⏳' : '→'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+
+{/* Add Sources View */}
+{view === 'add-sources' && currentNotebook && (
+  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: 'white', height: '100%' }}>
+
+    {/* Header */}
+    <div style={{ padding: '24px 32px', borderBottom: '1px solid #e9ecef', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div style={{ display: 'flex', alignItems: 'center' }}>
+        <button
+          onClick={() => setView('notebook')}  
+          style={{ background: 'none', border: 'none', color: '#666', fontSize: '24px', cursor: 'pointer', marginRight: '16px', padding: '8px' }}
+        >
+          ←
+        </button>
+        <h2 style={{ margin: 0, color: '#333', fontSize: '24px', fontWeight: 600 }}>Add sources</h2>
+      </div>
+    </div>
+
+<div style={{ flex: 1, overflow: 'auto', padding: '32px', minHeight: 0 }}>
+
+      {/* Description */}
+      <div style={{ marginBottom: '40px', maxWidth: '600px' }}>
+        <p style={{ color: '#333', fontSize: '18px', lineHeight: 1.6, margin: '0 0 12px 0', fontWeight: 400 }}>
+          Sources let NotebookLM base its responses on the information that matters most to you.
+        </p>
+        <p style={{ color: '#666', fontSize: '14px', margin: 0, lineHeight: 1.5 }}>
+          Examples: marketing plans, course reading, research notes, meeting transcripts, sales documents, etc.
+        </p>
+      </div>
+
+      {/* Upload Area */}
+      <div
+        onDragOver={handleDragOver}  
+        onDragLeave={handleDragLeave} 
+        onDrop={handleDrop}  
+        onClick={() => fileInputRef.current?.click()}
+ 
+        style={{
+          border: `2px dashed ${dragActive ? '#1976d2' : '#ddd'}`,
+          borderRadius: '16px',
+          padding: '60px 40px',
+          textAlign: 'center',
+          cursor: 'pointer',
+          marginBottom: '40px',
+          backgroundColor: dragActive ? '#f8f9fa' : '#fafafa',
+          transition: 'all 0.2s ease'
+        }}
+      >
+        <div style={{ fontSize: '48px', marginBottom: '20px', color: dragActive ? '#1976d2' : '#666' }}>📁</div>
+        <h3 style={{ color: '#333', marginBottom: '12px', fontSize: '20px', fontWeight: 600 }}>Upload sources</h3>
+        <p style={{ color: '#666', fontSize: '16px', margin: '0 0 16px 0' }}>Drag & drop or choose file to upload</p>
+        <p style={{ color: '#999', fontSize: '14px', margin: 0 }}>Supported file types: PDF, .txt, Markdown, .docx, .json</p>
+      </div>
+
+      {/* Source Type Tabs */}
+      <div style={{ display: 'flex', gap: '16px', marginBottom: '32px', borderBottom: '1px solid #e9ecef' }}>
+        <button
+          onClick={() => setActiveTab('website')}
+          style={{
+            background: 'none',
+            border: 'none',
+            padding: '16px 0',
+            fontSize: '16px',
+            fontWeight: 500,
+            color: activeTab === 'website' ? '#1976d2' : '#666',
+            borderBottom: activeTab === 'website' ? '2px solid #1976d2' : '2px solid transparent',
+            cursor: 'pointer',
+            transition: 'all 0.2s ease'
+          }}
+        >
+          🌐 Website
+        </button>
+        <button
+          onClick={() => setActiveTab('paste')}
+          style={{
+            background: 'none',
+            border: 'none',
+            padding: '16px 0',
+            fontSize: '16px',
+            fontWeight: 500,
+            color: activeTab === 'paste' ? '#1976d2' : '#666',
+            borderBottom: activeTab === 'paste' ? '2px solid #1976d2' : '2px solid transparent',
+            cursor: 'pointer',
+            transition: 'all 0.2s ease'
+          }}
+        >
+          📝 Paste Text
+        </button>
+      </div>
+
+      {/* Website Input */}
+      {activeTab === 'website' && (
+        <div style={{ backgroundColor: '#f8f9fa', borderRadius: '16px', padding: '32px', marginBottom: '32px', border: '1px solid #e9ecef' }}>
+          <h3 style={{ color: '#333', marginBottom: '20px', fontSize: '18px', fontWeight: 600 }}>Add Website</h3>
+          <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-end' }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ display: 'block', color: '#666', fontSize: '14px', marginBottom: '8px', fontWeight: 500 }}>
+                Website URL
+              </label>
+              <input
+                type="url"
+                placeholder="https://example.com"
+                value={websiteUrl}
+                onChange={(e) => setWebsiteUrl(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '16px',
+                  border: '2px solid #e9ecef',
+                  borderRadius: '12px',
+                  backgroundColor: 'white',
+                  color: '#333',
+                  fontSize: '16px',
+                  fontFamily: 'inherit'
+                }}
+              />
+            </div>
+            <button
+              onClick={handleWebsiteUpload}  
+              disabled={!websiteUrl.trim() || uploading}
+              style={{
+                padding: '16px 32px',
+                backgroundColor: websiteUrl.trim() && !uploading ? '#1976d2' : '#ccc',
+                color: 'white',
+                border: 'none',
+                borderRadius: '12px',
+                cursor: websiteUrl.trim() && !uploading ? 'pointer' : 'not-allowed',
+                fontSize: '16px',
+                fontWeight: 500
+              }}
+            >
+              {uploading ? 'Adding...' : 'Add Website'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Text Input */}
+      {activeTab === 'paste' && (
+        <div style={{ backgroundColor: '#f8f9fa', borderRadius: '16px', padding: '32px', marginBottom: '32px', border: '1px solid #e9ecef' }}>
+          <h3 style={{ color: '#333', marginBottom: '20px', fontSize: '18px', fontWeight: 600 }}>Add Text Content</h3>
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', color: '#666', fontSize: '14px', marginBottom: '8px', fontWeight: 500 }}>
+              Title
+            </label>
+            <input
+              type="text"
+              placeholder="Enter a title for this content"
+              value={pastedTitle}
+              onChange={(e) => setPastedTitle(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '16px',
+                border: '2px solid #e9ecef',
+                borderRadius: '12px',
+                backgroundColor: 'white',
+                color: '#333',
+                fontSize: '16px',
+                fontFamily: 'inherit'
+              }}
+            />
+          </div>
+          <div style={{ marginBottom: '24px' }}>
+            <label style={{ display: 'block', color: '#666', fontSize: '14px', marginBottom: '8px', fontWeight: 500 }}>
+              Content
+            </label>
+            <textarea
+              placeholder="Paste your text content here..."
+              value={pastedText}
+              onChange={(e) => setPastedText(e.target.value)}
+              rows={10}
+              style={{
+                width: '100%',
+                padding: '16px',
+                border: '2px solid #e9ecef',
+                borderRadius: '12px',
+                backgroundColor: 'white',
+                color: '#333',
+                fontSize: '16px',
+                fontFamily: 'inherit',
+                resize: 'vertical',
+                lineHeight: 1.5
+              }}
+            />
+          </div>
+          <button
+            onClick={handlePastedText}
+
+            disabled={!pastedText.trim() || !pastedTitle.trim() || uploading}
+            style={{
+              padding: '16px 32px',
+              backgroundColor: pastedText.trim() && pastedTitle.trim() && !uploading ? '#1976d2' : '#ccc',
+              color: 'white',
+              border: 'none',
+              borderRadius: '12px',
+              cursor: pastedText.trim() && pastedTitle.trim() && !uploading ? 'pointer' : 'not-allowed',
+              fontSize: '16px',
+              fontWeight: 500
+            }}
+          >
+            {uploading ? 'Adding...' : 'Add Text'}
+          </button>
+        </div>
+      )}
+
+      {/* Source Limit */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', padding: '24px', backgroundColor: '#f8f9fa', borderRadius: '16px', border: '1px solid #e9ecef' }}>
+        <span style={{ fontSize: '24px' }}>📊</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <span style={{ color: '#666', fontSize: '14px', fontWeight: 500 }}>Source limit</span>
+            <span style={{ color: '#666', fontSize: '14px', fontWeight: 500 }}>{sources.length} / 50</span>
+          </div>
+          <div style={{ height: '8px', backgroundColor: '#e9ecef', borderRadius: '4px', overflow: 'hidden' }}>
+            <div style={{
+              width: `${Math.min((sources.length / 50) * 100, 100)}%`,
+              height: '100%',
+              backgroundColor: sources.length > 40 ? '#ff9800' : sources.length > 30 ? '#f57c00' : '#1976d2',
+              transition: 'width 0.3s ease'
+            }} />
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+)}
+
+            </div>
+
+            {/* Hidden file input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept=".pdf,.txt,.md,.docx,.json"
+              onChange={handleFileInputChange}
+              style={{ display: 'none' }}
+            />
+
+              {/* ✅ ADD: Upload Progress Modal */}
+            <UploadProgressModal
+              isOpen={showUploadModal}
+              files={uploadingFiles}
+              onClose={() => {
+                setShowUploadModal(false);
+                setUploadingFiles([]);
+              }}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Individual Source Item Component
+const SourceItem: React.FC<{
+  source: NotebookSource;
+  selected: boolean;
+  onToggle: () => void;
+ onDelete: (sourceId: string) => void;  // ✅ Fixed - should accept sourceId
+}> = ({ source, selected, onToggle, onDelete }) => (
+  <div
+    onClick={onToggle}
+    style={{
+      padding: '12px',
+      marginBottom: '8px',
+      borderRadius: '8px',
+      border: '1px solid #e9ecef',
+      backgroundColor: 'white',
+      cursor: 'pointer',
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: '12px'
+    }}
+  >
+    <input
+      type="checkbox"
+      checked={selected}
+      onChange={() => {}}
+      style={{ marginTop: '2px' }}
+    />
+
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+        <span style={{ fontSize: '16px' }}>
+          {source.type === 'file' ? '📄' : 
+           source.type === 'website' ? '🌐' : '📝'}
+        </span>
+        <span style={{
+          color: source.status === 'completed' ? '#333' : '#666',
+          fontSize: '14px',
+          fontWeight: '500',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap'
+        }}>
+          {source.title}
+        </span>
+      </div>
+
+     {source.status !== 'completed' && (
+  <div style={{ marginBottom: '4px' }}>
+    <div style={{ width: '100%', height: '3px', backgroundColor: '#f0f0f0', borderRadius: '2px', overflow: 'hidden' }}>
+      <div style={{ width: `${source.progress}%`, height: '100%', backgroundColor: source.status === 'error' ? '#f44336' : '#4CAF50', transition: 'width 0.3s ease' }} />
+    </div>
+    <div style={{ fontSize: '12px', color: source.status === 'error' ? '#f44336' : '#666', marginTop: '4px' }}>
+      {source.status === 'uploading' && 'Uploading...'}
+      {source.status === 'processing' && 'Processing...'}
+      {source.status === 'error' && source.error && source.error}
+    </div>
+  </div>
+)}
+
+{/* ✅ ADD: Success message for completed sources */}
+{source.status === 'completed' && source.type === 'website' && (
+  <div style={{ fontSize: '12px', color: '#28a745', marginTop: '4px' }}>
+    ✅ Website content scraped successfully
+  </div>
+)}
+
+      {source.fileSize && (
+        <div style={{ fontSize: '12px', color: '#999' }}>
+          {source.fileSize}
+        </div>
+      )}
+    </div>
+
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        onDelete(source.id);  // ✅ Fixed - pass the source ID
+      }}
+      style={{
+        background: 'none',
+        border: 'none',
+        color: '#999',
+        fontSize: '16px',
+        cursor: 'pointer',
+        padding: '4px'
+      }}
+    >
+      🗑️
+    </button>
+  </div>
+);
+
+// NotebooksGridView Component
+const NotebooksGridView: React.FC<{
+  notebooks: Notebook[];
+  viewMode: 'grid' | 'list';
+  sortBy: 'recent' | 'title' | 'sources';
+  onOpenNotebook: (notebook: Notebook) => void;
+  onDeleteNotebook: (notebookId: string) => void;
+  showCreateNotebook: boolean;
+  newNotebookTitle: string;
+  setNewNotebookTitle: (title: string) => void;
+  onCreateNotebook: () => void;
+  onCancelCreate: () => void;
+}> = ({
+  notebooks,
+  viewMode,
+  sortBy,
+  onOpenNotebook,
+  onDeleteNotebook,
+  showCreateNotebook,
+  newNotebookTitle,
+  setNewNotebookTitle,
+  onCreateNotebook,
+  onCancelCreate
+}) => {
+  const sortedNotebooks = [...notebooks].sort((a, b) => {
+    switch (sortBy) {
+      case 'title':
+        return a.title.localeCompare(b.title);
+      case 'sources':
+        return b.sourceCount - a.sourceCount;
+      default:
+        return new Date(b.lastUpdated || b.created).getTime() - new Date(a.lastUpdated || a.created).getTime();
+    }
+  });
+
+  return (
+    <div style={{ flex: 1, padding: '32px', overflow: 'auto', backgroundColor: 'white' }}>
+      {/* Navigation Tabs */}
+      <div style={{ display: 'flex', gap: '32px', marginBottom: '32px', borderBottom: '1px solid #e9ecef' }}>
+        <button
+          style={{
+            background: 'none',
+            border: 'none',
+            color: '#1976d2',
+            fontSize: '16px',
+            fontWeight: '500',
+            padding: '16px 0',
+            borderBottom: '2px solid #1976d2',
+            cursor: 'pointer'
+          }}
+        >
+          All
+        </button>
+        <button
+          style={{
+            background: 'none',
+            border: 'none',
+            color: '#666',
+            fontSize: '16px',
+            fontWeight: '500',
+            padding: '16px 0',
+            cursor: 'pointer'
+          }}
+        >
+          My notebooks
+        </button>
+        <button
+          style={{
+            background: 'none',
+            border: 'none',
+            color: '#666',
+            fontSize: '16px',
+            fontWeight: '500',
+            padding: '16px 0',
+            cursor: 'pointer'
+          }}
+        >
+          Featured notebooks
+        </button>
+        <button
+          style={{
+            background: 'none',
+            border: 'none',
+            color: '#666',
+            fontSize: '16px',
+            fontWeight: '500',
+            padding: '16px 0',
+            cursor: 'pointer'
+          }}
+        >
+          Shared with me
+        </button>
+      </div>
+
+      {/* Create Notebook Form */}
+      {showCreateNotebook && (
+        <div style={{
+          backgroundColor: '#f8f9fa',
+          borderRadius: '12px',
+          padding: '24px',
+          marginBottom: '32px',
+          border: '1px solid #e9ecef'
+        }}>
+          <h3 style={{ color: '#333', marginBottom: '16px', fontSize: '18px', fontWeight: '600' }}>
+            Create New Notebook
+          </h3>
+          <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+            <input
+              type="text"
+              placeholder="Enter notebook title..."
+              value={newNotebookTitle}
+              onChange={(e) => setNewNotebookTitle(e.target.value)}
+              style={{
+                flex: 1,
+                padding: '12px 16px',
+                border: '1px solid #ddd',
+                borderRadius: '8px',
+                backgroundColor: 'white',
+                color: '#333',
+                fontSize: '16px',
+                fontFamily: 'inherit'
+              }}
+              onKeyPress={(e) => e.key === 'Enter' && newNotebookTitle.trim() && onCreateNotebook()}
+            />
+            <button
+              onClick={onCreateNotebook}
+              disabled={!newNotebookTitle.trim()}
+              style={{
+                backgroundColor: newNotebookTitle.trim() ? '#1976d2' : '#ccc',
+                color: 'white',
+                border: 'none',
+                padding: '12px 24px',
+                borderRadius: '8px',
+                cursor: newNotebookTitle.trim() ? 'pointer' : 'not-allowed',
+                fontSize: '16px',
+                fontWeight: '500'
+              }}
+            >
+              Create
+            </button>
+            <button
+              onClick={onCancelCreate}
+              style={{
+                backgroundColor: 'transparent',
+                color: '#666',
+                border: '1px solid #ddd',
+                padding: '12px 24px',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontSize: '16px'
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      <h2 style={{ color: '#333', marginBottom: '24px', fontSize: '24px', fontWeight: '600' }}>
+        My notebooks
+      </h2>
+
+      {viewMode === 'grid' ? (
+        /* Grid View */
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+          gap: '24px'
+        }}>
+          {/* Create New Notebook Card */}
+          {!showCreateNotebook && (
+            <div
+              onClick={() => onCreateNotebook()}
+              style={{
+                backgroundColor: 'white',
+                borderRadius: '12px',
+                padding: '40px 24px',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                border: '2px dashed #e9ecef',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                minHeight: '200px',
+                textAlign: 'center'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = '#1976d2';
+                e.currentTarget.style.backgroundColor = '#f8f9fa';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = '#e9ecef';
+                e.currentTarget.style.backgroundColor = 'white';
+              }}
+            >
+              <div style={{
+                width: '80px',
+                height: '80px',
+                borderRadius: '50%',
+                backgroundColor: '#e3f2fd',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginBottom: '16px',
+                fontSize: '32px'
+              }}>
+                +
+              </div>
+              <h3 style={{ color: '#333', margin: 0, fontSize: '18px', fontWeight: '500' }}>
+                Create new notebook
+              </h3>
+            </div>
+          )}
+
+          {/* Notebook Cards */}
+          {sortedNotebooks.map((notebook) => (
+            <div
+              key={notebook.id}
+              style={{
+                backgroundColor: 'white',
+                borderRadius: '12px',
+                padding: '24px',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                border: '1px solid #e9ecef',
+                minHeight: '200px',
+                position: 'relative'
+              }}
+              onClick={() => onOpenNotebook(notebook)}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.1)';
+                e.currentTarget.style.transform = 'translateY(-2px)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.boxShadow = 'none';
+                e.currentTarget.style.transform = 'translateY(0)';
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', marginBottom: '16px' }}>
+                <div style={{
+                  width: '48px',
+                  height: '48px',
+                  borderRadius: '8px',
+                  backgroundColor: getNotebookColor(notebook.id),
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '24px',
+                  flexShrink: 0
+                }}>
+                  {getNotebookIcon(notebook.title)}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <h3 style={{ 
+                    color: '#333', 
+                    margin: '0 0 8px 0', 
+                    fontSize: '18px', 
+                    fontWeight: '600',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    {notebook.title}
+                  </h3>
+                  <p style={{ 
+                    color: '#666', 
+                    margin: 0, 
+                    fontSize: '14px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}>
+                    {notebook.created} • {notebook.sourceCount} source{notebook.sourceCount !== 1 ? 's' : ''}
+                  </p>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    // Show dropdown menu
+                  }}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#999',
+                    fontSize: '20px',
+                    cursor: 'pointer',
+                    padding: '4px',
+                    borderRadius: '4px'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f0f0f0'}
+                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                >
+                  ⋮
+                </button>
+              </div>
+
+              {notebook.sourceCount > 0 && (
+                <div style={{ marginTop: '16px' }}>
+                  <div style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: '8px',
+                    marginBottom: '12px'
+                  }}>
+                    {notebook.sources?.slice(0, 3).map((source, index) => (
+                      <div
+                        key={index}
+                        style={{
+                          backgroundColor: '#f8f9fa',
+                          padding: '4px 8px',
+                          borderRadius: '4px',
+                          fontSize: '12px',
+                          color: '#666',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}
+                      >
+                        <span>
+                          {source.type === 'file' ? '📄' : 
+                           source.type === 'website' ? '🌐' : '📝'}
+                        </span>
+                        {source.title.length > 15 ? 
+                          source.title.substring(0, 15) + '...' : 
+                          source.title}
+                      </div>
+                    ))}
+                    {notebook.sourceCount > 3 && (
+                      <div style={{
+                        backgroundColor: '#e9ecef',
+                        padding: '4px 8px',
+                        borderRadius: '4px',
+                        fontSize: '12px',
+                        color: '#666'
+                      }}>
+                        +{notebook.sourceCount - 3} more
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : (
+        /* List View */
+        <div style={{ backgroundColor: 'white', borderRadius: '12px', overflow: 'hidden', border: '1px solid #e9ecef' }}>
+          {/* Table Header */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: '2fr 1fr 1fr auto',
+            gap: '16px',
+            padding: '16px 24px',
+            backgroundColor: '#f8f9fa',
+            borderBottom: '1px solid #e9ecef',
+            color: '#666',
+            fontSize: '14px',
+            fontWeight: '600'
+          }}>
+            <div>Title</div>
+            <div>Sources</div>
+            <div>Created</div>
+            <div></div>
+          </div>
+
+          {/* Create New Row */}
+          {!showCreateNotebook && (
+            <div
+              onClick={() => onCreateNotebook()}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '2fr 1fr 1fr auto',
+                gap: '16px',
+                padding: '16px 24px',
+                borderBottom: '1px solid #f0f0f0',
+                cursor: 'pointer',
+                backgroundColor: 'transparent',
+                transition: 'background-color 0.2s'
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f8f9fa'}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '50%',
+                  backgroundColor: '#e3f2fd',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '16px',
+                  color: '#1976d2'
+                }}>
+                  +
+                </div>
+                <span style={{ color: '#1976d2', fontWeight: '500' }}>Create new notebook</span>
+              </div>
+              <div></div>
+              <div></div>
+              <div></div>
+            </div>
+          )}
+
+          {/* Notebook Rows */}
+          {sortedNotebooks.map((notebook) => (
+            <div
+              key={notebook.id}
+              onClick={() => onOpenNotebook(notebook)}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '2fr 1fr 1fr auto',
+                gap: '16px',
+                padding: '16px 24px',
+                borderBottom: '1px solid #f0f0f0',
+                cursor: 'pointer',
+                backgroundColor: 'transparent',
+                transition: 'background-color 0.2s'
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f8f9fa'}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '6px',
+                  backgroundColor: getNotebookColor(notebook.id),
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '16px'
+                }}>
+                  {getNotebookIcon(notebook.title)}
+                </div>
+                <span style={{ color: '#333', fontWeight: '500', fontSize: '16px' }}>
+                  {notebook.title}
+                </span>
+              </div>
+              <div style={{ color: '#666', fontSize: '14px' }}>
+                {notebook.sourceCount} source{notebook.sourceCount !== 1 ? 's' : ''}
+              </div>
+              <div style={{ color: '#666', fontSize: '14px' }}>
+                {notebook.created}
+              </div>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  // Show dropdown menu
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#999',
+                  fontSize: '18px',
+                  cursor: 'pointer',
+                  padding: '4px',
+                  borderRadius: '4px'
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f0f0f0'}
+                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+              >
+                ⋮
+              </button>
+            </div>
+          ))}
+
+          {sortedNotebooks.length === 0 && !showCreateNotebook && (
+            <div style={{
+              padding: '60px 24px',
+              textAlign: 'center',
+              color: '#666'
+            }}>
+              <div style={{ fontSize: '48px', marginBottom: '16px' }}>📓</div>
+              <h3 style={{ marginBottom: '8px' }}>No notebooks yet</h3>
+              <p style={{ marginBottom: '24px' }}>Create your first notebook to get started</p>
+              <button
+                onClick={() => onCreateNotebook()}
+                style={{
+                  backgroundColor: '#1976d2',
+                  color: 'white',
+                  border: 'none',
+                  padding: '12px 24px',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontSize: '16px',
+                  fontWeight: '500'
+                }}
+              >
+                Create notebook
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Helper functions for notebook display
+function getNotebookColor(notebookId: string): string {
+  const colors = [
+    '#e3f2fd', // Blue
+    '#f3e5f5', // Purple  
+    '#e8f5e8', // Green
+    '#fff3e0', // Orange
+    '#fce4ec', // Pink
+    '#f1f8e9', // Light green
+    '#e0f2f1', // Teal
+    '#fff8e1'  // Yellow
+  ];
+
+  const hash = notebookId.split('').reduce((a, b) => a + b.charCodeAt(0), 0);
+  return colors[hash % colors.length];
+}
+
+function getNotebookIcon(title: string): string {
+  const firstChar = title.charAt(0).toLowerCase();
+
+  if (['a', 'i'].includes(firstChar)) return '🤖';
+  if (['c', 'p'].includes(firstChar)) return '💻';
+  if (['d', 'n'].includes(firstChar)) return '📊';
+  if (['r', 's'].includes(firstChar)) return '🔬';
+  if (['m', 'b'].includes(firstChar)) return '📈';
+  if (['t', 'h'].includes(firstChar)) return '📝';
+  if (['w', 'g'].includes(firstChar)) return '🌐';
+
+  return '📔';
+}
+
+// AddSourcesView Component
+const AddSourcesView: React.FC<{
+  dragActive: boolean;
+  uploading: boolean;
+  websiteUrl: string;
+  setWebsiteUrl: (url: string) => void;
+  pastedText: string;
+  setPastedText: (text: string) => void;
+  pastedTitle: string;
+  setPastedTitle: (title: string) => void;
+  sources: NotebookSource[];
+  onDragOver: (e: DragEvent) => void;
+  onDragLeave: (e: DragEvent) => void;
+  onDrop: (e: DragEvent) => void;
+  onFileSelect: () => void;
+  onWebsiteUpload: () => void;
+  onPastedTextUpload: () => void;
+  onBack: () => void;
+}> = ({
+  dragActive,
+  uploading,
+  websiteUrl,
+  setWebsiteUrl,
+  pastedText,
+  setPastedText,
+  pastedTitle,
+  setPastedTitle,
+  sources,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  onFileSelect,
+  onWebsiteUpload,
+  onPastedTextUpload,
+  onBack
+}) => {
+  const [activeTab, setActiveTab] = useState<'website' | 'paste' | null>(null);
+
+  return (
+    <div style={{ flex: 1, overflow: 'hidden', backgroundColor: 'white' }}>
+      {/* Header */}
+      <div style={{
+        padding: '24px 32px',
+        borderBottom: '1px solid #e9ecef',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          <button
+            onClick={onBack}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#666',
+              fontSize: '24px',
+              cursor: 'pointer',
+              marginRight: '16px',
+              padding: '8px'
+            }}
+          >
+            ←
+          </button>
+          
+          <h2 style={{ margin: 0, color: '#333', fontSize: '24px', fontWeight: '600' }}>
+            Add sources
+          </h2>
+        </div>
+
+        <button
+          style={{
+            backgroundColor: '#e3f2fd',
+            color: '#1976d2',
+            border: 'none',
+            padding: '10px 20px',
+            borderRadius: '20px',
+            fontSize: '14px',
+            fontWeight: '500',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}
+        >
+          <span>🔍</span>
+          Discover sources
+        </button>
+      </div>
+
+     <div style={{ flex: 1, overflow: 'auto', padding: '32px', minHeight: 0 }}>
+
+        {/* Description */}
+        <div style={{ marginBottom: '40px', maxWidth: '600px' }}>
+          <p style={{ 
+            color: '#333', 
+            fontSize: '18px', 
+            lineHeight: '1.6', 
+            margin: '0 0 12px 0',
+            fontWeight: '400'
+          }}>
+            Sources let NotebookLM base its responses on the information that matters most to you.
+          </p>
+          <p style={{ 
+            color: '#666', 
+            fontSize: '14px', 
+            margin: 0, 
+            lineHeight: '1.5'
+          }}>
+            (Examples: marketing plans, course reading, research notes, meeting transcripts, sales documents, etc.)
+          </p>
+        </div>
+
+        {/* Upload Area */}
+        <div
+          onDragOver={onDragOver}
+          onDragLeave={onDragLeave}
+          onDrop={onDrop}
+          onClick={onFileSelect}
+          style={{
+            border: `2px dashed ${dragActive ? '#1976d2' : '#ddd'}`,
+            borderRadius: '16px',
+            padding: '60px 40px',
+            textAlign: 'center',
+            cursor: 'pointer',
+            marginBottom: '40px',
+            backgroundColor: dragActive ? '#f8f9fa' : '#fafafa',
+            transition: 'all 0.2s ease'
+          }}
+        >
+          <div style={{ 
+            fontSize: '48px', 
+            marginBottom: '20px',
+            color: dragActive ? '#1976d2' : '#666'
+          }}>
+            ⬆️
+          </div>
+          <h3 style={{ 
+            color: '#333', 
+            marginBottom: '12px', 
+            fontSize: '20px',
+            fontWeight: '600'
+          }}>
+            Upload sources
+          </h3>
+          <p style={{ 
+            color: '#666', 
+            fontSize: '16px', 
+            margin: '0 0 16px 0'
+          }}>
+            Drag & drop or choose file to upload
+          </p>
+          <p style={{ 
+            color: '#999', 
+            fontSize: '14px', 
+            margin: 0
+          }}>
+            Supported file types: PDF, .txt, Markdown, Audio (e.g. mp3)
+          </p>
+        </div>
+
+        {/* Source Type Options */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(3, 1fr)',
+          gap: '20px',
+          marginBottom: '40px'
+        }}>
+          {/* Left Column - Disabled Options */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <button
+              disabled
+              style={{
+                padding: '20px',
+                backgroundColor: '#f8f9fa',
+                border: '1px solid #e9ecef',
+                borderRadius: '12px',
+                color: '#999',
+                cursor: 'not-allowed',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                fontSize: '16px'
+              }}
+            >
+              <span style={{ fontSize: '24px' }}>📁</span>
+              <div style={{ textAlign: 'left' }}>
+                <div style={{ fontWeight: '500' }}>Google Workspace</div>
+              </div>
+            </button>
+
+            <button
+              disabled
+              style={{
+                padding: '20px',
+                backgroundColor: '#f8f9fa',
+                border: '1px solid #e9ecef',
+                borderRadius: '12px',
+                color: '#999',
+                cursor: 'not-allowed',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                fontSize: '16px'
+              }}
+            >
+              <span style={{ fontSize: '24px' }}>💾</span>
+              <div style={{ textAlign: 'left' }}>
+                <div style={{ fontWeight: '500' }}>Google Drive</div>
+              </div>
+            </button>
+          </div>
+
+          {/* Middle Column - Link Options */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <button
+              onClick={() => setActiveTab(activeTab === 'website' ? null : 'website')}
+              style={{
+                padding: '20px',
+                backgroundColor: activeTab === 'website' ? '#e3f2fd' : 'white',
+                border: `2px solid ${activeTab === 'website' ? '#1976d2' : '#e9ecef'}`,
+                borderRadius: '12px',
+                color: activeTab === 'website' ? '#1976d2' : '#333',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                fontSize: '16px',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              <span style={{ fontSize: '24px' }}>🌐</span>
+              <div style={{ textAlign: 'left' }}>
+                <div style={{ fontWeight: '500' }}>Link</div>
+                <div style={{ fontSize: '14px', opacity: 0.8 }}>Website</div>
+              </div>
+            </button>
+
+            <button
+              disabled
+              style={{
+                padding: '20px',
+                backgroundColor: '#f8f9fa',
+                border: '1px solid #e9ecef',
+                borderRadius: '12px',
+                color: '#999',
+                cursor: 'not-allowed',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                fontSize: '16px'
+              }}
+            >
+              <span style={{ fontSize: '24px' }}>📹</span>
+              <div style={{ textAlign: 'left' }}>
+                <div style={{ fontWeight: '500' }}>YouTube</div>
+              </div>
+            </button>
+          </div>
+
+          {/* Right Column - Text Options */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <button
+              onClick={() => setActiveTab(activeTab === 'paste' ? null : 'paste')}
+              style={{
+                padding: '20px',
+                backgroundColor: activeTab === 'paste' ? '#e3f2fd' : 'white',
+                border: `2px solid ${activeTab === 'paste' ? '#1976d2' : '#e9ecef'}`,
+                borderRadius: '12px',
+                color: activeTab === 'paste' ? '#1976d2' : '#333',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                fontSize: '16px',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              <span style={{ fontSize: '24px' }}>📄</span>
+              <div style={{ textAlign: 'left' }}>
+                <div style={{ fontWeight: '500' }}>Paste text</div>
+              </div>
+            </button>
+
+            <button
+              onClick={() => setActiveTab(activeTab === 'paste' ? null : 'paste')}
+              style={{
+                padding: '20px',
+                backgroundColor: activeTab === 'paste' ? '#e3f2fd' : 'white',
+                border: `2px solid ${activeTab === 'paste' ? '#1976d2' : '#e9ecef'}`,
+                borderRadius: '12px',
+                color: activeTab === 'paste' ? '#1976d2' : '#333',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                fontSize: '16px',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              <span style={{ fontSize: '24px' }}>📋</span>
+              <div style={{ textAlign: 'left' }}>
+                <div style={{ fontWeight: '500' }}>Copied text</div>
+              </div>
+            </button>
+          </div>
+        </div>
+
+        {/* Website Input */}
+        {activeTab === 'website' && (
+          <div style={{
+            backgroundColor: '#f8f9fa',
+            borderRadius: '16px',
+            padding: '32px',
+            marginBottom: '32px',
+            border: '1px solid #e9ecef'
+          }}>
+            <h3 style={{ 
+              color: '#333', 
+              marginBottom: '20px', 
+              fontSize: '18px', 
+              fontWeight: '600' 
+            }}>
+              Add Website
+            </h3>
+            <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-end' }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ 
+                  display: 'block', 
+                  color: '#666', 
+                  fontSize: '14px', 
+                  marginBottom: '8px',
+                  fontWeight: '500' 
+                }}>
+                  Website URL
+                </label>
+                <input
+                  type="url"
+                  placeholder="https://example.com"
+                  value={websiteUrl}
+                  onChange={(e) => setWebsiteUrl(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '16px',
+                    border: '2px solid #e9ecef',
+                    borderRadius: '12px',
+                    backgroundColor: 'white',
+                    color: '#333',
+                    fontSize: '16px',
+                    fontFamily: 'inherit'
+                  }}
+                />
+              </div>
+              <button
+                onClick={onWebsiteUpload}
+                disabled={!websiteUrl.trim() || uploading}
+                style={{
+                  padding: '16px 32px',
+                  backgroundColor: websiteUrl.trim() && !uploading ? '#1976d2' : '#ccc',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '12px',
+                  cursor: websiteUrl.trim() && !uploading ? 'pointer' : 'not-allowed',
+                  fontSize: '16px',
+                  fontWeight: '500'
+                }}
+              >
+                {uploading ? 'Adding...' : 'Add Website'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Text Input */}
+        {activeTab === 'paste' && (
+          <div style={{
+            backgroundColor: '#f8f9fa',
+            borderRadius: '16px',
+            padding: '32px',
+            marginBottom: '32px',
+            border: '1px solid #e9ecef'
+          }}>
+            <h3 style={{ 
+              color: '#333', 
+              marginBottom: '20px', 
+              fontSize: '18px', 
+              fontWeight: '600' 
+            }}>
+              Add Text Content
+            </h3>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ 
+                display: 'block', 
+                color: '#666', 
+                fontSize: '14px', 
+                marginBottom: '8px',
+                fontWeight: '500' 
+              }}>
+                Title
+              </label>
+              <input
+                type="text"
+                placeholder="Enter a title for this content"
+                value={pastedTitle}
+                onChange={(e) => setPastedTitle(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '16px',
+                  border: '2px solid #e9ecef',
+                  borderRadius: '12px',
+                  backgroundColor: 'white',
+                  color: '#333',
+                  fontSize: '16px',
+                  fontFamily: 'inherit'
+                }}
+              />
+            </div>
+
+            <div style={{ marginBottom: '24px' }}>
+              <label style={{ 
+                display: 'block', 
+                color: '#666', 
+                fontSize: '14px', 
+                marginBottom: '8px',
+                fontWeight: '500' 
+              }}>
+                Content
+              </label>
+              <textarea
+                placeholder="Paste your text content here..."
+                value={pastedText}
+                onChange={(e) => setPastedText(e.target.value)}
+                rows={10}
+                style={{
+                  width: '100%',
+                  padding: '16px',
+                  border: '2px solid #e9ecef',
+                  borderRadius: '12px',
+                  backgroundColor: 'white',
+                  color: '#333',
+                  fontSize: '16px',
+                  fontFamily: 'inherit',
+                  resize: 'vertical',
+                  lineHeight: '1.5'
+                }}
+              />
+            </div>
+
+            <button
+              onClick={onPastedTextUpload}
+              disabled={!pastedText.trim() || !pastedTitle.trim() || uploading}
+              style={{
+                padding: '16px 32px',
+                backgroundColor: pastedText.trim() && pastedTitle.trim() && !uploading ? '#1976d2' : '#ccc',
+                color: 'white',
+                border: 'none',
+                borderRadius: '12px',
+                cursor: pastedText.trim() && pastedTitle.trim() && !uploading ? 'pointer' : 'not-allowed',
+                fontSize: '16px',
+                fontWeight: '500'
+              }}
+            >
+              {uploading ? 'Adding...' : 'Add Text'}
+            </button>
+          </div>
+        )}
+
+        {/* Source Limit */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '16px',
+          padding: '24px',
+          backgroundColor: '#f8f9fa',
+          borderRadius: '16px',
+          border: '1px solid #e9ecef'
+        }}>
+          <span style={{ fontSize: '24px' }}>📊</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <span style={{ color: '#666', fontSize: '14px', fontWeight: '500' }}>
+                Source limit
+              </span>
+              <span style={{ color: '#666', fontSize: '14px', fontWeight: '500' }}>
+                {sources.length} / 50
+              </span>
+            </div>
+            <div style={{
+              height: '8px',
+              backgroundColor: '#e9ecef',
+              borderRadius: '4px',
+              overflow: 'hidden'
+            }}>
+              <div
+                style={{
+                  width: `${Math.min((sources.length / 50) * 100, 100)}%`,
+                  height: '100%',
+                  backgroundColor: sources.length > 40 ? '#ff9800' : sources.length > 30 ? '#f57c00' : '#1976d2',
+                  transition: 'width 0.3s ease'
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default NotebookManager;

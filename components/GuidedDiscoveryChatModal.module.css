@@ -1,0 +1,255 @@
+/* components/GuidedDiscoveryChatModal.module.css */
+
+.modalOverlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.modalContent {
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  width: 95%;
+  max-width: 900px;
+  height: 90vh;
+  max-height: 900px;
+  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  resize: vertical;
+}
+
+.header {
+  padding: 1.5rem;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: linear-gradient(to right, #ffffff, #f9fafb);
+}
+
+.title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #111827;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.closeButton {
+  background: transparent;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: #6b7280;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.closeButton:hover {
+  background-color: #f3f4f6;
+  color: #111827;
+}
+
+.chatContainer {
+  flex: 1;
+  padding: 1.5rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  scroll-behavior: smooth;
+  background-color: #f9fafb;
+}
+
+.messageRow {
+  display: flex;
+  width: 100%;
+}
+
+.userRow {
+  justify-content: flex-end;
+}
+
+.assistantRow {
+  justify-content: flex-start;
+}
+
+.messageBubble {
+  max-width: 80%;
+  padding: 1rem 1.25rem;
+  border-radius: 16px;
+  line-height: 1.6;
+  font-size: 0.95rem;
+  position: relative;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  white-space: pre-wrap;
+}
+
+.userBubble {
+  background: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%);
+  color: white;
+  border-bottom-right-radius: 4px;
+}
+
+.assistantBubble {
+  background: white;
+  color: #374151;
+  border: 1px solid #e5e7eb;
+  border-bottom-left-radius: 4px;
+}
+
+.inputArea {
+  padding: 1.5rem;
+  border-top: 1px solid #f0f0f0;
+  background: white;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.inputForm {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.inputField {
+  flex: 1;
+  padding: 0.875rem 1rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  font-size: 1rem;
+  outline: none;
+  transition: all 0.2s;
+  background-color: #f9fafb;
+}
+
+.inputField:focus {
+  border-color: #4f46e5;
+  background-color: white;
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+}
+
+.sendButton {
+  background-color: #4f46e5;
+  color: white;
+  border: none;
+  padding: 0 1.5rem;
+  height: 48px;
+  border-radius: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sendButton:hover:not(:disabled) {
+  background-color: #4338ca;
+  transform: translateY(-1px);
+}
+
+.sendButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ideaButton {
+  background-color: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  color: #059669;
+  font-size: 0.9rem;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+  width: 100%;
+  max-width: fit-content;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: all 0.2s;
+}
+
+.ideaButton:hover {
+  background-color: #d1fae5;
+  border-color: #34d399;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.feedbackContainer {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.feedbackContainer:hover {
+  opacity: 1;
+}
+
+.feedbackButton {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 4px;
+  border-radius: 4px;
+  transition: background 0.1s;
+}
+
+.feedbackButton:hover {
+  background-color: #f3f4f6;
+}
+
+.feedbackButton.active {
+  background-color: #dbeafe;
+  color: #2563eb;
+}
+
+.restartButton {
+  background-color: #fef3c7;
+  border: 1px solid #fcd34d;
+  color: #d97706;
+  font-size: 0.85rem;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.restartButton:hover {
+  background-color: #fde68a;
+  border-color: #f59e0b;
+}

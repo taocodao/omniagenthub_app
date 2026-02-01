@@ -1,0 +1,84 @@
+// pages/api/getAvgRating.ts
+
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+
+// Initialize the Vercel KV client
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+// Define the handler for the API route
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    console.log(`[getAvgRating] Incoming request: Method=${req.method}`);
+
+    // Only allow POST requests
+    if (req.method !== 'POST') {
+        console.warn(`[getAvgRating] Method not allowed: ${req.method}`);
+        return res.status(405).json({ message: 'Method not allowed. Use POST.' });
+    }
+
+    const { department, role } = req.body;
+    console.log(`[getAvgRating] Request Body: department='${department}', role='${role}'`);
+
+    // Validate the presence of required fields
+    if (!department || !role) {
+        console.error('[getAvgRating] Missing required fields in request body.');
+        return res.status(400).json({ message: 'Department and role are required.' });
+    }
+
+    try {
+        // Construct both key patterns
+        const originalPattern = `*:${department}:${role}`;
+        const trimmedDepartment = department.trim().toLowerCase();
+        const trimmedRole = role.trim().toLowerCase();
+        const newPattern = `*:${trimmedDepartment}:${trimmedRole}`;
+
+        console.log(`[getAvgRating] Searching for keys with original pattern: '${originalPattern}'`);
+        console.log(`[getAvgRating] Searching for keys with new pattern: '${newPattern}'`);
+
+        // Fetch keys matching both patterns concurrently
+        const [originalKeys, newKeys] = await Promise.all([
+            kv.keys(originalPattern),
+            kv.keys(newPattern),
+        ]);
+
+        console.log(`[getAvgRating] Found ${originalKeys.length} keys matching original pattern.`);
+        console.log(`[getAvgRating] Found ${newKeys.length} keys matching new pattern.`);
+
+        // Combine all keys, ensuring no duplicates
+        const allKeys = Array.from(new Set([...originalKeys, ...newKeys]));
+        console.log(`[getAvgRating] Total unique keys found: ${allKeys.length}`);
+
+        if (allKeys.length === 0) {
+            console.info('[getAvgRating] No ratings found for the specified department and role.');
+            return res.status(200).json({ averageRating: 0 });
+        }
+
+        // Fetch all ratings corresponding to the retrieved keys
+        const ratingsPromises = allKeys.map(async (key) => {
+            const rating = await kv.get<number>(key);
+            console.log(`[getAvgRating] Retrieved rating from key '${key}': ${rating}`);
+            return rating;
+        });
+
+        const ratings = await Promise.all(ratingsPromises);
+
+        // Filter out any non-number ratings
+        const validRatings = ratings.filter((rating): rating is number => typeof rating === 'number');
+        console.log(`[getAvgRating] Valid ratings count: ${validRatings.length}`);
+
+        // Calculate the average rating
+        const averageRating = validRatings.length
+            ? validRatings.reduce((sum, rating) => sum + rating, 0) / validRatings.length
+            : 0;
+        console.log(`[getAvgRating] Calculated average rating: ${averageRating}`);
+
+        // Respond with the average rating
+        return res.status(200).json({ averageRating });
+    } catch (error) {
+        console.error(`[getAvgRating] Error fetching ratings from KV database:`, error);
+        return res.status(500).json({ message: 'Error fetching ratings from KV database.' });
+    }
+}

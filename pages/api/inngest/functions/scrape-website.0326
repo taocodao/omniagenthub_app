@@ -1,0 +1,205 @@
+// pages/api/inngest/functions/scrape-website.ts
+import { inngest } from '../index';
+import { ApifyClient } from 'apify-client';
+import { createClient } from '@vercel/kv';
+import { normalizeUrl, cleanText, truncateText, createAndStoreEmbeddings } from '../../../../utils/embeddings';
+
+const apifyClient = new ApifyClient({
+    token: process.env.APIFY_API_TOKEN!,
+});
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+// Define the scrape website function
+export const scrapeWebsite = inngest.createFunction(
+    { id: 'scrape-website' },
+    { event: 'website.scrape' },
+    async ({ event, step, logger }) => { // Add logger parameter here
+        // Add this at the beginning of your scrapeWebsite function
+        const timeout = 540; // 40 minutes timeout
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Scraping timeout')), timeout * 1000)
+        );
+
+        try {
+            await Promise.race([
+                // Your existing processing code
+                timeoutPromise
+            ]);
+        } catch (error) {
+            logger.error('Scraping process timed out', { error });
+            throw error;
+        }
+
+
+
+        const { url, userId, sharedUserIds } = event.data;
+
+        // Log the start of the process
+        logger.info('Starting website scrape', { url, userId });
+
+        // Normalize the URL
+        const normalizedUrl = await step.run('normalize-url', () => {
+            return normalizeUrl(url);
+        });
+
+        // Try crawling sitemaps first
+        let items: any[] = [];
+        let sitemapCrawlSuccess = false;
+
+        const sitemapUrls = [
+            `${url}/sitemap.xml`,
+            `${url}/page-sitemap.xml`,
+            `${url}/sitemap_index.xml`,
+        ];
+
+        // Attempt sitemap crawling
+        for (const sitemapUrl of sitemapUrls) {
+            if (sitemapCrawlSuccess) break;
+
+            try {
+                logger.info('Attempting sitemap crawl', { sitemapUrl });
+
+                const scrapeRun = await step.run(`crawl-sitemap-${sitemapUrls.indexOf(sitemapUrl)}`, async () => {
+                    return await apifyClient.actor('apify/website-content-crawler').call({
+                        startUrls: [{ url: sitemapUrl }],
+                        maxCrawlPages: 50,
+                        maxRequestsPerCrawl: 50,
+                        maxCrawlDepth: 2,
+                        maxConcurrency: 2,  // Add concurrency limit
+                        pageLoadTimeoutSecs: 15  // Add timeout per page
+                    });
+                });
+
+                const dataset = await step.run(`fetch-dataset-${sitemapUrls.indexOf(sitemapUrl)}`, async () => {
+                    return await apifyClient.dataset(scrapeRun.defaultDatasetId).listItems();
+                });
+
+                if (dataset.items && dataset.items.length > 0) {
+                    items = dataset.items;
+                    sitemapCrawlSuccess = true;
+                    logger.info('Sitemap crawl succeeded', { sitemapUrl, pageCount: items.length });
+                }
+            } catch (error) {
+                logger.warn('Failed to crawl sitemap', {
+                    sitemapUrl,
+                    error: error instanceof Error ? error.message : String(error)
+                });
+            }
+        }
+
+        // If no pages were found through sitemaps, use fallback popular pages
+        if (!sitemapCrawlSuccess || items.length === 0) {
+            logger.info('No valid sitemap found, using fallback pages');
+
+            const fallbackPages = [
+                { url },
+                { url: `${url}/about` },
+                { url: `${url}/services` },
+                { url: `${url}/products` },
+                { url: `${url}/solutions` },
+            ];
+
+            const fallbackRun = await step.run('crawl-fallback-pages', async () => {
+                return await apifyClient.actor('apify/website-content-crawler').call({
+                    startUrls: fallbackPages,
+                    maxCrawlPages: 10,
+                    maxCrawlDepth: 1,
+                });
+            });
+
+            const dataset = await step.run('fetch-fallback-dataset', async () => {
+                return await apifyClient.dataset(fallbackRun.defaultDatasetId).listItems();
+            });
+
+            items = dataset.items;
+        }
+
+        // Create a version timestamp
+        const version = Date.now();
+
+        // Merge the uploader's userId with any sharedUserIds provided
+        const initialShared: string[] = Array.from(new Set([userId, ...(sharedUserIds || [])]));
+
+        // Use normalized URL to form the sourceKey and namespace
+        const sourceKey = `scrape:${normalizedUrl}`;
+
+        // Process each scraped page
+        await step.run('process-pages', async () => {
+            await Promise.allSettled(
+                items.map(async (item: any, idx: number) => {
+                    const itemUrl = item.url as string;
+                    if (!itemUrl) return;
+
+                    const rawText = item.text || '';
+                    if (!rawText.trim()) {
+                        logger.debug('Skipping empty page', { itemUrl });
+                        return;
+                    }
+
+                    const cleaned = cleanText(rawText);
+                    const finalText = cleaned.split(' ').length > 3000 ? truncateText(cleaned, 3000) : cleaned;
+
+                    // For each shared user, store embeddings for this page
+                    await Promise.all(
+                        initialShared.map(async (uid) => {
+                            try {
+                                // Use version + idx to differentiate pages
+                                await createAndStoreEmbeddings(uid, sourceKey, finalText, version + idx, true);
+                                logger.debug('Processed embeddings', { itemUrl, sourceKey, userID: uid });
+                            } catch (error) {
+                                logger.error('Error storing embeddings', {
+                                    itemUrl,
+                                    sourceKey,
+                                    userID: uid,
+                                    error: error instanceof Error ? error.message : String(error)
+                                });
+                            }
+                        })
+                    );
+                })
+            );
+        });
+
+        // Update metadata
+        await step.run('update-metadata', async () => {
+            // Update website metadata in KV
+            await kv.set(`website:${normalizedUrl}`, {
+                scrapedAt: new Date().toISOString(),
+                pageCount: items.length,
+            });
+
+            await kv.set(`lastScrapeVersion:${userId}:${normalizedUrl}`, version);
+
+            // Update the access mapping: store the shared user IDs array
+            await kv.set(`embeddingMapping:${sourceKey}`, initialShared);
+
+            // Update the owner mapping with the uploader's userId
+            await kv.set(`embeddingOwner:${sourceKey}`, userId);
+
+            // Update the global embedding index
+            const indexKey = "embeddingIndex1";
+            let currentIndex: string[] = [];
+            const indexData = await kv.get(indexKey);
+
+            if (indexData) {
+                currentIndex = indexData as string[];
+            }
+
+            if (!currentIndex.includes(sourceKey)) {
+                currentIndex.push(sourceKey);
+                await kv.set(indexKey, currentIndex);
+            }
+        });
+
+        return {
+            success: true,
+            message: `Scraping complete. Processed ${items.length} pages from ${url}.`,
+            sourceKey,
+            pageCount: items.length
+        };
+    }
+);

@@ -1,0 +1,423 @@
+/* eslint-disable react-hooks/exhaustive-deps */
+/**
+ * Google Drive Tab Component
+ * Provides Google Drive authentication and file selection interface
+ */
+
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  GoogleDriveTabProps,
+  GoogleDriveFile,
+  GoogleDriveFolderContents,
+  AuthStatus,
+  SourceItem
+} from '../types/oauth';
+
+interface GoogleDriveTabState {
+  authStatus: AuthStatus;
+  isLoading: boolean;
+  error: string | null;
+  folderContents: GoogleDriveFolderContents;
+  selectedFiles: Set<string>;
+  currentFolderId: string;
+}
+
+const GoogleDriveTab: React.FC<GoogleDriveTabProps> = ({
+  notebookId,
+  userKey,
+  userAddress,
+  onSourceAdded,
+  onClose
+}) => {
+  const [state, setState] = useState<GoogleDriveTabState>({
+    authStatus: 'idle',
+    isLoading: false,
+    error: null,
+    folderContents: {
+      folders: [],
+      files: [],
+      parentId: '',
+      currentPath: ''
+    },
+    selectedFiles: new Set(),
+    currentFolderId: 'root'
+  });
+
+  // Check authentication status on mount
+  useEffect(() => {
+    checkAuthStatus();
+  }, [notebookId]);
+
+  // Load folder contents when authenticated and folder changes
+  useEffect(() => {
+    if (state.authStatus === 'authenticated') {
+      loadFolderContents(state.currentFolderId);
+    }
+  }, [state.authStatus, state.currentFolderId]);
+
+  const checkAuthStatus = useCallback(async () => {
+    try {
+      setState(prev => ({ ...prev, isLoading: true }));
+      const response = await fetch(`/api/oauth/google-drive?action=folders&notebookId=${notebookId}&folderId=root`);
+      
+      if (response.ok) {
+        const contents = await response.json();
+        setState(prev => ({
+          ...prev,
+          authStatus: 'authenticated',
+          folderContents: contents,
+          isLoading: false
+        }));
+      } else if (response.status === 401) {
+        setState(prev => ({
+          ...prev,
+          authStatus: 'idle',
+          isLoading: false
+        }));
+      } else {
+        throw new Error('Failed to check auth status');
+      }
+    } catch (error) {
+      setState(prev => ({
+        ...prev,
+        authStatus: 'error',
+        error: error instanceof Error ? error.message : 'Unknown error',
+        isLoading: false
+      }));
+    }
+  }, [notebookId]);
+
+  const handleAuthenticate = useCallback(async () => {
+    try {
+      setState(prev => ({ ...prev, authStatus: 'authenticating', error: null }));
+      const response = await fetch(`/api/oauth/google-drive?action=authorize&notebookId=${notebookId}`);
+      const data = await response.json();
+
+      if (data.success && data.authUrl) {
+        // Open OAuth window
+        const authWindow = window.open(
+          data.authUrl,
+          'google-drive-auth',
+          'width=600,height=600,scrollbars=yes,resizable=yes'
+        );
+
+        // Listen for auth completion
+        const checkAuthComplete = setInterval(async () => {
+          try {
+            if (authWindow?.closed) {
+              clearInterval(checkAuthComplete);
+              await checkAuthStatus(); // Recheck auth status
+            }
+          } catch (error) {
+            clearInterval(checkAuthComplete);
+            setState(prev => ({
+              ...prev,
+              authStatus: 'error',
+              error: 'Authentication failed'
+            }));
+          }
+        }, 1000);
+      } else {
+        throw new Error(data.error || 'Failed to start authentication');
+      }
+    } catch (error) {
+      setState(prev => ({
+        ...prev,
+        authStatus: 'error',
+        error: error instanceof Error ? error.message : 'Authentication failed'
+      }));
+    }
+  }, [notebookId, checkAuthStatus]);
+
+  const loadFolderContents = useCallback(async (folderId: string) => {
+    try {
+      setState(prev => ({ ...prev, isLoading: true, error: null }));
+      const response = await fetch(
+        `/api/oauth/google-drive?action=folders&notebookId=${notebookId}&folderId=${folderId}`
+      );
+
+      if (response.ok) {
+        const contents = await response.json();
+        setState(prev => ({
+          ...prev,
+          folderContents: contents,
+          currentFolderId: folderId,
+          isLoading: false
+        }));
+      } else {
+        throw new Error('Failed to load folder contents');
+      }
+    } catch (error) {
+      setState(prev => ({
+        ...prev,
+        error: error instanceof Error ? error.message : 'Failed to load folder',
+        isLoading: false
+      }));
+    }
+  }, [notebookId]);
+
+  const handleFolderClick = (folder: GoogleDriveFile) => {
+    if (folder.isFolder) {
+      loadFolderContents(folder.id);
+    }
+  };
+
+  const handleFileSelect = (fileId: string) => {
+    setState(prev => {
+      const newSelected = new Set(prev.selectedFiles);
+      if (newSelected.has(fileId)) {
+        newSelected.delete(fileId);
+      } else {
+        newSelected.add(fileId);
+      }
+      return { ...prev, selectedFiles: newSelected };
+    });
+  };
+
+  const handleAddSources = async () => {
+    if (state.selectedFiles.size === 0) return;
+
+    try {
+      setState(prev => ({ ...prev, isLoading: true, error: null }));
+      
+      // Validate credentials from props
+      if (!userKey || !userAddress) {
+        console.error('❌ [GoogleDriveTab] Missing credentials from props');
+        throw new Error('User credentials not found. Please refresh the page and try again.');
+      }
+      
+      console.log('✅ [GoogleDriveTab] Using credentials from props:', {
+        userKeyExists: !!userKey,
+        userAddressExists: !!userAddress,
+        notebookId,
+        fileCount: state.selectedFiles.size
+      });
+      
+      const response = await fetch('/api/oauth/google-drive?action=add-source', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-key': userKey,
+          'x-user-address': userAddress,
+        },
+        body: JSON.stringify({
+          notebookId,
+          fileIds: Array.from(state.selectedFiles)
+        })
+      });
+
+      const result = await response.json();
+      console.log('📥 [GoogleDriveTab] Response:', result);
+      
+      if (result.success) {
+        // Convert selected files to SourceItem format
+        const selectedSources: SourceItem[] = [];
+        if (state.folderContents) {
+          state.folderContents.files.forEach(file => {
+            if (state.selectedFiles.has(file.id)) {
+              selectedSources.push({
+                id: file.id,
+                name: file.name,
+                type: 'google-drive',
+                url: file.webViewLink,
+                size: file.size,
+                lastModified: file.modifiedTime,
+                metadata: { mimeType: file.mimeType }
+              });
+            }
+          });
+        }
+
+        console.log('✅ [GoogleDriveTab] Successfully added sources:', selectedSources.length);
+        onSourceAdded(selectedSources);
+        onClose();
+      } else {
+        throw new Error(result.error || 'Failed to add sources');
+      }
+    } catch (error) {
+      console.error('❌ [GoogleDriveTab] Error adding sources:', error);
+      setState(prev => ({
+        ...prev,
+        error: error instanceof Error ? error.message : 'Failed to add sources',
+        isLoading: false
+      }));
+    }
+  };
+
+  const handleBack = () => {
+    if (state.folderContents?.parentId) {
+      loadFolderContents(state.folderContents.parentId);
+    }
+  };
+
+  // Render authentication screen
+  if (state.authStatus !== 'authenticated') {
+    return (
+      <div style={{ textAlign: 'center', padding: '20px 10px' }}>
+        <div style={{ fontSize: '24px', marginBottom: '8px', color: '#4285f4' }}>💿</div>
+        
+        <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '6px', color: '#000' }}>
+          Connect Google Drive
+        </h3>
+        
+        <p style={{ color: '#000', marginBottom: '12px', fontSize: '12px', lineHeight: '1.4' }}>
+          Access your Google Drive files and folders to add them as sources for your notebook.
+        </p>
+
+        {state.error && (
+          <div style={{ color: '#dc2626', fontSize: '11px', marginBottom: '8px', padding: '6px', backgroundColor: '#fee2e2', borderRadius: '4px' }}>
+            {state.error}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+          <button
+            onClick={handleAuthenticate}
+            disabled={state.authStatus === 'authenticating'}
+            style={{
+              backgroundColor: '#4285f4',
+              color: 'white',
+              padding: '8px 16px',
+              borderRadius: '6px',
+              border: 'none',
+              fontSize: '13px',
+              fontWeight: 600,
+              cursor: state.authStatus === 'authenticating' ? 'not-allowed' : 'pointer',
+              opacity: state.authStatus === 'authenticating' ? 0.6 : 1
+            }}
+          >
+            {state.authStatus === 'authenticating' ? 'Connecting...' : 'Connect Google Drive'}
+          </button>
+
+          <button
+            onClick={onClose}
+            style={{
+              backgroundColor: '#f5f5f5',
+              color: '#666',
+              padding: '8px 16px',
+              borderRadius: '6px',
+              border: '1px solid #ddd',
+              fontSize: '13px',
+              cursor: 'pointer'
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Render file browser
+  return (
+    <div style={{ padding: '10px' }}>
+      {/* Header */}
+      <div style={{ marginBottom: '10px' }}>
+        <h3 style={{ fontSize: '14px', fontWeight: 600, color: '#000', margin: 0 }}>
+          Google Drive
+          {state.folderContents?.currentPath && (
+            <span style={{ color: '#666', fontSize: '12px' }}> / {state.folderContents.currentPath}</span>
+          )}
+        </h3>
+      </div>
+
+      {/* Navigation */}
+      {state.folderContents?.parentId && (
+        <button
+          onClick={handleBack}
+          style={{
+            backgroundColor: 'transparent',
+            color: '#4285f4',
+            border: 'none',
+            padding: '4px 0',
+            fontSize: '12px',
+            cursor: 'pointer',
+            marginBottom: '8px'
+          }}
+        >
+          ← Back
+        </button>
+      )}
+
+      {state.error && (
+        <div style={{ color: '#dc2626', fontSize: '11px', marginBottom: '8px', padding: '6px', backgroundColor: '#fee2e2', borderRadius: '4px' }}>
+          {state.error}
+        </div>
+      )}
+
+      {/* File List */}
+      <div style={{ maxHeight: '120px', overflowY: 'auto', marginBottom: '10px', border: '1px solid #e5e7eb', borderRadius: '4px' }}>
+        {state.isLoading ? (
+          <div style={{ padding: '10px', textAlign: 'center', color: '#666', fontSize: '12px' }}>Loading...</div>
+        ) : (
+          <>
+            {/* Folders */}
+            {state.folderContents?.folders?.length ? (
+              state.folderContents.folders.map(folder => (
+                <div
+                  key={folder.id}
+                  onClick={() => handleFolderClick(folder)}
+                  style={{ display: 'flex', alignItems: 'center', padding: '6px 8px', cursor: 'pointer', borderBottom: '1px solid #f3f4f6', fontSize: '12px', color: '#000' }}
+                >
+                  <span style={{ marginRight: '6px' }}>📁</span>
+                  <span>{folder.name}</span>
+                </div>
+              ))
+            ) : null}
+
+            {/* Files */}
+            {state.folderContents?.files?.length ? (
+              state.folderContents.files.map(file => (
+                <div
+                  key={file.id}
+                  style={{ display: 'flex', alignItems: 'center', padding: '6px 8px', borderBottom: '1px solid #f3f4f6', fontSize: '12px', color: '#000' }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={state.selectedFiles.has(file.id)}
+                    onChange={() => handleFileSelect(file.id)}
+                    style={{ marginRight: '6px' }}
+                  />
+                  <span style={{ marginRight: '6px' }}>📄</span>
+                  <span>{file.name}</span>
+                </div>
+              ))
+            ) : null}
+
+            {(!state.folderContents?.folders?.length && !state.folderContents?.files?.length) && (
+              <div style={{ padding: '10px', textAlign: 'center', color: '#999', fontSize: '12px' }}>This folder is empty</div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Actions */}
+      {state.selectedFiles.size > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px', backgroundColor: '#f9fafb', borderRadius: '4px' }}>
+          <span style={{ fontSize: '11px', color: '#000' }}>
+            {state.selectedFiles.size} file{state.selectedFiles.size !== 1 ? 's' : ''} selected
+          </span>
+          <button
+            onClick={handleAddSources}
+            disabled={state.isLoading}
+            style={{
+              backgroundColor: '#4285f4',
+              color: 'white',
+              padding: '6px 14px',
+              borderRadius: '4px',
+              border: 'none',
+              fontSize: '12px',
+              fontWeight: 600,
+              cursor: state.isLoading ? 'not-allowed' : 'pointer',
+              opacity: state.isLoading ? 0.6 : 1
+            }}
+          >
+            Add Sources
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default GoogleDriveTab;

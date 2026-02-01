@@ -1,0 +1,33 @@
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    const { department, role } = req.body;
+
+    if (!department || !role) {
+        return res.status(400).json({ message: 'Department and role are required' });
+    }
+
+    try {
+        const keys = await kv.keys(`*:${department}:${role}`);
+        const ratings = await Promise.all(keys.map(key => kv.get(key)));
+
+        // Add a type guard or type assertion
+        const validRatings = ratings.filter((rating): rating is number => typeof rating === 'number');
+
+        // Now TypeScript knows that validRatings is an array of numbers
+        const averageRating = validRatings.length
+            ? validRatings.reduce((sum, rating) => sum + rating, 0) / validRatings.length
+            : 0;
+
+        return res.status(200).json({ averageRating });
+    } catch (error) {
+        console.error('Error fetching ratings from KV database:', error);
+        return res.status(500).json({ message: 'Error fetching ratings from KV database.' });
+    }
+}

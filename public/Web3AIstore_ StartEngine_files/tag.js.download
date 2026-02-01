@@ -1,0 +1,215 @@
+(function() {
+    function loadScript(url, callback) {
+        const script = document.createElement('script');
+        script.type = 'text/javascript';
+        script.src = url;
+
+        script.onload = () => callback(null);
+        script.onerror = (error) => {
+            console.error(`Script failed to load: ${url}`, error);
+            callback(`The script ${url} is not accessible.`);
+        };
+
+        document.head.appendChild(script);
+    }
+    function getScriptParams(scriptName) {
+        // Find all script tags
+        var scripts = document.getElementsByTagName('script');
+        
+        // Look for our script
+        for (var i = 0; i < scripts.length; i++) {
+            if (scripts[i].src.indexOf(scriptName) >= 0) {
+            var params = {};
+            var src = scripts[i].src;
+            // Find where the query string starts
+            var queryString = src.substring(src.indexOf('?') + 1);
+            var paramPairs = queryString.split('&');
+            
+            // Break the query string into keys and values
+            for (var j = 0; j < paramPairs.length; j++) {
+                var pair = paramPairs[j].split('=');
+                params[decodeURIComponent(pair[0])] = decodeURIComponent(pair[1]);
+            }
+            return params;
+        }
+    }
+    return {}; // Return empty object if no parameters found
+}
+
+    function getCurrentScriptParams() {
+    // Get the currently executing script
+    const script = document.currentScript;
+
+    // If no script is currently executing, return null
+    if (!script) {
+        console.error("No current script is executing.");
+        return null;
+    }
+
+    // Extract parameters from the script's `src` query string
+    const params = new URL(script.src).searchParams;
+
+    // Convert the parameters to an object
+    const paramsObj = {};
+    for (const [key, value] of params.entries()) {
+        paramsObj[key] = value;
+    }
+
+    return paramsObj;
+}
+
+    function getCookie(name) {
+        const nameEQ = name + "=";
+        const ca = document.cookie.split(';');
+        for (let i = 0; i < ca.length; i++) {
+            let c = ca[i].trim();
+            if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
+        }
+        return null;
+    }
+
+    
+    const scriptURL = 'https://norden.prospectdesk.ai/device.min.js';
+    const scriptParams = getCurrentScriptParams();
+    
+    loadScript(scriptURL, async (error) => {
+        if (error) {
+            console.error(error);
+            return;
+        }
+        
+        let norid = getCookie("norid");
+        const request_id = generateUUID();
+
+        if (!norid) {
+            try {
+                const response = await sendGetRequest('https://prod-nordencookiesync.cloud.prospectdesk.ai/norid');
+                const data = JSON.parse(response);
+                if (data && data.norid) {
+                    norid = data.norid;
+                } else {
+                    console.error('Failed to get norid from response');
+                    return;
+                }
+            } catch (error) {
+                console.error('Error fetching norid:', error);
+                return;
+            }
+        }
+
+        // Now that we have norid, proceed with loadScriptTag
+        if (norid) {
+            const scriptUrl = `https://a.usbrowserspeed.com/cs?pid=1dcd52dd97f947099343e914d4428dcb422f2d6f5c324568aed522a7b581c5ee&puid=${encodeURIComponent(norid)}&request_id=${encodeURIComponent(request_id)}&r=https://prod-nordencookiesync.cloud.prospectdesk.ai/trovo-webhook?trovo_id=$%7BDEVICE_ID%7D%26norid=${encodeURIComponent(norid)}%26request_id=${encodeURIComponent(request_id)}`;
+            await loadScriptTag(scriptUrl);
+        }
+
+        try {
+            const ip = await fetchIPAddress();
+            
+            if (typeof device === "function") {
+                const result = await device();
+                
+                if (result && result.profile) {
+                    const payload = {};
+                    payload.base_features = {};
+                    payload.ids = {};
+                    payload.device = {};
+                    
+                    payload.ids.request_id = request_id;
+                    payload.base_features.ipAddress = ip;
+                    payload.base_features.referrer = document.referrer;
+                    payload.base_features.currentUrl = window.location.href;
+                    payload.base_features.userAgent = navigator.userAgent;
+                    payload.ids.norid = norid;
+                    payload.ids.sid = scriptParams.sid;
+                    payload.ids.aid = scriptParams.aid;
+                    payload.ids.all_ids = scriptParams;
+                    payload.device.platform = result.profile.platform;
+                    payload.device.vendor = result.profile.vendor;
+                    payload.device.hardware_concurrency = result.profile.hardwareConcurrency;
+                    payload.device.timezone = result.profile.timezone;
+                    payload.device.language = result.profile.language;
+                    payload.device.screen_resolution = result.profile.screenResolution;
+                    payload.device.web_gl_program = result.profile.webglProgram;
+
+                    await postData('https://prod-nordencookiesync.cloud.prospectdesk.ai/cookie-sync', payload);
+                } else {
+                    console.error('Feature data is not available.');
+                }
+            } else {
+                console.error('Feature function is not defined.');
+            }
+        } catch (error) {
+            console.error('Error processing feature data:', error);
+        }
+    });
+
+    async function fetchIPAddress() {
+        try {
+            const response = await fetch('https://api.ipify.org?format=json');
+            const data = await response.json();
+            return data.ip;
+        } catch (error) {
+            console.error('Failed to fetch IP address:', error);
+            return null;
+        }
+    }
+
+
+    async function postData(url, data) {
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                credentials: 'include',
+                body: JSON.stringify(data),
+            });
+            return await response.json();
+        } catch (error) {
+            console.error('Error posting data:', error);
+        }
+    }
+
+    async function loadScriptTag(url) {
+        try {
+            // Create a hidden image for pixel tracking - this avoids CORS issues
+            const img = document.createElement('img');
+            img.style.display = 'none';
+            img.src = url;
+            document.body.appendChild(img);
+        } catch (error) {
+            console.error(`Error during tracking pixel injection for ${url}:`, error);
+        }
+    }
+
+    async function sendGetRequest(url) {
+        try {
+            const response = await fetch(url, {
+                method: 'GET',
+                credentials: 'include'  // Include cookies in the request
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const data = await response.text();
+            
+            // If the response contains a Set-Cookie header, it will be automatically handled by the browser
+            return data;
+        } catch (error) {
+            console.error('Error sending GET request:', error);
+            return null;
+        }
+    }
+
+function generateUUID() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        const r = Math.random() * 16 | 0;
+        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
+}
+})();

@@ -1,0 +1,98 @@
+// util/get_content_by_language.ts
+
+import { createClient } from '@vercel/kv';
+import OpenAI from 'openai';
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY!,
+});
+
+async function translateDescription(description: string, language: string): Promise<string> {
+    if (language.toLowerCase() === 'english' || language.toLowerCase() === 'en') {
+        return description;
+    }
+
+    const prompt = `Translate the following text "${description}" to ${language}. Only output the translated text, nothing else. For something like \\n, \${...} just leave it as it is`;
+
+    const maxRetries = 5;
+    let attempt = 0;
+
+    while (attempt < maxRetries) {
+        try {
+            const response = await openai.chat.completions.create({
+                model: process.env.GPT_MODEL || 'gpt-3.5-turbo',
+                messages: [{ role: 'user', content: prompt }],
+            });
+
+            const translatedText = response.choices[0]?.message?.content?.trim();
+
+            if (translatedText) {
+                // Successfully obtained the translated text
+                return translatedText;
+            } else {
+                // Log and retry after waiting for 1 second
+                console.warn(
+                    `Attempt ${attempt + 1}: Received empty translation for ${language}. Retrying...`
+                );
+                attempt++;
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+            }
+        } catch (error) {
+            console.error(
+                `Error translating to ${language} on attempt ${attempt + 1}:`,
+                error
+            );
+            attempt++;
+            // Wait for 1 second before retrying
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+    }
+
+    // After max retries, throw an error
+    throw new Error(`Failed to translate to ${language} after ${maxRetries} attempts.`);
+}
+
+export default async function getContentByLanguage(name: string, language: string, defaultContent?: string): Promise<{ content: string | null }> {
+    if (!name || !language || typeof name !== 'string' || typeof language !== 'string') {
+        throw new Error('Invalid parameters');
+    }
+
+    try {
+        let content = (await kv.get(`content:${name}:${language}`)) as string | null;
+
+        // Check if content is missing, empty, or previously failed
+        if (
+            !content ||
+            content.trim() === '' ||
+            content.startsWith('Failed to translate to')
+        ) {
+            // Use the defaultContent or fetch from KV
+            const defaultContentToTranslate = defaultContent || (await kv.get(name)) as string | null;
+
+            if (!defaultContentToTranslate) {
+                throw new Error('Default content not found');
+            }
+
+            // Translate the content
+            const translatedContent = await translateDescription(
+                defaultContentToTranslate,
+                language
+            );
+
+            // Store the translated content
+            await kv.set(`content:${name}:${language}`, translatedContent);
+
+            content = translatedContent;
+        }
+
+        return { content: content || null };
+    } catch (error) {
+        console.error('Error fetching content:', error);
+        throw error;
+    }
+}

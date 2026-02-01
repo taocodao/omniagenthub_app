@@ -1,0 +1,253 @@
+//api/uploadFile.ts
+import { NextApiRequest, NextApiResponse } from 'next';
+import formidable, { File } from 'formidable';
+import fs from 'fs/promises';
+import path from 'path';
+import { createClient } from '@vercel/kv';
+import { put, PutBlobResult, list, del } from '@vercel/blob';
+import { OpenAI } from 'openai';
+import { Pinecone } from '@pinecone-database/pinecone';
+
+export const config = {
+    api: {
+        bodyParser: false,
+    },
+};
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
+
+const uploadDirectory = path.join(process.cwd(), 'uploads');
+const CHUNK_SIZE = 1000;
+const MAX_RETRIES = 3;
+const INITIAL_RETRY_DELAY = 1000; // 1 second
+const INDEX_NAME = 'user-documents';
+const DIMENSION = 1536; // For OpenAI's text-embedding-ada-002 model
+
+async function ensureUploadDirectory() {
+    try {
+        await fs.access(uploadDirectory);
+    } catch (error) {
+        await fs.mkdir(uploadDirectory);
+    }
+}
+
+async function embedTextWithRetry(text: string, retries = MAX_RETRIES): Promise<number[]> {
+    try {
+        const response = await openai.embeddings.create({
+            model: "text-embedding-ada-002",
+            input: text,
+        });
+        return response.data[0].embedding;
+    } catch (error: any) {
+        if (error.status === 429 && retries > 0) {
+            const delay = INITIAL_RETRY_DELAY * (MAX_RETRIES - retries + 1);
+            console.log(`Rate limit reached. Retrying in ${delay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            return embedTextWithRetry(text, retries - 1);
+        }
+        throw error;
+    }
+}
+
+function splitTextIntoChunks(text: string, chunkSize: number = CHUNK_SIZE): string[] {
+    const words = text.split(/\s+/);
+    const chunks = [];
+    let currentChunk = [];
+
+    for (const word of words) {
+        if (currentChunk.join(' ').length + word.length > chunkSize) {
+            chunks.push(currentChunk.join(' '));
+            currentChunk = [];
+        }
+        currentChunk.push(word);
+    }
+
+    if (currentChunk.length > 0) {
+        chunks.push(currentChunk.join(' '));
+    }
+
+    return chunks;
+}
+
+async function getOrCreateIndex() {
+    try {
+        return await pc.Index(INDEX_NAME);
+    } catch (error) {
+        // If the index doesn't exist, create it
+        await pc.createIndex({
+            name: INDEX_NAME,
+            dimension: DIMENSION,
+            metric: 'cosine',
+            spec: {
+                serverless: {
+                    cloud: 'aws',
+                    region: 'us-east-1'
+                }
+            }
+        });
+        // Wait for the index to be created
+        await new Promise(resolve => setTimeout(resolve, 60000));
+        return pc.Index(INDEX_NAME);
+    }
+}
+
+async function retryOperation<T>(operation: () => Promise<T>, maxRetries = 3): Promise<T> {
+    let lastError;
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            return await operation();
+        } catch (error) {
+            lastError = error;
+            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, i)));
+        }
+    }
+    throw lastError;
+}
+
+async function createAndStoreEmbeddings(userId: string, fileName: string, fileContent: string) {
+    const index = await getOrCreateIndex();
+    const chunks = splitTextIntoChunks(fileContent);
+    const batchSize = 100;
+
+    for (let i = 0; i < chunks.length; i += batchSize) {
+        const batch = chunks.slice(i, i + batchSize);
+        const asyncResults = await Promise.all(batch.map(async (chunk, index) => {
+            const embedding = await embedTextWithRetry(chunk);
+            return {
+                id: `${fileName}-${i + index}`,
+                values: embedding,
+                metadata: {
+                    userId,
+                    fileName,
+                    chunkIndex: i + index,
+                    content: chunk
+                }
+            };
+        }));
+
+        await retryOperation(() => index.namespace(userId).upsert(asyncResults));
+    }
+}
+
+/*export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'POST') {
+        return res.status(405).json({ message: 'Method not allowed' });
+    }
+
+    const userId = req.headers['user-address'] as string;
+    if (!userId) {
+        return res.status(400).json({ message: 'User address is required' });
+    }
+
+    await ensureUploadDirectory();
+    const form = formidable({
+        multiples: false,
+        maxFileSize: 5 * 1024 * 1024, // 5MB
+        uploadDir: uploadDirectory,
+    });
+
+    try {
+        const { fields, files } = await new Promise<{ fields: formidable.Fields; files: formidable.Files }>(
+            (resolve, reject) => {
+                form.parse(req, (err, fields, files) => {
+                    if (err) reject(err);
+                    else resolve({ fields, files });
+                });
+            }
+        );
+
+        const fileArray = files.file;
+        if (!fileArray || !Array.isArray(fileArray) || fileArray.length === 0) {
+            return res.status(400).json({ message: 'No file uploaded' });
+        }
+
+        const uploadedFile = fileArray[0] as unknown as File;
+        const fileName = `${Date.now()}_${uploadedFile.originalFilename}`;
+        const filePath = path.join(uploadDirectory, fileName);
+        await fs.rename(uploadedFile.filepath, filePath);
+
+        const fileContent = await fs.readFile(filePath, 'utf-8');
+        await createAndStoreEmbeddings(userId, fileName, fileContent);
+
+        // Check if a file with the same name already exists in Vercel Blob
+        const { blobs } = await list({
+            token: process.env.BLOB_READ_WRITE_TOKEN,
+            prefix: `file:${userId}:${fileName}`,
+        });
+
+        if (blobs.length > 0) {
+            // Delete the existing file from Vercel Blob
+            await del(blobs[0].pathname, {
+                token: process.env.BLOB_READ_WRITE_TOKEN,
+            });
+        }
+
+        // Upload the new file to Vercel Blob
+        const blob: PutBlobResult = await put(fileName, await fs.readFile(filePath), {
+            access: 'public',
+            token: process.env.BLOB_READ_WRITE_TOKEN,
+        });
+
+        // Update the KV database with the file URL
+        await kv.set(`file:${userId}:${fileName}`, blob.url);
+
+        return res.status(200).json({
+            message: 'File uploaded successfully',
+            fileUrl: blob.url,
+            embeddingsCreated: true
+        });
+    } catch (error) {
+        console.error('Error in file upload:', error);
+        return res.status(500).json({ message: 'Error uploading file', error: (error as Error).message });
+    }
+}*/
+
+
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'POST') {
+        return res.status(405).json({ message: 'Method not allowed' });
+    }
+
+    const userId = req.headers['user-address'] as string;
+    if (!userId) {
+        return res.status(400).json({ message: 'User address is required' });
+    }
+
+    const form = formidable({ multiples: false });
+
+    try {
+        const { fields } = await new Promise<{ fields: formidable.Fields; files: formidable.Files }>(
+            (resolve, reject) => {
+                form.parse(req, (err, fields, files) => {
+                    if (err) reject(err);
+                    else resolve({ fields, files });
+                });
+            }
+        );
+
+        // Handle fields.text as a single string or the first element of an array of strings
+        const text = Array.isArray(fields.text) ? fields.text[0] : fields.text;
+
+        if (!text) {
+            return res.status(400).json({ message: 'No text provided' });
+        }
+
+        await createAndStoreEmbeddings(userId, 'textInput', text);
+
+        return res.status(200).json({
+            message: 'Text uploaded and embeddings created successfully',
+            embeddingsCreated: true,
+        });
+    } catch (error) {
+        console.error('Error in text upload:', error);
+        return res.status(500).json({ message: 'Error uploading text', error: (error as Error).message });
+    }
+}
+

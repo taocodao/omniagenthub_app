@@ -1,0 +1,207 @@
+// pages/api/oauth/google-drive.ts
+import { NextApiRequest, NextApiResponse } from 'next';
+import { google } from 'googleapis';
+import FormData from 'form-data';
+import fetch from 'node-fetch';
+import { getTokens } from '../../../utils/tokenStorage';
+
+const oauth2Client = new google.auth.OAuth2(
+  process.env.GOOGLE_CLIENT_ID!,
+  process.env.GOOGLE_CLIENT_SECRET!,
+  process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/oauth/google-drive/callback'
+);
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // Get action from query, but notebookId can come from either query or body
+  const { action, folderId = 'root' } = req.query as {
+    action: string;
+    folderId?: string;
+  };
+
+  // For POST requests, get notebookId from body; for GET, from query
+  const notebookId = req.method === 'POST' 
+    ? (req.body?.notebookId as string)
+    : (req.query.notebookId as string);
+
+  console.log('🔍 [GOOGLE-DRIVE] API Called:', { action, notebookId, folderId });
+
+  try {
+    // Authorization flow
+    if (action === 'authorize') {
+      if (!notebookId) {
+        console.error('❌ [AUTHORIZE] No notebookId provided');
+        return res.status(400).json({ error: 'NotebookId is required' });
+      }
+
+      const authUrl = oauth2Client.generateAuthUrl({
+        access_type: 'offline',
+        scope: ['https://www.googleapis.com/auth/drive.readonly'],
+        state: notebookId,
+        // prompt: 'consent', // Force consent to always get refresh token
+      });
+      
+      console.log('✅ [AUTHORIZE] Generated auth URL for notebook:', notebookId);
+      return res.json({ success: true, authUrl });
+    }
+
+    // List folders and files
+    if (action === 'folders') {
+      if (!notebookId) {
+        console.error('❌ [FOLDERS] No notebookId provided');
+        return res.status(400).json({ error: 'NotebookId is required' });
+      }
+
+      const tokens = getTokens(notebookId);
+      if (!tokens) {
+        console.error('❌ [FOLDERS] No tokens found for notebook:', notebookId);
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      console.log('✅ [FOLDERS] Found tokens for notebook:', notebookId);
+      oauth2Client.setCredentials(tokens);
+      const drive = google.drive({ version: 'v3', auth: oauth2Client });
+      
+      const response = await drive.files.list({
+        q: `'${folderId}' in parents and trashed=false`,
+        fields: 'files(id,name,mimeType,size,modifiedTime,webViewLink)',
+      });
+
+      // Separate folders and files
+      const items = response.data.files || [];
+      const folders = items
+        .filter(f => f.mimeType === 'application/vnd.google-apps.folder')
+        .map(f => ({ ...f, isFolder: true }));
+      const files = items
+        .filter(f => f.mimeType !== 'application/vnd.google-apps.folder')
+        .map(f => ({ ...f, isFolder: false }));
+
+      console.log(`✅ [FOLDERS] Retrieved ${folders.length} folders, ${files.length} files`);
+
+      return res.json({
+        folders,
+        files,
+        parentId: folderId === 'root' ? '' : folderId,
+        currentPath: folderId === 'root' ? '' : folderId
+      });
+    }
+
+    // Add source from Google Drive
+    if (action === 'add-source') {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed' });
+      }
+      
+      if (!notebookId) {
+        console.error('❌ [ADD-SOURCE] No notebookId provided');
+        return res.status(400).json({ error: 'NotebookId is required' });
+      }
+
+      const { fileIds } = req.body as { fileIds: string[] };
+      
+      if (!fileIds || fileIds.length === 0) {
+        console.error('❌ [ADD-SOURCE] No fileIds provided');
+        return res.status(400).json({ error: 'FileIds are required' });
+      }
+
+      const tokens = getTokens(notebookId);
+      if (!tokens) {
+        console.error('❌ [ADD-SOURCE] No tokens found for notebook:', notebookId);
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      console.log('✅ [ADD-SOURCE] Found tokens, processing', fileIds.length, 'files');
+      oauth2Client.setCredentials(tokens);
+      const drive = google.drive({ version: 'v3', auth: oauth2Client });
+
+      // Construct the base URL using NEXT_PUBLIC_CONFIG_ENV
+      const isDev = process.env.NEXT_PUBLIC_CONFIG_ENV === 'dev';
+      const protocol = isDev ? 'http' : 'https';
+      const host = req.headers.host || 'localhost:3000';
+      const baseUrl = `${protocol}://${host}`;
+
+      console.log(`🌐 [ADD-SOURCE] Using base URL: ${baseUrl} (env: ${process.env.NEXT_PUBLIC_CONFIG_ENV})`);
+
+      // Get user credentials from request headers
+      const userKey = req.headers['x-user-key'] as string;
+      const userAddress = req.headers['x-user-address'] as string;
+
+      if (!userKey || !userAddress) {
+        console.error('❌ [ADD-SOURCE] Missing user credentials');
+        return res.status(400).json({ error: 'User credentials are required' });
+      }
+
+      console.log(`👤 [ADD-SOURCE] User credentials:`, { userKey, userAddress });
+
+      const addedFiles = [];
+
+      for (const fileId of fileIds) {
+        console.log(`📥 [ADD-SOURCE] Processing file: ${fileId}`);
+        
+        const { data: meta } = await drive.files.get({
+          fileId,
+          fields: 'name,mimeType,size,modifiedTime,webViewLink',
+        });
+        
+        const download = await drive.files.get(
+          { fileId, alt: 'media' },
+          { responseType: 'arraybuffer' }
+        );
+        
+        const buffer = Buffer.from(download.data as ArrayBuffer);
+        const filename = meta.name!;
+        const contentType = meta.mimeType!;
+
+        console.log(`📤 [ADD-SOURCE] Uploading "${filename}" (${contentType})`);
+
+        const form = new FormData();
+        form.append('file', buffer, { filename, contentType });
+        form.append('userKey', userKey);
+        form.append('userAddress', userAddress);
+        form.append('notebookId', notebookId);
+        form.append('sourceType', 'google-drive');
+        form.append('sourceId', fileId);
+
+        console.log(`🔍 [ADD-SOURCE] Form data fields:`, {
+          userKey,
+          userAddress,
+          notebookId,
+          sourceType: 'google-drive',
+          sourceId: fileId,
+          filename
+        });
+
+        const uploadResponse = await fetch(`${baseUrl}/api/sources/upload-file`, {
+          method: 'POST',
+          headers: form.getHeaders(),
+          body: form,
+        });
+
+        if (!uploadResponse.ok) {
+          const errorText = await uploadResponse.text();
+          console.error(`❌ [ADD-SOURCE] Upload failed for "${filename}":`, errorText);
+          throw new Error(`Upload failed for ${filename}: ${errorText}`);
+        }
+
+        console.log(`✅ [ADD-SOURCE] Successfully uploaded: "${filename}"`);
+        addedFiles.push({ 
+          id: fileId, 
+          name: filename,
+          size: meta.size,
+          mimeType: contentType
+        });
+      }
+
+      console.log(`🎉 [ADD-SOURCE] Successfully added ${addedFiles.length} Google Drive files`);
+      return res.json({ 
+        success: true, 
+        message: `Added ${fileIds.length} Google Drive file${fileIds.length !== 1 ? 's' : ''}`,
+        files: addedFiles
+      });
+    }
+
+    return res.status(400).json({ error: 'Invalid action' });
+  } catch (error: any) {
+    console.error('❌ [GOOGLE-DRIVE] API Error:', error.message || error);
+    return res.status(500).json({ error: error.message || 'Internal server error' });
+  }
+}

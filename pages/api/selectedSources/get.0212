@@ -1,0 +1,54 @@
+import type { NextApiRequest, NextApiResponse } from "next";
+import { createClient } from "@vercel/kv";
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+// Helper: Get the userName given a userAddress from "userName:{address}"
+async function getUserNameFromAddress(userAddress: string): Promise<string | null> {
+    const key = `userName:${userAddress.toLowerCase()}`;
+    const data = await kv.get(key);
+    return data ? (data as string) : null;
+}
+
+// Helper: Convert a username (login name) into a userAddress via "userMapping:{userName}"
+async function getUserAddressFromUserMapping(username: string): Promise<string | null> {
+    const key = `userMapping:${username.toLowerCase()}`;
+    const data = await kv.get(key);
+    return data ? (data as string) : null;
+}
+
+export default async function handler(
+    req: NextApiRequest,
+    res: NextApiResponse
+) {
+    if (req.method !== "GET") {
+        return res.status(405).json({ error: "Method not allowed" });
+    }
+
+    const userAddress = req.query.userAddress as string;
+
+    if (!userAddress) {
+        return res.status(400).json({ error: "Missing userAddress parameter" });
+    }
+
+    try {
+
+        const key = `selectedSources:${userAddress.toLowerCase()}`;
+        const data = await kv.get(key);
+        const storedSources: string[] = data ? (data as string[]) : [];
+        // Convert each stored address (which was saved from the add/remove endpoints) to its display userName.
+        const sourceUserNames = await Promise.all(
+            storedSources.map(async (addr) => {
+                const name = await getUserNameFromAddress(addr);
+                return name ? name : addr;
+            })
+        );
+        return res.status(200).json({ selectedSources: sourceUserNames });
+    } catch (error) {
+        console.error("Error retrieving selected sources:", error);
+        return res.status(500).json({ error: "Error retrieving selected sources" });
+    }
+}

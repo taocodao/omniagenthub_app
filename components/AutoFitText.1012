@@ -1,0 +1,97 @@
+// components/AutoFitText.tsx
+
+import React, { useState, useRef, useEffect } from 'react';
+
+interface AutoFitTextProps extends React.HTMLAttributes<HTMLDivElement> {
+    children: React.ReactNode;
+    containerWidth: number;
+    containerHeight?: number;
+    maxFontSize?: number;
+    minFontSize?: number;
+    className?: string;
+    maxLines?: number;
+}
+
+const AutoFitText: React.FC<AutoFitTextProps> = ({
+    children,
+    containerWidth,
+    containerHeight,
+    maxFontSize = 24,
+    minFontSize = 10,
+    className,
+    maxLines = 2, // Default to 2 lines
+    style,
+    ...rest
+}) => {
+    const [fontSize, setFontSize] = useState(maxFontSize);
+    const textRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (textRef.current) {
+            let currentFontSize = maxFontSize;
+            textRef.current.style.fontSize = `${currentFontSize}px`;
+            textRef.current.style.lineHeight = '1.2';
+
+            // Reset any existing constraints
+            textRef.current.style.height = 'auto';
+            textRef.current.style.maxHeight = 'none';
+
+            // Calculate the required height for the text
+            const calculateHeight = () => {
+                const lineHeight = 1.2; // Should match the lineHeight set above
+                const maxHeight = maxLines * currentFontSize * lineHeight;
+
+                if (containerHeight) {
+                    return Math.min(maxHeight, containerHeight);
+                }
+                return maxHeight;
+            };
+
+            let textHeight = textRef.current.scrollHeight;
+            const requiredHeight = calculateHeight();
+
+            while (textHeight > requiredHeight && currentFontSize > minFontSize) {
+                currentFontSize -= 1;
+                textRef.current.style.fontSize = `${currentFontSize}px`;
+                textHeight = textRef.current.scrollHeight;
+            }
+
+            setFontSize(currentFontSize);
+
+            // If after reducing font size, text still overflows, allow wrapping
+            if (textHeight > requiredHeight && currentFontSize === minFontSize) {
+                textRef.current.style.overflow = 'hidden';
+                textRef.current.style.textOverflow = 'ellipsis';
+                textRef.current.style.display = '-webkit-box';
+                textRef.current.style.webkitLineClamp = `${maxLines}`;
+                textRef.current.style.webkitBoxOrient = 'vertical';
+            } else {
+                // Reset overflow properties if text fits
+                textRef.current.style.overflow = 'visible';
+                textRef.current.style.textOverflow = 'clip';
+                textRef.current.style.display = 'block';
+            }
+        }
+    }, [children, containerWidth, containerHeight, maxFontSize, minFontSize, maxLines]);
+
+    return (
+        <div
+            ref={textRef}
+            className={className}
+            style={{
+                width: `${containerWidth}px`,
+                fontSize: `${fontSize}px`,
+                lineHeight: '1.2',
+                whiteSpace: 'normal',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                ...style,
+            }}
+            {...rest}
+        >
+            {children}
+        </div>
+    );
+};
+
+export default AutoFitText;

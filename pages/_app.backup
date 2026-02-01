@@ -1,0 +1,64 @@
+import { AppProps } from "next/app";
+import { embeddedWallet } from "@thirdweb-dev/react";
+import { ACTIVE_CHAIN, CLIENT_ID } from "../constants/constants";
+import "../styles/globals.css";
+import { PolygonAmoyTestnet } from "@thirdweb-dev/chains";
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { SharedProvider } from "../context/SharedContext";
+import { LocalizationProvider } from '../util/LocalizationContext';
+import { ThirdwebProvider as ThirdwebProvider1 } from "thirdweb/react"; // From thirdweb/react
+import { ThirdwebProvider as ThirdwebProvider2 } from "@thirdweb-dev/react"; // From @thirdweb-dev/react
+import { inAppWallet } from "thirdweb/wallets";
+import { polygonAmoy, polygon, Chain } from "thirdweb/chains";
+import { NextComponentType } from 'next';
+import { ThirdwebSDK } from "@thirdweb-dev/react";
+import React from 'react';
+
+// Extend NextComponentType to include requiresSDK
+type MyAppProps = AppProps & {
+    Component: NextComponentType & { requiresSDK?: boolean };
+};
+
+const wallets = [inAppWallet()];
+const thirdwebQueryClient = new QueryClient();
+const chainMap: { [key: string]: Chain } = {
+    "polygon-amoy-testnet": polygonAmoy,
+    "polygon": polygon, // Add Polygon mainnet
+};
+
+const activeChain1: Chain = chainMap[ACTIVE_CHAIN];
+
+const activeChain = ACTIVE_CHAIN === "polygon-amoy-testnet" ? PolygonAmoyTestnet : ACTIVE_CHAIN;
+// Global variables to hold the initialized SDK and contract
+let sdk: ThirdwebSDK | null = null;
+let accountFactory: any | null = null;
+
+// Utility to access the SDK and contract
+export const getSdkAndContract = () => ({ sdk, accountFactory });
+
+const MyApp = ({ Component, pageProps }: MyAppProps) => {
+
+    const configEnv = process.env.NEXT_PUBLIC_CONFIG_ENV;
+    const walletToUse = configEnv === 'dev' ? embeddedWallet() : embeddedWallet({ auth: { options: ["google", "facebook", "apple"] }, recommended: true });
+
+    return (
+        <QueryClientProvider client={thirdwebQueryClient}>
+            <ThirdwebProvider1>
+                <SharedProvider>
+                    <LocalizationProvider>
+                        <ThirdwebProvider2 activeChain={activeChain}
+                            clientId={CLIENT_ID}
+                            supportedWallets={[walletToUse]}
+                            authConfig={{
+                                domain: "web3aistore.com", // Replace with your domain
+                            }} >
+                            <Component {...pageProps} />
+                        </ThirdwebProvider2>
+                    </LocalizationProvider>
+                </SharedProvider>
+            </ThirdwebProvider1>
+        </QueryClientProvider>
+    );
+};
+
+export default MyApp;

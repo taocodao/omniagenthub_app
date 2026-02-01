@@ -1,0 +1,753 @@
+/* styles/Home.module.css */
+
+.buttonContainer {
+    display: flex;
+    /* Enables flexbox layout */
+    flex-direction: row;
+    /* Aligns items in a row */
+    justify-content: space-between;
+    /* Evenly distributes space between buttons */
+    align-items: center;
+    /* Vertically centers the buttons */
+    gap: 20px;
+    /* Corrected gap property without space */
+    width: 100%;
+    /* Ensures the container takes full width */
+}
+
+/* ----------------- Global Container ----------------- */
+.container {
+    width: 100%;
+    max-width: 1440px;
+    padding: 0 1rem;
+    margin: 0 auto;
+}
+
+/* ----------------- Gradient Text Styles ----------------- */
+.gradientText0 {
+    background: -webkit-linear-gradient(#bfa3da, #84309c, #c735b0);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.gradientText1 {
+    background: -webkit-linear-gradient(#a79af9, #7aa8d2);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.gradientText2 {
+    background: -webkit-linear-gradient(#bfa3da, #743f93);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.gradientText3 {
+    background: -webkit-linear-gradient(#c35ab1, #e9a8d9);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+/* ----------------- Typography ----------------- */
+.title {
+    line-height: 1.15;
+    font-size: 4rem;
+    text-align: left;
+    margin: 0;
+}
+
+.description {
+    margin-top: 2rem;
+    margin-bottom: 2rem;
+    line-height: 1.5;
+    font-size: 1.5rem;
+    text-align: left;
+}
+
+/* ----------------- Links ----------------- */
+.title a:hover,
+.title a:focus,
+.title a:active {
+    text-decoration: underline;
+    text-decoration-color: #84309c;
+}
+
+.navLink {
+    color: rgb(13, 0, 255);
+    font-size: 1.5rem;
+    text-decoration: none;
+    margin-right: 1rem;
+}
+
+.navLink:hover {
+    color: white;
+}
+
+.setupUserLink,
+.uploadNFTLink {
+    text-decoration: none;
+    color: blue;
+    font-size: 22px;
+    padding: 10px;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.setupUserLink:hover,
+.uploadNFTLink:hover {
+    background-color: rgba(0, 0, 255, 0.1);
+    /* Light blue hover effect */
+}
+
+/* ----------------- Grid Layout ----------------- */
+.grid {
+    display: flex;
+    justify-content: left;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+/* ----------------- Card Styles ----------------- */
+.card {
+    background-color: #131313;
+    text-align: left;
+    color: inherit;
+    text-decoration: none;
+    border-radius: 10px;
+    transition: color 0.15s ease, border-color 0.15s ease;
+    max-width: 440px;
+    overflow: hidden;
+    border: none;
+}
+
+.cardText {
+    padding: 1rem;
+}
+
+.card img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 4px 4px 0 0;
+    margin-bottom: 12px;
+    border: none;
+}
+
+.card:hover,
+.card:focus,
+.card:active {
+    background-color: #272c34;
+    opacity: 80%;
+}
+
+.card h2 {
+    margin: 0 0 0.75rem 0;
+}
+
+.card p {
+    margin: 0;
+    font-size: 1rem;
+    line-height: 1.75;
+}
+
+/* ----------------- Logo Styles ----------------- */
+.logo {
+    height: 1em;
+    margin-left: 0.5rem;
+}
+
+.logo img {
+    filter: invert(1);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    cursor: pointer;
+}
+
+.logo:hover {
+    transform: scale(0.9);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
+}
+
+.logoTooltip {
+    visibility: hidden;
+    position: absolute;
+    width: 220px;
+    background-color: rgb(10, 167, 16);
+    color: white;
+    text-align: center;
+    border-radius: 6px;
+    padding: 5px;
+    bottom: 50%;
+    left: 50%;
+    transform: translateX(-50%);
+    opacity: 0;
+    transition: visibility 0s linear 0.3s, opacity 0.3s linear;
+}
+
+.logo:hover .logoTooltip {
+    visibility: visible;
+    opacity: 1;
+    transition-delay: 0s;
+}
+
+/* ----------------- Button Styles ----------------- */
+.quickDemoLink {
+    display: flex;
+    justify-content: center;
+    margin-top: 1rem;
+}
+
+.quickDemoButton {
+    padding: 0.75rem 1.5rem;
+    background-color: #1e90ff;
+    color: #ffffff;
+    border: none;
+    border-radius: 4px;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+.quickDemoButton:hover {
+    background-color: #1c86ee;
+}
+
+.copyButton,
+.closeButton,
+.closeButton1,
+.submitButton,
+.shareButton {
+    background-color: #2806e8;
+    color: white;
+    border: none;
+    padding: 10px 30px;
+    cursor: pointer;
+    border-radius: 5px;
+    transition: background-color 0.3s ease, transform 0.3s ease;
+}
+
+.copyButton:hover,
+.closeButton:hover,
+.closeButton1:hover,
+.submitButton:hover,
+.shareButton:hover {
+    background-color: #1e0af3;
+}
+
+.shareButton {
+    box-shadow: 0px 4px 10px red;
+}
+
+.shareButton:hover {
+    transform: scale(0.8);
+}
+
+/* ----------------- Modal Styles ----------------- */
+.modalOverlay,
+.modalOverlay1 {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 10000;
+}
+
+.modalContent,
+.modalContent1 {
+    background-color: #ffffff;
+    padding: 1.5rem;
+    border-radius: 8px;
+    width: 90%;
+    max-width: 800px;
+    position: relative;
+    overflow-y: auto;
+    max-height: 120vh;
+    z-index: 10000;
+    /* Ensure it's above the overlay */
+}
+
+.modalContent1 {
+    background-color: hsl(202, 78%, 64%);
+}
+
+.modalTitle {
+    text-align: center;
+    font-weight: bold;
+    color: rgb(8, 8, 238);
+    margin-bottom: 20px;
+}
+
+.modalSubTitle {
+    text-align: center;
+    font-weight: bold;
+    font-size: medium;
+    color: rgb(8, 8, 238);
+    margin-bottom: 20px;
+}
+
+.closeButton {
+    position: absolute;
+    bottom: 15px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 8px 16px;
+    cursor: pointer;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+}
+
+.closeButton1 {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    background: transparent;
+    border: none;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+/* ----------------- Textarea Styles ----------------- */
+.textarea,
+.textarea1 {
+    width: 100%;
+    height: 150px;
+    padding: 0.75rem;
+    border: 1px solid #cccccc;
+    border-radius: 4px;
+    resize: vertical;
+    font-size: 1rem;
+    line-height: 1.2;
+    box-sizing: border-box;
+    margin-bottom: 1rem;
+}
+
+.textarea1 {
+    height: 400px;
+    font-weight: bolder;
+}
+
+/* ----------------- Dropdown Styles ----------------- */
+.dropdownContainer {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin: 20px auto 40px;
+    width: 100%;
+    min-width: 250px;
+}
+
+.categoryLabel {
+    margin-right: 10px;
+    font-size: 16px;
+    font-weight: bold;
+    color: white;
+}
+
+.dropdown {
+    padding: 8px 16px;
+    background-color: blue;
+    color: white;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    cursor: pointer;
+    appearance: none;
+    outline: none;
+    width: auto;
+}
+
+.dropdown option {
+    padding: 10px;
+    background-color: rgb(33, 9, 251);
+    color: rgb(246, 239, 239);
+}
+
+.dropdown option:hover {
+    background-color: red;
+    color: white;
+}
+
+/* ----------------- Task and Role Buttons ----------------- */
+.taskButton,
+.roleButton {
+    padding: 0.5rem 1rem;
+    background-color: #4682b4;
+    color: #ffffff;
+    border: none;
+    border-radius: 4px;
+    font-size: 1rem;
+    cursor: pointer;
+    width: 100%;
+    transition: background-color 0.3s ease;
+}
+
+.taskButton:hover,
+.roleButton:hover {
+    background-color: #3a6ea5;
+}
+
+/* ----------------- Additional Styles ----------------- */
+
+/* Rating Component Styles */
+.ratingAndCount {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.ratingValue {
+    margin-right: 8px;
+}
+
+.countValue {
+    margin-left: auto;
+}
+
+.stars {
+    display: flex;
+    justify-content: center;
+    margin: 1rem 0;
+}
+
+.filledStar,
+.emptyStar {
+    font-size: 2rem;
+    cursor: pointer;
+}
+
+.filledStar {
+    color: gold;
+}
+
+.emptyStar {
+    color: lightgray;
+}
+
+/* Tooltip Styles */
+.tooltip,
+.hoverTooltip {
+    position: absolute;
+    background-color: black;
+    color: white;
+    padding: 5px;
+    border-radius: 5px;
+    top: 90%;
+    left: 50%;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    z-index: 1;
+    opacity: 0;
+    transition: opacity 0.3s ease, visibility 0s linear 0.3s;
+}
+
+.hoverLogo:hover .hoverTooltip,
+.tooltip:hover {
+    opacity: 1;
+    visibility: visible;
+    transition-delay: 0s;
+}
+
+/* ----------------- Media Queries ----------------- */
+
+/* Medium Devices (Tablets, 768px and below) */
+@media (max-width: 768px) {
+    .header {
+        margin-left: 0;
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .grid {
+        width: 100%;
+        flex-direction: column;
+    }
+
+    .title {
+        font-size: 3rem;
+        line-height: 1.15;
+        text-align: center;
+    }
+
+    .languageSelect {
+        max-width: 150px;
+    }
+
+    .instructionText {
+        font-size: 1rem;
+        padding: 0 2rem;
+    }
+
+    .quickDemoButton {
+        font-size: 1.1rem;
+    }
+
+    .modalContent,
+    .modalContent1 {
+        width: 90%;
+    }
+
+    .buttonContainer {
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+}
+
+/* Small Devices (Mobile Phones, 400px and below) */
+@media (max-width: 400px) {
+    .title {
+        font-size: 2.5rem;
+    }
+
+    .tagline {
+        font-size: 1rem;
+    }
+
+    .languageSelect {
+        max-width: 120px;
+    }
+
+    .quickDemoButton,
+    .copyButton,
+    .closeButton,
+    .closeButton1,
+    .taskButton,
+    .roleButton {
+        font-size: 0.9rem;
+        padding: 0.5rem;
+    }
+
+    .modalContent,
+    .modalContent1 {
+        width: 90%;
+        max-width: 400px;
+    }
+
+    .instructionText {
+        font-size: 0.95rem;
+    }
+
+    .dropdownContainer {
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .dropdown {
+        width: 100%;
+    }
+}
+
+/* ----------------- Utility Classes ----------------- */
+
+/* Selected State for NFT Images */
+.selected {
+    border: 10px solid #032902;
+    transform: scale(1.05);
+}
+
+/* Hover Effects */
+.hoverItem:hover {
+    background-color: darkpink;
+}
+
+/* Share Block */
+.shareBlock {
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    margin: 10px 0;
+}
+
+/* Rating and Amount Display */
+.ratingAndAmount {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+}
+
+.centeredSendAmount {
+    text-align: center;
+    display: block;
+    margin: auto;
+    font-size: 16px;
+    color: white;
+}
+
+.selectedNftImage {
+    border: 25px solid #058c4b;
+    /* Green border to indicate selection */
+}
+
+.selectedRoleButton {
+    border: 5px solid rgb(252, 80, 6);
+}
+
+/* Home6.module.css */
+
+/* ... your existing styles */
+
+/* Tooltip Wrapper */
+.tooltipWrapper {
+    position: relative;
+    display: inline-block;
+
+    margin: 0 5px;
+}
+
+/* Tooltip Text */
+.tooltip {
+    visibility: hidden;
+    width: max-content;
+    background-color: black;
+    color: white;
+    text-align: center;
+    border-radius: 6px;
+    padding: 5px 8px;
+    position: absolute;
+    z-index: 10000;
+
+    top: -45px;
+    /* Position the tooltip above the button */
+    left: 50%;
+    transform: translateX(-50%);
+    opacity: 0;
+    transition: opacity 0.3s;
+    white-space: nowrap;
+    /* Prevent text from wrapping */
+    font-size: 18px;
+    /* Increased font size */
+}
+
+/* Tooltip Arrow */
+.tooltip::after {
+    content: "";
+    position: absolute;
+    bottom: -5px;
+    /* Position the arrow below the tooltip */
+    left: 50%;
+    transform: translateX(-50%);
+    border-width: 5px;
+    border-style: solid;
+    border-color: black transparent transparent transparent;
+    /* Arrow pointing down */
+}
+
+/* Show Tooltip on Hover */
+.tooltipWrapper:hover .tooltip {
+    visibility: visible;
+    opacity: 1;
+}
+
+/* ... rest of your CSS */
+
+/* styles/ChatHome1.module.css */
+
+.uploadModalContent {
+    padding: 2rem;
+    min-height: 600px;
+    /* Increased height */
+    /* Add any other existing styles */
+}
+
+.flexContainer {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 1.5rem;
+    position: relative;
+}
+
+.spacer {
+    flex: 1;
+}
+
+.languageDropdown {
+    padding: 0.5rem 1rem;
+    border: 2px solid #444;
+    border-radius: 8px;
+    cursor: pointer;
+    background-color: #0070f3;
+    color: white;
+    width: 200px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    font-size: 16px;
+    text-align: center;
+}
+
+.languageOption {
+    background-color: #0070f3;
+    color: white;
+    padding: 10px 20px;
+}
+
+.freeUploadsBalance {
+    flex: 1;
+    display: flex;
+    justify-content: flex-end;
+    color: blue;
+    font-size: 16px;
+    font-weight: bold;
+}
+
+.textareaInput {
+    width: 100%;
+    height: 200px;
+    /* Increased height for taller modal */
+    padding: 1rem;
+    border-radius: 8px;
+    border: 2px solid #444;
+    resize: vertical;
+    font-size: 16px;
+    margin-bottom: 1.5rem;
+    box-sizing: border-box;
+}
+
+.buttonContainer {
+    display: flex;
+    justify-content: space-between;
+}
+
+.submitButton {
+    flex: 1;
+    margin-right: 0.5rem;
+    padding: 0.75rem;
+    font-size: 16px;
+    border-radius: 8px;
+    border: none;
+    background-color: hwb(250 16% 35%);
+    color: white;
+    cursor: pointer;
+}
+
+.cleanupButton {
+    flex: 1;
+    margin-right: 0.5rem;
+    padding: 0.75rem;
+    font-size: 16px;
+    border-radius: 8px;
+    border: none;
+    background-color: hwb(250 16% 35%);
+    color: white;
+    cursor: pointer;
+}
+
+.closeButton {
+    flex: 1;
+    padding: 0.75rem;
+    font-size: 16px;
+    border-radius: 8px;
+    border: none;
+    background-color: hwb(250 16% 35%);
+    color: white;
+    cursor: pointer;
+}

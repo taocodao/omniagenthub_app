@@ -1,0 +1,75 @@
+require('dotenv').config();
+// Define constants for development
+const devConstants = {
+    ACCOUNT_FACTORY_ADDRESS: "0x31eaB8e554B187bCd34dA22011F85519B967165F", // Check if this needs update for Base Sepolia
+    MINTER_PRIVATE_KEY: "f7f5ba862d9d5c33c16ba7190d1b70b8e41e4e4e6915a62563d06c58a04b6c85",
+    ACTIVE_CHAIN: "base-sepolia-testnet",
+    CONTRACT_ADDRESS: "0xE47433F858443bDa7A921CF54A803d39190eBCEE",
+    UPLOAD_FILE_FEE: 0.5,
+    PLATFORM_NAME: "web3aistore",
+    TRANSACTION_FEE_RATE: 0.2,
+    FREECHATS_LIMIT: 25,
+    ACTIVE_CHAIN_ID: 84532, // Base Sepolia Chain ID
+    REMOVENFT_ADDRESS: "0x4c76CF0443F72228bf959e0ABE90CB8E476284eD",
+    FILEUPLOAD_ADDRESS: "0x21E4AA130946513B7D5ACEA4733F3D33a34A8092",
+    SUPPORT_EMAIL_ADDRESS: "support@web3AIstore.com",
+    RATING_COUNTER_ADDRESS: "0x61AE5d663129144bBEEeC5758011Ae0B808aF1c2",
+    //CLIENT_ID: "39e1657bff45d4cf2065566b8f4d249f",
+    //CLIENT_ID: "43549cb443ebb7fad0d8f26083fe926a",
+    CLIENT_ID: "7319256f55161842d7519fb947972a34",
+    CHAT_APP_ADDRESS: "0xCDCD3576D951926293C492D3e29499BA3326f7C6",
+    NFT_CATEGORY_ADDRESS: "0x6ff2f4F34aa85cE6B0658b9e220Ca0975ef46704",
+    MULTILANGUAGE_CONTRACT_ADDRESS: "0x9E88F807ad25826a60f4a2add972217EB9dfc7a4",
+    WEBAI_TOKEN_ADDRESS: "0x036CbD53842c5426634e7929541eC2318f3dCF7e", // USDC on Base Sepolia
+    RPC_URL: "https://sepolia.base.org"
+}
+// Define constants for production (Base mainnet)
+const prodConstants = {
+    ACCOUNT_FACTORY_ADDRESS: "0x21E4AA130946513B7D5ACEA4733F3D33a34A8092", // Update for Base mainnet if needed
+    ACTIVE_CHAIN: "base", // Base mainnet
+    CONTRACT_ADDRESS: "0x2b93090EFaf8A0dc201FDAeF74e11dffaB346a59",
+    UPLOAD_FILE_FEE: 0.5,
+    PLATFORM_NAME: "web3aistore",
+    TRANSACTION_FEE_RATE: 0.2,
+    FREECHATS_LIMIT: 50,
+    ACTIVE_CHAIN_ID: 8453, // Base mainnet Chain ID
+    REMOVENFT_ADDRESS: "0xDa7503C9Eb1B0B6548377b71Bcff5cc2E0eDAadb",
+    FILEUPLOAD_ADDRESS: "0x25f9bD33503A380Af85f69BB8F53044667A1a53B",
+    SUPPORT_EMAIL_ADDRESS: "support@web3AIstore.com",
+    RATING_COUNTER_ADDRESS: "0xea06Abe05c752527E6b8346FA71BC0E85523A818",
+    CLIENT_ID: "5a436bf5cba995d976c56bfa20b0456e",
+    CHAT_APP_ADDRESS: "0xE559CED1da57bFFdeC1522c2aB071b8b78C30B7D",
+    NFT_CATEGORY_ADDRESS: "0x24D79814373BAcF9a31b724a2Adf927A66419b99",
+    MULTILANGUAGE_CONTRACT_ADDRESS: "",
+    WEBAI_TOKEN_ADDRESS: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", // USDC on Base mainnet
+    MINTER_PRIVATE_KEY: "f7f5ba862d9d5c33c16ba7190d1b70b8e41e4e4e6915a62563d06c58a04b6c85",
+    RPC_URL: "https://mainnet.base.org"
+};
+
+// Determine if environment is development or production
+// NEXT_PUBLIC_CONFIG_ENV=dev -> Base Sepolia (dev), otherwise -> Base mainnet (prod)
+const isDevelopment = (process.env.NEXT_PUBLIC_CONFIG_ENV === 'dev');
+console.log("NEXT_PUBLIC_CONFIG_ENV:", process.env.NEXT_PUBLIC_CONFIG_ENV);
+console.log("isDevelopment:", isDevelopment);
+const config = isDevelopment ? devConstants : prodConstants;
+
+// Export constants individually --
+export const ACCOUNT_FACTORY_ADDRESS = config.ACCOUNT_FACTORY_ADDRESS;
+export const ACTIVE_CHAIN = config.ACTIVE_CHAIN;
+export const CONTRACT_ADDRESS = config.CONTRACT_ADDRESS;
+export const UPLOAD_FILE_FEE = config.UPLOAD_FILE_FEE;
+export const PLATFORM_NAME = config.PLATFORM_NAME;
+export const TRANSACTION_FEE_RATE = config.TRANSACTION_FEE_RATE;
+export const FREECHATS_LIMIT = config.FREECHATS_LIMIT;
+export const ACTIVE_CHAIN_ID = config.ACTIVE_CHAIN_ID;
+export const REMOVENFT_ADDRESS = config.REMOVENFT_ADDRESS;
+export const FILEUPLOAD_ADDRESS = config.FILEUPLOAD_ADDRESS;
+export const SUPPORT_EMAIL_ADDRESS = config.SUPPORT_EMAIL_ADDRESS;
+export const RATING_COUNTER_ADDRESS = config.RATING_COUNTER_ADDRESS;
+export const CLIENT_ID = config.CLIENT_ID;
+export const CHAT_APP_ADDRESS = config.CHAT_APP_ADDRESS;
+export const NFT_CATEGORY_ADDRESS = config.NFT_CATEGORY_ADDRESS;
+export const MULTILANGUAGE_CONTRACT_ADDRESS = config.MULTILANGUAGE_CONTRACT_ADDRESS;
+export const WEBAI_TOKEN_ADDRESS = config.WEBAI_TOKEN_ADDRESS;
+export const MINTER_PRIVATE_KEY = config.MINTER_PRIVATE_KEY;
+export const RPC_URL = config.RPC_URL;

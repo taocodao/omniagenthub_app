@@ -1,0 +1,783 @@
+require('dotenv').config();
+
+import rehypeRaw from 'rehype-raw';
+import { useRef } from "react";
+import { useChat } from "ai/react";
+import { useBalanceForAddress, useContract, useSDK, useWalletConfig, useAddress, useNFTs } from "@thirdweb-dev/react";
+import { ACCOUNT_FACTORY_ADDRESS, CONTRACT_ADDRESS, PLATFORM_NAME, TRANSACTION_FEE_RATE, FREECHATS_LIMIT, RATING_COUNTER_ADDRESS, CHAT_APP_ADDRESS } from "../constants/constants";
+import { ThirdwebSDK, SmartContract } from '@thirdweb-dev/sdk'; // Adjust this import based on the actual SDK you are using
+import ReactMarkdown from 'react-markdown';
+import { useRouter } from 'next/router';
+import { randomBytes, createCipheriv, createDecipheriv } from 'crypto';
+import { _0xhashTestnet } from "@thirdweb-dev/chains";
+import React, { useEffect, useState, Dispatch, SetStateAction } from 'react'
+type GPTProps = {
+    tokenId: string | number | null | undefined;
+};
+
+interface NFT {
+    metadata: {
+        id: string;
+        name: string | number | null | undefined; // Adjust this to match the library's type
+        description: string;
+    };
+}
+
+interface LoadingOverlayProps {
+    message: string;
+}
+
+interface ChatProps {
+    tokenId: string | number | null;
+    freeChatsLeft: number | null;
+    setFreeChatsLeft: Dispatch<SetStateAction<number | null>>;
+}
+
+const Chat: React.FC<ChatProps> = ({ tokenId, freeChatsLeft, setFreeChatsLeft }) => {
+    //const Chat: React.FC<GPTProps> = ({ tokenId }) => {
+
+    const formRef = useRef<HTMLFormElement>(null);
+    //const inputRef = useRef<HTMLInputElement>(null);
+    const inputRef = useRef<HTMLTextAreaElement>(null);
+    // Add a state for threadId
+    //const [threadId, setThreadId] = useState<string | null>(null);
+    const address = useAddress();
+    const { data: balanceData, isLoading: isBalanceLoading } = useBalanceForAddress(String(address)); // Use the hook to get balance
+    const [tokenBalance, setTokenBalance] = useState<{ displayValue: string; symbol: string } | null>(null);
+    const [chatCount, setChatCount] = useState(0);
+    const [freechatCount, setFreeChatCount] = useState(0);
+    const [isRatingModalOpen, setIsRatingModalOpen] = useState(false);
+    const chatContract = useContract(RATING_COUNTER_ADDRESS).contract;
+    const previousTokenIdRef = useRef(tokenId); // To store the previous tokenId
+    const pendingChatCountUpdate = useRef({ freecount: 0, count: 0, tokenId: "" });
+    const [apiKeys, setApiKeys] = useState({ openaiApiKey: '', assistantId: '' });
+    const [userAmount, setUserAmount] = useState({ receiverUsername: '', sendAmount: '' });
+    const [threadId, setThreadId] = useState<string | null>(null);
+    const [isNewThread, setIsNewThread] = useState(false); // Flag to check if we need to create a new thread
+    const [totalfreeChats, setTotalfreeChats] = useState<number | undefined>(undefined);
+    const [freeChats, setFreeChats] = useState<number | undefined>(undefined);
+    const router = useRouter();
+    const contract = useContract(CHAT_APP_ADDRESS).contract;
+    const [isNewUser, setIsNewUser] = useState<boolean>(true);
+    const [hasRegistered, setHasRegistered] = useState<boolean>(false);
+
+    const SECRET_KEY = process.env.NEXT_PUBLIC_ENCRYPTION_KEY;
+    if (!SECRET_KEY) {
+        throw new Error("ENCRYPTION_KEY is not set in the environment variables.");
+    }
+    const algorithm = 'aes-256-cbc';
+    const key = Buffer.from(SECRET_KEY, 'base64').slice(0, 32); // Ensure the key is the right length for AES-256
+    const fixedIV = Buffer.alloc(16, 0); // Using a zeroed-out buffer for IV (example of a fixed IV)  
+    const { contract: contract1 } = useContract(CONTRACT_ADDRESS);
+    const { data: nfts } = useNFTs(contract1);
+    const [filteredNfts, setFilteredNfts] = useState<NFT[]>([]); // Now TypeScript knows it's an array of NFTs
+    const prevAddressRef = useRef<string | null | undefined>(null); // Include undefined in the type definition
+    const lastAddress = useRef<string | null>(null); // Store the last address accessed
+    const decrypt = (encryptedText: string): string => {
+        const decipher = createDecipheriv(algorithm, key, fixedIV);
+        const buffer = Buffer.from(encryptedText.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+        const decrypted = Buffer.concat([decipher.update(buffer), decipher.final()]);
+        return decrypted.toString('utf8');
+    };
+    const [isLoading1, setIsLoading1] = useState(true);  // Add a loading state
+    const [overlayMessage, setOverlayMessage] = useState("");
+
+
+    // Overlay Component
+    const LoadingOverlay = ({ message }: LoadingOverlayProps) => (
+        <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            backgroundColor: 'rgba(0,0,0,0.5)', // Semi-transparent background
+            color: 'white',
+            fontSize: '1.5em',
+            zIndex: 1000  // High z-index to cover everything else
+        }}>
+            <p>{message}</p>
+        </div>
+    );
+    useEffect(() => {
+        if (nfts && nfts.length > 0) {
+            const filtered = nfts.filter(nft => nft.metadata.id === tokenId) as NFT[];
+            setFilteredNfts(filtered);
+        }
+    }, [nfts, tokenId]);
+
+    const handleUpdateChats = (sendAmount: string) => {
+        setFreeChatsLeft((current: number | null): number => {
+            const deduction = Math.floor(Number(sendAmount) / 0.01);
+            return (current ?? 0) - deduction;  // Coalesce `current` to 0 if null
+        });
+    };
+
+
+    const nftName = filteredNfts.length > 0 ? filteredNfts[0].metadata.name : "Bot";
+
+    // Update chat count when the component unmounts or tokenId changes
+    useEffect(() => {
+        return () => {
+            updateChatCountOnChain(); // Attempt to update using ref's stored values
+        };
+    }, [tokenId, address]);
+
+    useEffect(() => {
+
+        const init = async () => {
+            setIsLoading1(true);
+            try {
+                await fetchUserStatus();
+            } catch (error) {
+                console.error("Initialization error:", error);
+                alert("Failed to initialize user status.");
+            } finally {
+                setIsLoading1(false);
+            }
+        };
+        init();
+    }, [address, contract]);  // Ensure dependencies are correct
+
+    async function fetchUserStatus() {
+        if (!address || !contract) return;
+
+        try {
+            const isNew = await contract.call("isNewUser", [address]);
+            setIsNewUser(isNew);
+            if (isNew) {
+                setOverlayMessage("Registering new user...");
+                await processNewUser();
+            } else {
+                await fetchFreeChats();
+            }
+        } catch (error) {
+            console.error("Error during user status check:", error);
+            alert("Error checking user status: " + error);
+        }
+    }
+
+
+    useEffect(() => {
+        // Function to fetch free chats, separate from user status checking
+
+        fetchFreeChats();
+    }, [address, contract, tokenId]); // This useEffect will run independently of the user status check
+
+    const processNewUser = async () => {
+        const referralCode = router.query.rc as string | string[] | undefined;
+        let referrerId = 0;
+        if (referralCode) {
+            const code = Array.isArray(referralCode) ? referralCode[0] : referralCode;
+            const decodedId = decrypt(code);
+            //alert("refer code is " + decodedId + " referralCode is " + referralCode);
+            referrerId = Number(decodedId);  // Convert decrypted string back to number
+        }
+        try {
+            await registerUser(referrerId);
+            setIsNewUser(false);
+            //router.push('/shop');  // Redirect to shop page after registration
+        } catch (error) {
+            console.error('Failed to register new user with referrer ID:', error);
+            alert('Failed to process new user registration: ' + error);
+        }
+    };
+
+    const fetchFreeChats = async () => {
+        if (!address || !contract) return;
+        try {
+            const chats = await contract.call("getFreeChatsByAddress", [address]);
+            setTotalfreeChats(chats.toNumber());
+
+        } catch (error) {
+            console.error('Failed to fetch free chats:', error);
+            alert('Failed to fetch free chats: ' + error);
+        }
+    };
+
+    const registerUser = async (referrer: number) => {
+        if (!address || !contract) {
+            console.error("No address or contract available for registration.");
+            return;
+        }
+        try {
+            await contract.call("registerUser", [address, referrer]);
+            await fetchFreeChats(); // Refresh chats after registration
+            setFreeChatsLeft(totalfreeChats ?? null);
+            setHasRegistered(true); // Set this to prevent re-registration
+        } catch (error) {
+            console.error('Registration failed:', error);
+            alert('Registration failed: ' + error);
+        }
+    };
+
+    useEffect(() => {
+        const fetchThreadID = async () => {
+            if (!tokenId || tokenId === 'null' || !address) {
+                console.error('Invalid token ID or address');
+                setThreadId(null);
+                return;
+            }
+
+            try {
+                const fetchedThreadId = await chatContract?.call("getThreadID", [address, tokenId.toString()]);
+                console.log("After fetch fetchedThreadId is ", fetchedThreadId + " contract address is " + chatContract?.getAddress() + " token id is " + tokenId);
+                if (fetchedThreadId) {
+                    setThreadId(fetchedThreadId);
+                } else {
+                    // No thread ID found, prepare to create a new thread
+                    setIsNewThread(true);
+                }
+            } catch (error) {
+                console.error(`Failed to fetch thread ID: ${error}`);
+                setThreadId(null);
+            }
+        };
+
+        fetchThreadID();
+    }, [tokenId, address, chatContract]);
+
+
+    function extractThreadId(str: string): string | null {
+        const lines = str.split('\n'); // Split by newline to examine each line.
+
+        for (let line of lines) {
+            try {
+                // Remove leading digit and colon if present, assuming JSON starts with a '{'
+                const possibleJsonIndex = line.indexOf('{');
+                if (possibleJsonIndex === -1) continue; // Skip lines without JSON data
+                const possibleJsonString = line.substring(possibleJsonIndex);
+                const obj = JSON.parse(possibleJsonString);
+
+                // Check if the JSON object contains a threadId and return it if found
+                if (obj.threadId) {
+                    return obj.threadId;
+                }
+            } catch (e) {
+                // Not a JSON line or JSON is malformed, ignore this line
+                continue;
+            }
+        }
+
+        // Return null if no threadId is found
+        return null;
+    }
+
+    const updateThreadIDOnChain = async (newThreadId: string, tokenId: string) => {
+        if (!chatContract || !newThreadId || !tokenId) {
+            console.error('Smart contract not loaded or invalid threadId/tokenId');
+            return;
+        }
+
+        try {
+            const tx = await chatContract.call("updateThreadID", [newThreadId, address, tokenId]);
+            //alert('Thread ID updated on blockchain:' + tx);
+        } catch (error) {
+            alert('Failed to update thread ID on blockchain:' + error);
+        }
+    };
+
+
+    // Directly use values from pendingChatCountUpdate for updates
+    const updateChatCountOnChain = async () => {
+        const { tokenId: updateTokenId, count: chatCount, freecount: freeChatsCount } = pendingChatCountUpdate.current;
+        //setUpdateCompleted(false);
+        if (chatCount > 0 && updateTokenId) {
+            // Reset after attempting to update
+            setChatCount(0);
+            setFreeChatCount(0);
+            try {
+                await chatContract?.call("updateChatCount", [updateTokenId, address, freeChatsCount, chatCount]);
+                //alert("Updated chat count for: " + updateTokenId + "  freeCount=" + freeChatsCount + " chatCount=" + chatCount + "address=" + address);
+
+            } catch (error) {
+                alert("Failed to update chat count:" + error);
+            }
+        }
+    };
+
+    useEffect(() => {
+        const intervalId = setInterval(() => {
+            updateChatCountOnChain();
+        }, 60000); // 60000 milliseconds = 1 minutes
+
+        // Cleanup function to clear the interval when the component unmounts
+        return () => clearInterval(intervalId);
+    }, []); // Empty dependency array means this effect runs once on mount and cleanup runs on unmount
+
+
+
+    const fetchMetadata = async (tokenId: string) => {
+
+        if (!tokenId || tokenId === 'null') {
+            console.error('Invalid token ID');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/nftMetadata', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tokenIds: [tokenId] })
+            });
+            if (!response.ok) throw new Error('Failed to fetch NFT metadata');
+            const data = await response.json();
+            const metadata = data[tokenId];
+            setApiKeys({ openaiApiKey: metadata.openaiApiKey, assistantId: metadata.assistantId });
+            setUserAmount({ receiverUsername: metadata.receiverUsername, sendAmount: metadata.sendAmount })
+        } catch (error) {
+            alert('Error fetching NFT metadata:' + error);
+        }
+    };
+
+    useEffect(() => {
+        fetchMetadata(String(tokenId));
+    }, [tokenId]);
+
+    const fetchInitialCounts = async () => {
+        if (address && chatContract) {
+            try {
+                const count = await chatContract?.call("getCountByAddress", [address]);
+                setFreeChats(parseInt(count));
+                //alert("after fecthinitialCounts freechat is " + freeChats + " count is" + count);
+
+            } catch (error) {
+                console.log("Failed to fetch initial counts", error);
+            }
+        }
+    };
+
+
+    // Handle chat count changes
+    useEffect(() => {
+        // Update ref whenever chatCount or tokenId changes
+        pendingChatCountUpdate.current = { freecount: freechatCount, count: chatCount, tokenId: String(tokenId) };
+    }, [chatCount, tokenId]);
+
+    useEffect(() => {
+        const fetchCountsAndCalculate = async () => {
+            await fetchInitialCounts();
+            // Assuming fetchInitialCounts correctly sets freeChats,
+            // it should be inside a function marked async and awaited here.
+        };
+
+        fetchCountsAndCalculate();
+
+    }, [address, tokenId, chatContract]); // Ensures all dependencies are correctly listed for re-fetching when necessary
+
+    useEffect(() => {
+        // Initialize or acknowledge the initial address without resetting free chats
+        if (prevAddressRef.current === null && address) {
+            console.log(`Initial address set: ${address}`);
+            prevAddressRef.current = address; // Acknowledge the first valid address
+        } else if (prevAddressRef.current !== null && prevAddressRef.current !== address) {
+            console.log(`Address changed from ${prevAddressRef.current} to ${address}, resetting free chats.`);
+            setFreeChatsLeft(null);
+            prevAddressRef.current = address; // Update the ref to the current address after changes
+        } else {
+            console.log(`Address not changed: ${address}`);
+        }
+    }, [address]); // Effect runs on address change
+
+
+
+    useEffect(() => {
+        // This check ensures that we only set freeChatsLeft when it's null, i.e., uninitialized
+        if (totalfreeChats !== undefined && freeChats !== undefined && freeChatsLeft === null) {
+            const newFreeChatsLeft = totalfreeChats - freeChats;
+            setFreeChatsLeft(newFreeChatsLeft);
+            //alert("Free chats left initialized to: " + newFreeChatsLeft + " freechatLeft is" + freeChatsLeft);
+        }
+        // Only depend on freeChats and totalfreeChats; remove freeChatsLeft from dependencies
+    }, [totalfreeChats, freeChats]);
+
+
+
+    /* useEffect(() => {
+         const shouldRedirect = router.query.redirect !== 'no';
+         if (freeChatsLeft !== null && !isNewUser && shouldRedirect) {
+             router.push(`/shop?freeChatsLeft=${freeChatsLeft}`);
+         }
+     }, [freeChatsLeft, isNewUser]);  // Depend on freeChatsLeft and isNewUser
+    */
+
+
+    useEffect(() => {
+        if (balanceData && !isBalanceLoading) {
+            setTokenBalance({
+                displayValue: balanceData.displayValue,
+                symbol: balanceData.symbol
+            });
+        }
+    }, [balanceData, isBalanceLoading]);
+
+    const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+        setInput(e.target.value);
+
+        // Reset the height to auto to shrink back if the text is removed
+        inputRef.current!.style.height = 'auto';
+        // Set the height based on the scrollHeight
+        const maxHeight = 1000; // Maximum height in pixels
+        inputRef.current!.style.height = `${Math.min(inputRef.current!.scrollHeight, maxHeight)}px`;
+    };
+
+    function extractMessageValue(str: string): string {
+        let processingNeeded = false;
+        let extractedContent = "";
+
+        const lines = str.split('\n'); // Split by newline to examine each line.
+
+        for (let line of lines) {
+            try {
+                // Remove leading digit and colon if present.
+                const possibleJsonString = line.substring(line.indexOf('{'));
+                const obj = JSON.parse(possibleJsonString);
+
+                if (obj.role === "assistant" && obj.content) {
+                    // Found assistant's message with content; extract text.
+                    const textContent = obj.content.find((content: { type: string; text?: { value: string; }; }) => content.type === "text");
+                    if (textContent && textContent.text && textContent.text.value) {
+                        extractedContent += textContent.text.value + "\n";
+                    }
+                } else if (obj.threadId && obj.messageId) {
+                    // Found system message indicating processing is needed, but keep looking for actual content.
+                    processingNeeded = true;
+                }
+            } catch (e) {
+                // Not a JSON line, possibly direct user input or malformed. Ignore error.
+            }
+        }
+
+        if (extractedContent) {
+            // If we've extracted content, return it, trimming any excess newline.
+            console.log("message.content is ", extractedContent.trim());
+            return extractedContent.trim();
+        } else if (processingNeeded) {
+            // If it looked like a system message and no content was extracted, return "Processing...".
+            return "Processing...";
+        } else {
+            // If there was no indication of a system message or content, treat it as direct user input.
+            return str.trim();
+        }
+    }
+
+    const { contract: accountFactory } = useContract(ACCOUNT_FACTORY_ADDRESS);
+    const sdk = useSDK();
+
+    const sendFunds = async (
+        receiverUsername: string | undefined,
+        sendAmount: number,
+        accountFactory: SmartContract<any>, // Use the correct type here
+        sdk: ThirdwebSDK
+    ) => {
+        try {
+
+            const receiverWalletAddress = await accountFactory?.call(
+                "accountOfUsername",
+                [receiverUsername]
+            );
+            if (receiverWalletAddress === "0x0000000000000000000000000000000000000000") {
+                console.log("Username does not exist");
+                return false;
+            }
+            await sdk?.wallet.transfer(
+                receiverWalletAddress!,
+                sendAmount,
+            );
+            console.log("Funds sent");
+            return true;
+
+        } catch (error) {
+            console.log("Error sending funds", error);
+            return false;
+        }
+    }
+
+    const { messages, input, setInput, handleSubmit, isLoading } = useChat({
+        body: {
+            address: address,
+            tokenId: tokenId,
+            threadId: threadId,
+            openaiApiKey: apiKeys.openaiApiKey,
+            assistantId: apiKeys.assistantId
+        },
+
+        onResponse: (response) => {
+            if (response.status === 429) {
+                console.log("You are being rate limited");
+                return;
+            } else {
+                console.log("Message sent successfully")
+            }
+        },
+        onError: (error) => {
+            console.log("Error sending message", error);
+        }
+    })
+
+    const [alertShown, setAlertShown] = useState(false)
+
+    useEffect(() => {
+        messages.forEach(message => {
+            const newThreadId = extractThreadId(message.content);
+            //alert("newThreadId  " + newThreadId + " threadId is " + threadId + "Address is " + address);
+            if (newThreadId && !threadId) {
+                setThreadId(newThreadId);
+                updateThreadIDOnChain(newThreadId, String(tokenId)); // Update the thread ID in the blockchain
+            }
+        });
+    }, [messages, threadId, tokenId]); // Include threadId and tokenId in the dependency array
+
+
+    useEffect(() => {
+        if (balanceData && !isBalanceLoading) {
+            setTokenBalance({
+                displayValue: balanceData.displayValue,
+                symbol: balanceData.symbol
+            });
+        }
+
+        // Check the balance and alert the user if it's low, but only once
+        const balance = Number(balanceData?.displayValue);
+        if (balance < 0.2 && !alertShown && freeChats !== undefined && totalfreeChats !== undefined && freeChats > totalfreeChats) {
+            // alert("freeChats is " + freeChats + " totalFreeChats is " + totalfreeChats);
+            window.setTimeout(() => {
+                alert("Your balance is running low and services will stop once it drops to 0.1. Please top up your wallet soon");
+                setAlertShown(true); // Prevent the alert from showing again
+            }, 0); // Defer the alert
+        }
+    }, [balanceData, isBalanceLoading, alertShown]);
+
+    if (balanceData && Number(balanceData.displayValue) < 0.10 && freeChats !== undefined && totalfreeChats !== undefined && freeChats > totalfreeChats) {
+        return (
+            <div>
+                <p>Insufficient funds. Please top up your wallet to continue</p>
+            </div>
+        );
+    }
+    // Define the interface for the response expected from your API
+    interface UsernameAmountResponse {
+        receiverUsername: string;
+        sendAmount: number;
+    }
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault(); // Prevent the default action to avoid line break in textarea
+            // Manually invoke customHandleSubmit with a mock event object
+            const mockEvent: React.FormEvent<HTMLFormElement> = {
+                ...e, // Spread existing event properties for context
+                currentTarget: formRef.current!, // Ensure currentTarget is the form
+                preventDefault: () => { }, // No-op function, since default is already prevented
+            } as unknown as React.FormEvent<HTMLFormElement>;
+            customHandleSubmit(mockEvent);
+        }
+    };
+
+    const customHandleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        const balanceThreshold = 0.10; // Set the minimum balance threshold
+        if (Number(balanceData?.displayValue) < balanceThreshold && freeChats !== undefined && totalfreeChats !== undefined && freeChats > totalfreeChats) {
+            alert("Insufficient funds. Please refill your wallet to continue.");
+            return; // Stop processing the form submission due to low funds
+        }
+        // Call the API to fetch NFT metadata
+        try {
+            if (!tokenId) {
+                throw new Error('Not a volid token id');
+            }
+
+            const receiverUsername = userAmount.receiverUsername;
+            const sendAmount = userAmount.sendAmount;
+
+            if (receiverUsername && sendAmount) {
+
+                if (accountFactory && sdk) {
+                    await handleSubmit(event);
+                    //setChatCount(chatCount + 1);
+                    setChatCount(chatCount + Math.floor(Number(sendAmount) / 0.01));
+                    const updatedFreeChats = (freeChats ?? 0) + Math.floor(Number(sendAmount) / 0.01); // Convert sendAmount to an integer number of free chats based on each unit being worth 0.01
+                    //if (updatedFreeChats < (totalfreeChats ?? 0)) {
+                    if ((freeChatsLeft ?? 0) >= Math.floor(Number(sendAmount) / 0.01)) {
+                        setFreeChatCount(freechatCount + Math.floor(Number(sendAmount) / 0.01));
+                        handleUpdateChats(sendAmount);
+                        //alert(" after update the freeChatsLeft is " + freeChatsLeft);
+                    }
+                    setInput(''); // Clear the input state
+                    inputRef.current!.style.height = '40px'; // Reset the textarea height to normal
+                    // After form submission, attempt to send funds.
+                    setFreeChats(updatedFreeChats);
+                    let sendFundsSuccess = true;
+                    if (updatedFreeChats > (totalfreeChats ?? 0)) {  // Use 0 as a fallback if totalfreeChats is undefined
+                        const transactionFee = Number(sendAmount) * Number(TRANSACTION_FEE_RATE); // 20% transaction fee
+                        sendFundsSuccess = await sendFunds(receiverUsername, Number(sendAmount), accountFactory, sdk) &&
+                            await sendFunds(PLATFORM_NAME, transactionFee, accountFactory, sdk);
+                    }
+                    if (sendFundsSuccess) {
+                        console.log("Funds sent successfully.");
+                        // Proceed with any post-fund-sending logic here.
+                    } else {
+                        console.error("Failed to send funds.");
+                        // Handle the failure to send funds here.
+                    }
+                } else {
+                    console.error("accountFactory or sdk is undefined");
+                }
+            }
+        } catch (error) {
+            console.error('Error fetching NFT metadata:', error);
+        } finally {
+            //setInput(''); // Clear the input state
+            if (inputRef.current) {
+                inputRef.current.style.height = '40px';
+            }
+
+        }
+    };
+
+    // Increment chatCount and ensure pendingChatCountUpdate ref is also updated
+    const incrementChatCount = () => {
+        setChatCount(currentCount => currentCount + 1);
+    };
+
+    return (
+
+        <main>
+            {isLoading1 && <LoadingOverlay message={overlayMessage} />}
+            <div style={{
+                marginBottom: "6rem",
+            }}>
+                {messages.length > 0 ? (
+                    messages.map((message, index) => (
+                        <div
+                            key={index}
+                            style={{
+                                backgroundColor: message.role === "user" ? "white" : "lightgrey",
+                                margin: "0.5rem",
+                                borderRadius: "2px",
+                                overflow: "hidden",
+                            }}
+                        >
+                            <div
+                                style={{
+                                    backgroundColor: message.role === "user" ? "blue" : "black",
+                                }}
+                            >
+                                {message.role === "user" ? (
+                                    <div style={{
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                        padding: "0.05rem 1rem",
+                                    }}>
+                                        <p>User:</p>
+                                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                            {/* Conditionally display FreeChatsUsed only if it's less than the limit */}
+                                            {(freeChats ?? 0) < (totalfreeChats ?? 0) && (
+                                                <span>FreeChatsUsed: {freeChats} of {totalfreeChats}</span>
+                                            )}
+                                        </div>
+                                        <div>
+                                            {tokenBalance && (
+                                                <>
+                                                    <span>{tokenBalance.displayValue} </span>
+                                                    <span>{tokenBalance.symbol}</span>
+                                                </>
+                                            )}
+
+                                        </div>
+                                    </div>
+
+                                ) : (
+                                    <div style={{
+                                        padding: "0.02rem 1rem",
+                                    }}>
+                                        <p>{typeof nftName === 'string' ? nftName : "Bot"}:</p>
+                                    </div>
+                                )}
+                            </div>
+                            <p style={{
+                                color: "#333",
+                                paddingTop: "0.005rem", // Reduced top padding
+                                paddingBottom: "0.005rem", // Reduced bottom padding
+                                paddingLeft: "0.5rem", // Left padding
+                                paddingRight: "0.5rem", // Right padding
+
+                            }}>
+                                <ReactMarkdown rehypePlugins={[rehypeRaw]}>{extractMessageValue(message.content) || "Processing..."}</ReactMarkdown>
+
+                            </p>
+                        </div>
+                    ))
+                ) : (
+                    <div style={{ padding: "1rem" }}>
+                        {freeChatsLeft === undefined ? (
+                            <p>Processing, please wait...</p>
+                        ) : (freeChatsLeft ?? 0) > 0.0 ? (
+                            <p>Total Free Chats Left: {freeChatsLeft}</p>
+                        ) : (
+                            <p>Your free chats have been used up! Please refill your wallet to continue the chatting</p>
+                        )}
+                    </div>
+
+
+                )}
+                <div style={{
+                    position: "fixed",
+                    bottom: 0,
+                    left: 0,
+                    width: "100%",
+                    padding: "1rem",
+                    borderTop: "1px solid lightgrey",
+                    backgroundColor: "white",
+                }}>
+                    <form
+                        ref={formRef}
+                        onSubmit={customHandleSubmit}
+                        style={{
+                            display: "flex",
+                            alignItems: "center",
+                        }}
+                    >
+                        <textarea
+                            ref={inputRef}
+                            onKeyDown={handleKeyDown}
+                            placeholder="Type a message..."
+                            value={input}
+                            onChange={handleChange}
+                            style={{
+                                padding: "0.5rem 1rem",
+                                borderRadius: "8px",
+                                border: "3px solid lightgrey",
+                                width: "100%",
+                                overflow: 'hidden', // Prevents scrollbar appearance
+                                resize: "none", // Prevents manual resizing
+                                fontSize: "18px", // Sets the font size to 16 pixels
+                            }}
+                        />
+
+                        <button
+                            disabled={isLoading}
+                            style={{
+                                marginLeft: "1rem",
+                                padding: "0.5rem 1rem",
+                                borderRadius: "8px",
+                                border: "none",
+                                backgroundColor: "blue",
+                                color: "white",
+                            }}
+                        >
+                            {isLoading ? "Sending..." : "Send"}
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </main>
+    )
+
+};
+
+export default Chat;
+

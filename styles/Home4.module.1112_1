@@ -1,0 +1,832 @@
+/* Navbar.tsx Styles */
+
+/* Container Styles */
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 2rem;
+}
+
+.main {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 5rem 0;
+}
+
+.linkContainer {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+}
+
+.setupUserLink,
+.uploadNFTLink {
+    color: #0070f3;
+    text-decoration: none;
+    margin-right: 1rem;
+}
+
+.setupUserLink:hover,
+.uploadNFTLink:hover {
+    text-decoration: underline;
+}
+
+.navLink {
+    margin: 0 1rem;
+    text-decoration: none;
+    color: #0070f3;
+    font-size: 24px;
+    transition: color 0.2s ease;
+}
+
+.navLink:hover {
+    color: whitesmoke;
+}
+
+.hoverLogo {
+    position: relative;
+    display: inline-block;
+    transition: transform 0.3s, box-shadow 0.3s;
+    cursor: pointer;
+}
+
+.hoverLogo:hover {
+    transform: scale(0.9);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
+}
+
+.logoTooltip {
+    visibility: visible;
+    position: absolute;
+    width: 220px;
+    background-color: rgb(10, 167, 16);
+    color: white;
+    text-align: center;
+    border-radius: 6px;
+    padding: 5px;
+    bottom: 50%;
+    left: 50%;
+    transform: translateX(-50%);
+    opacity: 0;
+    transition: visibility 0s linear 0.3s, opacity 0.3s linear;
+}
+
+.hoverLogo:hover .logoTooltip {
+    visibility: visible;
+    opacity: 1;
+    transition-delay: 0s;
+}
+
+/* Share Button */
+.shareButton {
+    background-color: rgb(5, 22, 156);
+    color: white;
+    border: none;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    border: 2px;
+    padding: 10px 30px;
+    border-radius: 5px;
+    min-width: 40px;
+    box-shadow: 0px 3px 6px rgb(126, 1, 1);
+    margin-left: 10px;
+}
+
+.shareButton:hover {
+    transform: scale(0.8);
+    background-color: darkblue;
+}
+
+/* Free Chats Text */
+.freeChats {
+    margin-top: 10px;
+    font-size: 18px;
+    color: white;
+}
+
+/* Refill Button */
+.refillButton {
+    background-color: blue;
+    color: white;
+    padding: 5px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+    margin-right: 10px;
+}
+
+/* Transfer Button */
+.transferButton {
+    background-color: green;
+    color: white;
+    padding: 5px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+    margin-left: 10px;
+}
+
+/* Tooltip */
+.tooltip {
+    position: absolute;
+    top: 50px;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 8px 12px;
+    border-radius: 4px;
+    white-space: nowrap;
+    font-size: 23px;
+    z-index: 1000;
+    opacity: 0;
+    animation: fadeIn 0.3s forwards;
+}
+
+@keyframes fadeIn {
+    to {
+        opacity: 1;
+    }
+}
+
+/* Ask AI Button */
+.askAiButton {
+    background-color: red;
+    color: white;
+    box-shadow: 0px 6px 10px rgba(247, 215, 3, 0.5);
+    border: none;
+    border-radius: 4px;
+    padding: 4px 20px;
+    cursor: pointer;
+    transition: transform 0.2s ease, background-color 0.2s ease;
+    margin-right: 10px;
+    font-size: 20px;
+    font-weight: bold;
+}
+
+.askAiButton:hover {
+    transform: scale(0.7);
+    background-color: #ff6666;
+}
+
+/* Dropdown Styles */
+.dropdown {
+    width: auto;
+    padding: 0.5rem 1rem;
+    border: 2px solid #444;
+    border-radius: 8px;
+    cursor: pointer;
+    background-color: blue;
+    color: white;
+    width: 150px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    font-size: 18px;
+    margin-right: 1rem;
+    appearance: none;
+    outline: none;
+}
+
+.dropdown option {
+    padding: 10px 20px;
+    background-color: blue;
+    color: white;
+}
+
+/* Connect Button Avatar */
+.connectButtonAvatar {
+    position: relative;
+    width: 60px;
+    height: 60px;
+    border-radius: 0%;
+    overflow: hidden;
+    background-image: url('/images/avatar.jpg');
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.connectButtonAvatar:hover {
+    transform: scale(0.8);
+    box-shadow: 0px 0px 15px rgba(0, 0, 0, 0.7);
+}
+
+/* Modal Styles */
+.modal {
+    background: white;
+    border-radius: 8px;
+    padding: 2rem;
+    width: 90%;
+    max-width: 500px;
+    margin: 0 auto;
+    position: relative;
+    overflow-y: auto;
+    max-height: 80vh;
+}
+
+.overlay {
+    background: rgba(0, 0, 0, 0.75);
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modalTitle {
+    margin-bottom: 1rem;
+    text-align: center;
+    font-size: 24px;
+    color: blue;
+}
+
+/* Social Icons */
+.socialIcons {
+    display: flex;
+    justify-content: center;
+    gap: 40px;
+    margin-top: 10px;
+}
+
+.socialIcons a {
+    transition: color 0.3s ease;
+}
+
+.iconx {
+    color: #f4580a;
+}
+
+.iconx:hover {
+    color: #c1f909;
+}
+
+.iconf {
+    color: #1e0af3;
+}
+
+.iconf:hover {
+    color: #f007e5;
+}
+
+.iconl {
+    color: #edcc0f;
+}
+
+.iconl:hover {
+    color: #f94b0c;
+}
+
+.iconr {
+    color: #ed0fde;
+}
+
+.iconr:hover {
+    color: #f96b0c;
+}
+
+/* Textarea */
+.textarea {
+    width: 100%;
+    height: 400px;
+    background-color: #fff;
+    color: #0a0a0a;
+    border: 1px solid #ccc;
+    padding: 10px;
+    font-size: 18px;
+    font-weight: bolder;
+    line-height: 1.2;
+    box-sizing: border-box;
+    resize: vertical;
+}
+
+/* Button Container */
+.buttonContainer {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 100px;
+    margin-top: 20px;
+}
+
+.copyButton,
+.closeButton1 {
+    background-color: #2806e8;
+    color: white;
+    border: none;
+    padding: 10px 30px;
+    cursor: pointer;
+    border-radius: 5px;
+    min-width: 40px;
+}
+
+.copyButton:hover,
+.closeButton1:hover {
+    background-color: darkblue;
+}
+
+/* Hover Scale Effect */
+.hoverScale {
+    display: inline-block;
+    transition: transform 0.2s ease;
+}
+
+.hoverScale:hover {
+    transform: scale(0.8);
+}
+
+
+
+.buttonWrapper:hover .tooltip {
+    display: block;
+}
+
+/* Refill Modal Styles */
+.refillModalOverlay {
+    background: rgba(0, 0, 0, 0.75);
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+}
+
+.refillModalContent {
+    background: hsl(230, 97%, 55%);
+    border-radius: 8px;
+    padding: 2rem;
+    width: 90%;
+    max-width: 600px;
+    position: relative;
+    max-height: 100vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Transfer Modal Styles */
+.transferModalOverlay {
+    background: rgba(0, 0, 0, 0.75);
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+}
+
+.transferModalContent {
+    background: hsl(230, 97%, 55%);
+    border-radius: 8px;
+    padding: 2rem;
+    width: 90%;
+    max-width: 500px;
+    position: relative;
+    max-height: 80vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+}
+
+.transferModalTitle {
+    margin-bottom: 1.5rem;
+    text-align: center;
+    font-size: 24px;
+    color: hsl(213, 43%, 96%);
+}
+
+/* Transfer Form */
+.transferForm label {
+    display: block;
+    margin-bottom: 1rem;
+    color: #fdfbfb;
+    font-size: 16px;
+}
+
+.transferInput {
+    width: 100%;
+    padding: 0.5rem;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    margin-top: 0.5rem;
+    font-size: 16px;
+}
+
+.transferButtonContainer {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 1rem;
+}
+
+.transferSubmitButton,
+.transferCancelButton {
+    background-color: #1d039e;
+    color: white;
+    padding: 0.5rem 1.5rem;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.3s ease;
+}
+
+.transferSubmitButton:hover,
+.transferCancelButton:hover {
+    background-color: #218838;
+}
+
+/* Close Button for Modals */
+.refillCloseButton,
+.transferCloseButton {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    background-color: transparent;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: #aaa;
+    transition: color 0.3s ease;
+}
+
+.refillCloseButton:hover,
+.transferCloseButton:hover {
+    color: #000;
+}
+
+/* Product List Container */
+.productListContainer {
+    overflow-y: auto;
+    flex: 1;
+    margin-top: 1rem;
+}
+
+/* Product List */
+.productList {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+/* Individual Product Item */
+.productItem {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    transition: box-shadow 0.3s ease;
+}
+
+.productItem:hover {
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* Product Image */
+.productImage {
+    width: 100%;
+    max-width: 150px;
+    height: auto;
+    margin-bottom: 1rem;
+}
+
+/* Product Title */
+.productTitle {
+    font-size: 22px;
+    font-weight: bold;
+    margin-bottom: 0.5rem;
+    text-align: center;
+    color: #fdfbfb;
+}
+
+/* Product Description */
+.productDescription {
+    font-size: 18px;
+    text-align: center;
+    font-weight: normal;
+    margin-bottom: 1rem;
+    color: #f8f6f6;
+}
+
+/* Included Items List */
+.includedItems {
+    list-style-type: disc;
+    padding-left: 1.5rem;
+    margin-bottom: 1rem;
+    text-align: left;
+    color: #fdfbfb;
+}
+
+/* Buy Now Button */
+.buyNowButton {
+    background-color: #1d039e;
+    color: white;
+    padding: 0.5rem 1.5rem;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.3s ease;
+}
+
+.buyNowButton:hover {
+    background-color: #218838;
+}
+
+/* Responsive Adjustments */
+@media (max-width: 600px) {
+
+    .modalContent,
+    .refillModalContent,
+    .transferModalContent {
+        width: 90%;
+        padding: 1.5rem;
+    }
+
+    .productTitle {
+        font-size: 18px;
+    }
+
+    .productDescription {
+        font-size: 14px;
+    }
+
+    .buyNowButton,
+    .transferSubmitButton,
+    .transferCancelButton {
+        font-size: 14px;
+        padding: 0.5rem 1rem;
+    }
+}
+
+@media (max-width: 480px) {
+
+    .modalContent,
+    .refillModalContent,
+    .transferModalContent {
+        width: 95%;
+        padding: 1rem;
+    }
+
+    .productTitle {
+        font-size: 16px;
+    }
+
+    .productDescription {
+        font-size: 12px;
+    }
+
+    .buyNowButton,
+    .transferSubmitButton,
+    .transferCancelButton {
+        font-size: 12px;
+        padding: 0.5rem 0.8rem;
+    }
+
+    .chatInput {
+        font-size: 12px;
+        padding: 8px;
+        background-color: #0070f3;
+        color: white;
+    }
+
+    .sendButton {
+        padding: 8px 16px;
+        font-size: 12px;
+    }
+
+    .userMessage,
+    .assistantMessage {
+        max-width: 90%;
+        font-size: 12px;
+    }
+}
+
+/* Additional Styles */
+.tokenBalance {
+    color: white;
+    font-size: 18px;
+}
+
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+}
+
+/* Remove Duplicate Classes */
+/* Classes like .modalContent, .closeButton, .selected, .ratingAndCount, etc., were duplicates and have been consolidated. */
+
+/* Ensure modal content is scrollable on small devices */
+.modalContent,
+.refillModalContent,
+.transferModalContent {
+    overflow-y: auto;
+}
+
+/*addtional style for the refill window */
+/* Refill Modal Overlay */
+.refillModalOverlay {
+    background: #020a96bf;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+/* Refill Modal Content */
+.refillModalContent {
+    background: hsl(230, 97%, 55%);
+    border-radius: 8px;
+    padding: 2rem;
+    width: 90%;
+    max-width: 600px;
+    position: relative;
+    max-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Close Button for Refill Modal */
+.refillCloseButton {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    background-color: transparent;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: #aaa;
+    transition: color 0.3s ease;
+}
+
+.refillCloseButton:hover {
+    color: #000;
+}
+
+/* Title for Refill Modal */
+.refillModalTitle {
+    margin-bottom: 1.5rem;
+    text-align: center;
+    font-size: 24px;
+    color: hsl(213, 43%, 96%);
+}
+
+/* Product List Container */
+.productListContainer {
+    overflow-y: auto;
+    flex: 1;
+    margin-top: 1rem;
+}
+
+/* Product List */
+.productList {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+/* Individual Product Item */
+.productItem {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    transition: box-shadow 0.3s ease;
+}
+
+.productItem:hover {
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* Top Section: Image and Action */
+.productTopSection {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 7rem;
+}
+
+.productImageContainer {
+    flex: 0 0 auto;
+}
+
+.productImage {
+    width: 150px;
+    height: auto;
+    object-fit: contain;
+    border-radius: 8px;
+}
+
+.productAction {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+}
+
+.productAction p {
+    margin: 0.5rem 0;
+}
+
+/* Product Title */
+.productTitle {
+    font-size: 22px;
+    font-weight: bold;
+    margin-bottom: 0.5rem;
+    text-align: center;
+    color: #fdfbfb;
+}
+
+/* Product Description */
+.productDescription {
+    font-size: 18px;
+    text-align: center;
+    font-weight: normal;
+    margin-bottom: 1rem;
+    color: #f8f6f6;
+}
+
+/* Included Items List */
+.includedItems {
+    list-style-type: disc;
+    padding-left: 1.5rem;
+    margin-bottom: 1rem;
+    text-align: left;
+    color: #fdfbfb;
+}
+
+/* Buy Now Button */
+.buyNowButton {
+    margin-top: 1rem;
+    padding: 0.5rem 1.5rem;
+    background-color: #1d039e;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.3s ease;
+}
+
+.buyNowButton:hover {
+    background-color: #218838;
+}
+
+/* Responsive Adjustments for Refill Modal */
+@media (max-width: 600px) {
+    .refillModalContent {
+        padding: 1.5rem;
+    }
+
+    .productTitle {
+        font-size: 18px;
+    }
+
+    .productDescription {
+        font-size: 14px;
+    }
+
+    .buyNowButton {
+        font-size: 14px;
+        padding: 0.5rem 1rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .refillModalContent {
+        padding: 1rem;
+    }
+
+    .productTitle {
+        font-size: 16px;
+    }
+
+    .productDescription {
+        font-size: 12px;
+    }
+
+    .buyNowButton {
+        font-size: 12px;
+        padding: 0.5rem 0.8rem;
+    }
+}

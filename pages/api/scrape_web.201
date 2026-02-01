@@ -1,0 +1,276 @@
+//api/scrapte_web.js
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { ApifyClient } from 'apify-client';
+import { Pinecone } from '@pinecone-database/pinecone';
+import { OpenAI } from 'openai';
+import { createClient } from '@vercel/kv';
+import crypto from 'crypto';
+
+// Initialize clients
+const apifyClient = new ApifyClient({
+    token: process.env.APIFY_API_TOKEN!,
+});
+
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY!,
+});
+
+const pinecone = new Pinecone({
+    apiKey: process.env.PINECONE_API_KEY!,
+});
+
+const indexName = 'user-documents';
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+// --- Configuration Constants ---
+const CHUNK_SIZE = 1000; // approximate character limit per chunk
+const MAX_RETRIES = 3;
+const INITIAL_RETRY_DELAY = 1000; // 1 second
+const BATCH_SIZE = 100;
+const DIMENSION = 1536; // for text-embedding-ada-002
+
+// --- Helper Functions ---
+
+// Clean text by removing HTML tags and trimming whitespace
+function cleanText(text: string): string {
+    return text.replace(/<[^>]+>/g, '').trim();
+}
+
+// Normalize a URL string (remove trailing slash and lowercase)
+function normalizeUrl(url: string): string {
+    return url.replace(/\/$/, '').toLowerCase();
+}
+
+// Generate a hash for a long URL (or any long string)
+function generateHash(str: string): string {
+    return crypto.createHash('sha256').update(str).digest('hex');
+}
+
+// Truncate text if needed (fallback if token count is too high)
+function truncateText(text: string, maxTokens: number): string {
+    const words = text.split(' ');
+    if (words.length > maxTokens) {
+        return words.slice(0, maxTokens).join(' ') + '...';
+    }
+    return text;
+}
+
+// Split text into chunks based on a character limit (CHUNK_SIZE)
+function splitTextIntoChunks(text: string, chunkSize: number = CHUNK_SIZE): string[] {
+    const words = text.split(/\s+/);
+    const chunks: string[] = [];
+    let currentChunk: string[] = [];
+
+    for (const word of words) {
+        // +1 accounts for the space between words
+        if (currentChunk.join(' ').length + word.length + 1 > chunkSize) {
+            chunks.push(currentChunk.join(' '));
+            currentChunk = [];
+        }
+        currentChunk.push(word);
+    }
+    if (currentChunk.length > 0) {
+        chunks.push(currentChunk.join(' '));
+    }
+    return chunks;
+}
+
+// Retry wrapper for an async operation
+async function retryOperation<T>(operation: () => Promise<T>, maxRetries = MAX_RETRIES): Promise<T> {
+    let lastError;
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            return await operation();
+        } catch (error) {
+            lastError = error;
+            const delay = INITIAL_RETRY_DELAY * Math.pow(2, i);
+            console.warn(`Operation failed. Retrying in ${delay}ms...`);
+            await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+    }
+    throw lastError;
+}
+
+// Create an embedding for text with retry logic
+async function embedTextWithRetry(text: string, retries = MAX_RETRIES): Promise<number[]> {
+    try {
+        const response = await openai.embeddings.create({
+            model: "text-embedding-ada-002",
+            input: text,
+        });
+        return response.data[0].embedding;
+    } catch (error: any) {
+        if (error.status === 429 && retries > 0) {
+            const delay = INITIAL_RETRY_DELAY * (MAX_RETRIES - retries + 1);
+            console.log(`Rate limit reached. Retrying in ${delay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            return embedTextWithRetry(text, retries - 1);
+        }
+        throw error;
+    }
+}
+
+/**
+ * Store an embedding in Pinecone under the user’s namespace.
+ * The metadata is structured so that it matches your Q&A endpoint:
+ * it includes a "content" field, a source URL, and a timestamp.
+ */
+async function storeEmbedding(userId: string, embedding: number[], metadata: { sourceUrl: string; content: string; }) {
+    const idx = pinecone.Index(indexName);
+    try {
+        // If the sourceUrl is too long to be used as an ID, generate a hash.
+        const id = metadata.sourceUrl.length > 512 ? generateHash(metadata.sourceUrl) : metadata.sourceUrl;
+        const timestamp = Date.now();
+        const vectors = [
+            {
+                id,
+                values: embedding,
+                metadata: {
+                    content: metadata.content,
+                    source: metadata.sourceUrl,
+                    timestamp,
+                },
+            },
+        ];
+        await idx.namespace(userId).upsert(vectors);
+        console.log(`[${new Date().toISOString()}] Upserted vector with ID "${id}" for user "${userId}".`);
+    } catch (error) {
+        console.error(`[${new Date().toISOString()}] Error upserting vector for "${metadata.sourceUrl}":`, error);
+        throw error;
+    }
+}
+
+/**
+ * Create and store embeddings for a given text.
+ * The text is split into chunks, and each chunk’s embedding is generated and stored.
+ */
+async function createAndStoreEmbeddings(userId: string, sourceUrl: string, textContent: string) {
+    const chunks = splitTextIntoChunks(textContent);
+    for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+        const batch = chunks.slice(i, i + BATCH_SIZE);
+        const embeddingPromises = batch.map(async (chunk, idx) => {
+            const embedding = await embedTextWithRetry(chunk);
+            return {
+                id: `${sourceUrl}-${i + idx}`, // use a composite ID based on the source and chunk index
+                values: embedding,
+                metadata: {
+                    content: chunk,
+                    source: sourceUrl,
+                    chunkIndex: i + idx,
+                },
+            };
+        });
+        const vectors = await Promise.all(embeddingPromises);
+        // Upsert the batch of embeddings with retry logic
+        await retryOperation(() => {
+            const idx = pinecone.Index(indexName);
+            return idx.namespace(userId).upsert(vectors);
+        });
+    }
+}
+
+// --- Main Handler ---
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed' });
+    }
+
+    // Retrieve the user ID from the "accountID" header, defaulting to 'anonymous'
+    const userId = (req.headers['accountid'] as string) || 'anonymous';
+    const { url } = req.body;
+    if (!url) {
+        return res.status(400).json({ error: 'Missing "url" in request body.' });
+    }
+
+    const sitemapUrls = [
+        `${url}/sitemap.xml`,
+        `${url}/page-sitemap.xml`,
+        `${url}/sitemap_index.xml`,
+    ];
+
+    try {
+        const normalizedUrl = normalizeUrl(url);
+        let items: any[] = [];
+        let sitemapCrawlSuccess = false;
+
+        // Attempt to crawl sitemaps
+        for (const sitemapUrl of sitemapUrls) {
+            try {
+                console.log(`Attempting to crawl: ${sitemapUrl}`);
+                const sitemapRun = await apifyClient.actor('apify/website-content-crawler').call({
+                    startUrls: [{ url: sitemapUrl }],
+                    maxCrawlPages: 20,
+                    maxRequestsPerCrawl: 20,
+                    maxCrawlDepth: 2,
+                });
+                const sitemapData = await apifyClient.dataset(sitemapRun.defaultDatasetId).listItems();
+                items = sitemapData.items;
+                sitemapCrawlSuccess = true;
+                break;
+            } catch (error) {
+                console.warn(`Failed to crawl sitemap: ${sitemapUrl}`);
+            }
+        }
+
+        // Fallback to predefined pages if no sitemap is found
+        if (!sitemapCrawlSuccess) {
+            console.warn('No valid sitemap found. Falling back to predefined pages.');
+            const fallbackRun = await apifyClient.actor('apify/website-content-crawler').call({
+                startUrls: [
+                    { url },
+                    { url: `${url}/about` },
+                    { url: `${url}/services` },
+                    { url: `${url}/products` },
+                    { url: `${url}/solutions` },
+                ],
+                maxCrawlPages: 10,
+                maxCrawlDepth: 1,
+            });
+            const fallbackData = await apifyClient.dataset(fallbackRun.defaultDatasetId).listItems();
+            items = fallbackData.items;
+        }
+
+        // Process each scraped item
+        for (const item of items) {
+            const rawText = item.text || '';
+            const cleanedText = cleanText(rawText);
+            let finalText = cleanedText;
+
+            // Optionally truncate text if needed (for example, if token count is too high)
+            try {
+                // Here we use a rough token count estimate based on word count;
+                // adjust the logic if you have a more precise token counter.
+                const wordCount = cleanedText.split(' ').length;
+                if (wordCount > 3000) {
+                    finalText = truncateText(cleanedText, 3000);
+                }
+            } catch (error) {
+                console.error(`Error processing text for URL "${item.url}":`, error);
+                continue;
+            }
+
+            // Create and store embeddings for this page using the source URL as identifier
+            try {
+                await createAndStoreEmbeddings(userId, item.url, finalText);
+            } catch (error) {
+                console.error(`Error storing embeddings for URL "${item.url}":`, error);
+            }
+        }
+
+        // Optionally, store website metadata in KV
+        await kv.set(`website:${normalizedUrl}`, {
+            scrapedAt: new Date().toISOString(),
+            pageCount: items.length,
+        });
+
+        res.status(200).json({ message: `Scraped and stored embeddings for ${items.length} pages.` });
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ error: 'An error occurred while scraping and storing the website content.' });
+    }
+}

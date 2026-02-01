@@ -1,0 +1,600 @@
+/* styles/Shop_marketing.module.css */
+
+/* ----------------- Shop Container ----------------- */
+.shopContainer {
+    width: 100%;
+    background-color: #000000;
+    color: #ffffff;
+}
+
+.shopToggleBar {
+    width: 100%;
+    background: linear-gradient(90deg, #0f6190 0%, #0096FF 100%);
+    color: #fff;
+    padding: 0 12px;
+    border-radius: 8px 8px 0 0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.10);
+    cursor: pointer;
+    transition: background 0.2s, opacity 0.2s;
+    user-select: none;
+}
+
+/* ----------------- Parent Container ----------------- */
+.main {
+    height: 115vh;
+    max-height: 115vh;
+    overflow: auto;
+    padding: 10px 0 0 0;
+    background: #000;
+    box-sizing: border-box;
+    color: #ffffff;
+    scrollbar-width: auto;
+    scrollbar-color: #0096FF #222;
+}
+
+.container {
+    height: 100%;
+    padding: 0;
+    overflow: hidden;
+    width: 100%;
+    margin: 0 auto;
+}
+
+/* ----------------- Enhanced Grid for Two-Row Horizontal Layout ----------------- */
+.grid {
+    display: grid;
+    grid-template-rows: 1fr 1fr;
+    grid-auto-flow: column;
+    grid-auto-columns: 250px;
+    gap: 8px;
+    height: 100%;
+    width: max-content;
+    min-width: 100%;
+    min-height: 100%;
+    overflow: visible;
+    padding: 10px;
+    scrollbar-width: thin;
+    scrollbar-color: #0096FF #000;
+}
+
+/* Custom scrollbar styling for webkit browsers */
+.grid::-webkit-scrollbar {
+    height: 8px;
+}
+
+.grid::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.1);
+    border-radius: 4px;
+}
+
+.grid::-webkit-scrollbar-thumb {
+    background: linear-gradient(90deg, #0f6190, #0096FF);
+    border-radius: 4px;
+}
+
+.grid::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(90deg, #0096FF, #00bfff);
+}
+
+/* ----------------- NFT Container Styles (Fixed for Content Visibility) ----------------- */
+.nftContainer {
+    background-color: #0f6190;
+    padding: 1px;
+    border-radius: 1px;
+    cursor: pointer;
+    min-width: 300px;
+    max-width: 350px;
+    height: auto;
+    min-height: 200x;
+    max-height: 200px;
+    /* Ensure enough space for all content */
+    text-align: center;
+    position: relative;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.nftImageWrapper.selected {
+    border: 3px solid #ff4d4f;
+    box-shadow: 0 0 8px rgba(255, 77, 79, 0.5);
+    transform: scale(1.02);
+    transition: all 0.3s ease;
+}
+
+.nftImageWrapper {
+    display: inline-block;
+    position: relative;
+    cursor: pointer;
+    transition: transform 0.2s, border 0.3s ease;
+    max-width: 100%;
+    border: 2px solid transparent;
+    border-radius: 1px;
+    width: 100%;
+    height: 170px;
+    /* Fixed height for consistent image display */
+    flex-shrink: 0;
+}
+
+.nftImage {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 4px;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.nftImageWrapper:hover .nftImage {
+    transform: scale(0.95);
+    box-shadow: 2px 2px 4px rgba(141, 9, 11, 0.5);
+}
+
+/* ----------------- Usage Overlay (Upper Left) ----------------- */
+.usageOverlay {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    background-color: blue;
+    box-shadow: 2px 2px 5px red;
+    color: white;
+    padding: 2px 5px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: bold;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+}
+
+
+
+/* ----------------- Role Description Overlay (Lower Half) ----------------- */
+.roleDescriptionOverlay {
+    position: absolute;
+    bottom: 1px;
+    left: 1px;
+    right: 1px;
+    background-color: rgba(31, 2, 80, 0.5);
+    /* Changed from 0.8 to 0.5 for half transparency */
+    color: rgb(252, 248, 248);
+    padding: 3px 6px;
+    border-radius: 3px;
+    font-size: 15px;
+    font-weight: 700;
+    pointer-events: none;
+    transition: opacity 0.5s,
+        display 0.9s ease-in-out;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: start;
+    line-height: 1.2;
+    max-height: 90%;
+    overflow: hidden;
+    z-index: 100;
+}
+
+
+/* ----------------- Tooltip Styles ----------------- */
+.hoverTooltip {
+    position: absolute;
+    background-color: rgba(0, 0, 0, 0.85);
+    color: #fff;
+    padding: 5px 10px;
+    border-radius: 5px;
+    white-space: nowrap;
+    text-align: center;
+    z-index: 1000;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
+    font-size: 15px;
+    pointer-events: none;
+}
+
+.nftImageWrapper:hover .hoverTooltip {
+    opacity: 1;
+    visibility: visible;
+    bottom: 126px;
+    /* Changed from bottom: 45px to top: -45px */
+    left: 50%;
+    transform: translateX(-50%);
+
+    z-index: 4000;
+}
+
+.nftImageWrapper:hover .hoverTooltip::after {
+    content: '';
+    position: absolute;
+    top: 85px;
+    /* Changed from top: 85px to bottom: -10px */
+    left: 50%;
+    transform: translateX(-50%);
+    border-width: 5px;
+    border-style: solid;
+    border-color: rgba(0, 0, 0, 0.85) transparent transparent transparent;
+    /* Fixed: Arrow points down */
+}
+
+.nftImageWrapper.selected:hover .hoverTooltip {
+    top: 155px;
+    /* Changed from bottom: 155px to top: -55px */
+    z-index: 5000;
+}
+
+.nftImageWrapper.selected:hover .hoverTooltip::after {
+    bottom: 115px;
+    /* Changed from top: 115px to bottom: -10px */
+}
+
+/* ----------------- NFT Name Wrapper (Fixed for Visibility) ----------------- */
+.nftNameWrapper {
+    position: relative;
+    width: 100%;
+    height: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: 8px;
+    cursor: pointer;
+
+}
+
+.nftNameWrapper:hover .hoverTooltip {
+    opacity: 1;
+    visibility: visible;
+    bottom: -30px;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.nftNameWrapper:hover .hoverTooltip::after {
+    content: '';
+    position: absolute;
+    top: -5px;
+    left: 50%;
+    transform: translateX(-50%);
+    border-width: 5px;
+    border-style: solid;
+    border-color: transparent transparent rgba(0, 0, 0, 0.85) transparent;
+}
+
+/* ----------------- NFT Info Styles (Enhanced for Visibility) ----------------- */
+.nftInfo {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    /*align-items: center;*/
+    align-items: flex-start;
+    width: 100%;
+    min-height: 100px;
+    /* Ensure minimum space for content */
+    margin-top: auto;
+    padding: 8px 4px;
+    color: white;
+    flex-grow: 1;
+}
+
+/* Enhanced NFT text visibility - Fixed line-clamp vendor prefix warning */
+.nftName {
+    font-weight: bold;
+    font-size: 18px;
+    /* line-height: 0.4;*/
+    text-align: center;
+    /* margin: 2px 0;*/
+    margin-top: -6px;
+
+    cursor: pointer;
+    transition: color 0.3s ease;
+    width: 100%;
+    color: white !important;
+    /*overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    line-clamp: 1;
+    /* Standard property for compatibility 
+    -webkit-box-orient: vertical;*/
+}
+
+.nftName:hover {
+    color: #007bff !important;
+}
+
+.ratingAndAmount {
+    display: flex;
+    /*flex-direction: column;*/
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+
+    margin-bottom: 25px;
+    color: white;
+
+}
+
+.ratingValue {
+    font-size: 12px !important;
+    color: white !important;
+    /* margin: 2px 0;
+    text-align: center;*/
+    margin-right: 5px;
+}
+
+.sendAmount {
+    font-size: 12px !important;
+    color: white !important;
+    /* margin: 2px 0;
+    text-align: center;*/
+    margin-left: 10px;
+}
+
+.centeredSendAmount {
+    text-align: center;
+    font-size: 14px !important;
+    color: white !important;
+    margin: auto;
+    display: block;
+}
+
+/* ----------------- Checkbox Styles ----------------- */
+.roleCheckbox {
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    transform: scale(1.5);
+    z-index: 200;
+    box-shadow: 2px 1px 1px rgb(138, 2, 2);
+    width: 18px;
+    height: 18px;
+    border: 1px solid black;
+}
+
+.roleCheckbox:checked {
+    background-color: #4c4caf;
+    border: 1px solid black;
+}
+
+.roleCheckbox:focus {
+    outline: none;
+    border: 1px solid black;
+}
+
+/* ----------------- Tooltip Container ----------------- */
+.tooltipContainer {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: inline-block;
+    cursor: pointer;
+}
+
+.tooltipText {
+    visibility: hidden;
+    width: max-content;
+    background-color: black;
+    color: #fff;
+    text-align: center;
+    border-radius: 4px;
+    padding: 5px 8px;
+    position: absolute;
+    z-index: 8000;
+    bottom: 125%;
+    left: 50%;
+    transform: translateX(-50%);
+    opacity: 0;
+    transition: opacity 0.3s;
+    white-space: nowrap;
+    font-size: 12px;
+}
+
+.tooltipText::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border-width: 5px;
+    border-style: solid;
+    border-color: black transparent transparent transparent;
+}
+
+.tooltipContainer:hover .tooltipText {
+    visibility: visible;
+    opacity: 1;
+}
+
+/* ----------------- Modal Styles ----------------- */
+.modalOverlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(33, 2, 106, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 2060;
+}
+
+.modalContent {
+    background-color: white;
+    width: 700px;
+    max-width: 800px;
+    height: auto;
+    padding: 20px;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow-y: auto;
+    max-height: 80vh;
+    box-shadow: 0 2px 10px rgba(136, 2, 2, 0.3);
+}
+
+.modalTitle {
+    text-align: center;
+    color: white;
+    margin-top: 20px;
+    margin-bottom: 15px;
+}
+
+.closeButton {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    padding: 8px 16px;
+    cursor: pointer;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    transition: background-color 0.3s ease;
+}
+
+.closeButton:hover {
+    background-color: #0056b3;
+}
+
+.modalDescription {
+    text-align: left;
+    color: #f9f5f5;
+    word-wrap: break-word;
+}
+
+/* ----------------- Sub-modal Styles ----------------- */
+.subModalOverlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 1100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.subModalContent {
+    background-color: #100f0f;
+    padding: 1rem;
+    border-radius: 8px;
+    width: 90%;
+    height: 90%;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.subModalInput {
+    width: 100%;
+    padding: 0.5rem;
+    margin-bottom: 1rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+
+.subModalButton {
+    padding: 0.5rem 1rem;
+    background-color: #0070f3;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+/* ----------------- Additional Utility Classes ----------------- */
+.selected {
+    border: 3px solid #ff4d4f;
+    transform: scale(1.02);
+    box-shadow: 0 0 8px rgba(255, 77, 79, 0.3);
+}
+
+/* Enhanced scrollbar styling - more obvious and visible */
+.main::-webkit-scrollbar {
+    width: 16px;
+    height: 16px;
+}
+
+.main::-webkit-scrollbar-track {
+    background: #222;
+    border-radius: 8px;
+    border: 2px solid #333;
+}
+
+.main::-webkit-scrollbar-thumb {
+    background: linear-gradient(45deg, #0096FF, #00bfff);
+    border-radius: 8px;
+    border: 2px solid #222;
+    box-shadow: 0 2px 4px rgba(0, 150, 255, 0.3);
+}
+
+.main::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(45deg, #00bfff, #87ceeb);
+    transform: scale(1.1);
+}
+
+.main::-webkit-scrollbar-corner {
+    background: #222;
+}
+
+
+
+/* ----------------- Responsive Design ----------------- */
+@media (max-width: 768px) {
+    .grid {
+        grid-auto-columns: 200px;
+    }
+
+    .nftContainer {
+        min-width: 200px;
+        max-width: 200px;
+        min-height: 240px;
+    }
+
+    .nftImageWrapper {
+        height: 140px;
+    }
+
+    .nftInfo {
+        min-height: 90px;
+    }
+}
+
+@media (max-width: 480px) {
+    .grid {
+        grid-auto-columns: 160px;
+    }
+
+    .nftContainer {
+        min-width: 160px;
+        max-width: 160px;
+        min-height: 260px;
+    }
+
+    .nftImageWrapper {
+        height: 120px;
+    }
+
+    .nftInfo {
+        min-height: 80px;
+    }
+
+    .nftName {
+        font-size: 12px !important;
+    }
+
+    .ratingValue,
+    .sendAmount,
+    .centeredSendAmount {
+        font-size: 10px !important;
+    }
+}

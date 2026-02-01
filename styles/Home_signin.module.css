@@ -1,0 +1,317 @@
+/* Parent Container */
+.signInContainer {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    /* Allows content to push container height */
+    background-color: #000000;
+    padding: 0 20px;
+    position: relative;
+    box-sizing: border-box;
+}
+
+/* Header Container with Flexbox */
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    padding: 20px;
+    box-sizing: border-box;
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 2;
+    /* Ensures header is above other elements */
+    transition: padding 0.3s ease;
+}
+
+/* Responsive Adjustments for Header */
+@media (max-width: 600px) {
+    .header {
+        flex-direction: column;
+        align-items: center;
+        padding: 10px;
+    }
+
+    .logoContainer {
+        margin-bottom: 10px;
+        /* Adds space between logo and language dropdown */
+    }
+
+    .languageContainer {
+        width: 100%;
+        /* Ensures language dropdown takes full width */
+        display: flex;
+        justify-content: center;
+    }
+}
+
+/* Logo Container */
+.logoContainer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    transition: all 0.3s ease;
+}
+
+/* Hover Tooltip */
+.hoverTooltip {
+    position: absolute;
+    bottom: -40px;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: black;
+    color: white;
+    padding: 10px 20px;
+    border-radius: 5px;
+    white-space: nowrap;
+    text-align: center;
+    z-index: 1000;
+}
+
+/* Visit Website Link */
+.visitWebsiteLink {
+    color: white;
+    text-decoration: none;
+    font-size: 16px;
+    font-weight: bold;
+    margin-top: 10px;
+    display: block;
+}
+
+
+
+/* Language Select */
+.languageSelect {
+    padding: 0.5rem 1rem;
+    border: 2px solid #444;
+    border-radius: 8px;
+    cursor: pointer;
+    background-color: blue;
+    color: white;
+    width: 150px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    font-size: 18px;
+    transition: width 0.3s ease, font-size 0.3s ease;
+}
+
+@media (max-width: 600px) {
+    .languageSelect {
+        width: 100%;
+        /* Full width on small screens */
+        font-size: 16px;
+    }
+}
+
+/* Welcome Message */
+.welcomeMessage {
+    margin-bottom: 10px;
+    color: #fff;
+    font-size: 2em;
+    /* Adjust as needed */
+    text-align: center;
+    transition: font-size 0.3s ease;
+}
+
+@media (max-width: 600px) {
+    .welcomeMessage {
+        font-size: 1.5em;
+    }
+}
+
+/* Tagline */
+.tagline {
+    font-size: 1.2em;
+    color: #fff;
+    text-align: center;
+    max-width: 800px;
+    margin-bottom: 20px;
+    transition: font-size 0.3s ease;
+}
+
+@media (max-width: 600px) {
+    .tagline {
+        font-size: 1em;
+    }
+}
+
+/* ConnectEmbed Styling */
+.connectEmbed {
+    border: 4px solid red;
+    /* Thicker red border */
+    width: 100%;
+    /* Full width of the container */
+    max-width: 700px;
+    /* Increased max-width for wider appearance */
+    margin-bottom: 30px;
+    box-sizing: border-box;
+    /* Ensures padding and borders are included in the width */
+    padding: 20px;
+    /* Optional: Add padding for better spacing */
+    border-radius: 10px;
+    /* Optional: Rounded corners for aesthetics */
+    background-color: #1a1a1a;
+    /* Optional: Dark background to contrast the red border */
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    /* Optional: Add a subtle shadow */
+    transition: all 0.3s ease;
+    /* Smooth transitions */
+    z-index: 1;
+    /* Adjust if necessary */
+}
+
+.connectEmbed:hover {
+    border-color: #ff0000;
+    /* Change border color on hover */
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.3);
+    /* Enhance shadow on hover */
+}
+
+@media (max-width: 600px) {
+    .connectEmbed {
+        max-width: 100%;
+        padding: 10px;
+        /* Reduce padding on smaller screens */
+        border: 3px solid red;
+        /* Slightly thinner border if desired */
+    }
+}
+
+/* Instructional Text */
+.instructionText {
+    font-size: 1em;
+    color: #fff;
+    text-align: center;
+    max-width: 800px;
+    margin-bottom: 20px;
+    transition: font-size 0.3s ease;
+}
+
+@media (max-width: 600px) {
+    .instructionText {
+        font-size: 0.9em;
+    }
+}
+
+/* Quick Demo Link/Button */
+.quickDemoLink {
+    text-decoration: none;
+}
+
+.quickDemoButton {
+    padding: 10px 20px;
+    font-size: 16px;
+    font-weight: bold;
+    color: #fff;
+    background-color: blue;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.4);
+    transition: background-color 0.3s, transform 0.2s;
+}
+
+.quickDemoButton:hover {
+    background-color: #365899;
+    transform: translateY(-2px);
+}
+
+@media (max-width: 600px) {
+    .quickDemoButton {
+        font-size: 14px;
+        padding: 8px 16px;
+    }
+}
+
+/* Responsive Image */
+.hoverLogo {
+    width: 100%;
+    height: auto;
+    max-width: 120px;
+    /* Original size */
+    transition: max-width 0.3s ease;
+    /* Smooth resizing */
+}
+
+@media (max-width: 600px) {
+    .hoverLogo {
+        max-width: 60px;
+        /* Reduced size for mobile */
+    }
+}
+
+/* Toast Content Styles */
+.toastContent {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    color: #fff;
+    /* Ensure text is visible against the dark background */
+}
+
+.toastMessage {
+    margin: 0 0 10px 0;
+    font-size: 1rem;
+}
+
+.rememberContainer {
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.rememberCheckbox {
+    margin-right: 5px;
+    width: 16px;
+    height: 16px;
+}
+
+.rememberLabel {
+    font-size: 0.9rem;
+}
+
+.toastButtons {
+    display: flex;
+    gap: 10px;
+}
+
+.toastButton {
+    padding: 8px 16px;
+    background-color: #0070f3;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background-color 0.3s ease;
+}
+
+.toastButton:hover {
+    background-color: #005bb5;
+}
+
+/* Ensure toast text is visible */
+.toastContent {
+    color: #052590;
+    /* Set text color to black */
+    background-color: #0417a3;
+    /* Set background to white */
+}
+
+.toastMessage {
+    color: #f9f5f5;
+    /* Ensure message text is black */
+}
+
+.optionLabel {
+    color: #000;
+    /* Ensure label text is black */
+}
+
+.optionInput {
+    accent-color: #000;
+    /* Ensure radio buttons are visible */
+}

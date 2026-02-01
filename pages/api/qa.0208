@@ -1,0 +1,204 @@
+// pages/api/qa.ts
+
+import { NextApiRequest, NextApiResponse } from 'next';
+import { Pinecone } from '@pinecone-database/pinecone';
+import { OpenAI } from 'openai';
+import { UserQuestions, UserQA, QuestionAnswer } from '../../types';
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
+const index = pc.index("user-documents");
+const GPT_MODEL = process.env.GPT_MODEL || "gpt-4o-mini";
+
+// Placeholder functions for user data storage.
+async function updateUserData(userId: string, data: Partial<any>): Promise<void> {
+    // Implement logic to update user data in your database.
+}
+
+async function getUserData(userId: string): Promise<{ lastEmbeddingTimestamp: number; lastQATimestamp: number; }> {
+    // Implement logic to retrieve user data from your database.
+    return { lastEmbeddingTimestamp: 0, lastQATimestamp: 0 };
+}
+
+// Embed a given piece of text.
+async function embedText(text: string): Promise<number[]> {
+    const response = await openai.embeddings.create({
+        model: "text-embedding-ada-002",
+        input: text,
+    });
+    return response.data[0].embedding;
+}
+
+// Insert a QA pair as a vector.
+async function insertQA(userId: string, qa: QuestionAnswer): Promise<void> {
+    const questionEmbedding = await embedText(qa.question);
+    const id = `${userId}-${Buffer.from(qa.question).toString('base64')}`;
+    const timestamp = Date.now();
+    await index.namespace(userId).upsert([{
+        id,
+        values: questionEmbedding,
+        metadata: {
+            question: qa.question,
+            answer: qa.answer,
+            isEditedQA: true,
+            timestamp,
+        },
+    }]);
+    await updateUserData(userId, { lastQATimestamp: timestamp });
+}
+
+// Insert a document embedding.
+async function insertDocumentEmbedding(userId: string, content: string): Promise<void> {
+    const contentEmbedding = await embedText(content);
+    const id = `doc-${userId}-${Buffer.from(content).toString('base64')}`;
+    const timestamp = Date.now();
+    await index.namespace(userId).upsert([{
+        id,
+        values: contentEmbedding,
+        metadata: {
+            content,
+            timestamp,
+        },
+    }]);
+    await updateUserData(userId, { lastEmbeddingTimestamp: timestamp });
+}
+
+// Check if new embeddings are available.
+async function checkForNewEmbeddings(userId: string): Promise<boolean> {
+    const userData = await getUserData(userId);
+    return userData.lastEmbeddingTimestamp > userData.lastQATimestamp;
+}
+
+/**
+ * Fetch updated context from Pinecone.
+ * If selectedSources is provided, the query will only consider vectors where the metadata field "source" is in the array.
+ */
+async function fetchUpdatedContext(userId: string, questionEmbedding: number[], selectedSources?: string[]): Promise<string> {
+    const filter = selectedSources && selectedSources.length > 0
+        ? { source: { $in: selectedSources } }
+        : { content: { $exists: true } };
+
+    const contextResponse = await index.namespace(userId).query({
+        vector: questionEmbedding,
+        topK: 20,
+        includeMetadata: true,
+        filter,
+    });
+
+    if (!contextResponse.matches || contextResponse.matches.length === 0) {
+        return '';
+    }
+
+    const grouped: { [source: string]: any[] } = {};
+    for (const match of contextResponse.matches) {
+        const meta = match.metadata as any;
+        if (meta.source) {
+            if (!grouped[meta.source]) {
+                grouped[meta.source] = [];
+            }
+            grouped[meta.source].push(match);
+        }
+    }
+
+    let selectedMatches: any[] = [];
+    for (const source in grouped) {
+        const matches = grouped[source];
+        if (matches.some(m => (m.metadata as any).version !== undefined)) {
+            const maxVersion = Math.max(...matches.map(m => (m.metadata as any).version));
+            selectedMatches = selectedMatches.concat(matches.filter(m => (m.metadata as any).version === maxVersion));
+        } else {
+            selectedMatches = selectedMatches.concat(matches);
+        }
+    }
+
+    return selectedMatches.map(match => (match.metadata as any).content).join("\n");
+}
+
+/**
+ * Generate an answer for a given question using provided context.
+ */
+async function generateAnswer(question: string, context: string): Promise<string> {
+    const prompt = `Context: ${context}\n\nQuestion: ${question}\n\nAnswer:`;
+    const completion = await openai.chat.completions.create({
+        model: GPT_MODEL,
+        messages: [
+            {
+                role: "system",
+                content: "You are a highly knowledgeable and creative assistant. Using the provided context (from both scraped website content and uploaded text), generate a comprehensive and thoughtful answer. If the context is insufficient, ask clarifying questions."
+            },
+            { role: "user", content: prompt }
+        ],
+        max_tokens: 600,
+        temperature: 0.7,
+    });
+    return completion.choices[0].message.content || "Sorry, I couldn't generate an answer.";
+}
+
+// Retrieve an answer in a caching or updated context method.
+async function retrieveQA(userId: string, question: string, selectedSources?: string[]): Promise<QuestionAnswer | null> {
+    const questionEmbedding = await embedText(question);
+    const queryResponse = await index.namespace(userId).query({
+        vector: questionEmbedding,
+        topK: 10,
+        includeMetadata: true,
+    });
+    if (!queryResponse.matches || queryResponse.matches.length === 0) {
+        return null;
+    }
+
+    const editedMatches = queryResponse.matches.filter(match =>
+        (match.metadata as any).isEditedQA &&
+        match.score &&
+        match.score > 0.9
+    );
+
+    if (editedMatches.length > 0) {
+        const bestMatch = editedMatches[0];
+        const hasNewEmbeddings = await checkForNewEmbeddings(userId);
+        if (!hasNewEmbeddings) {
+            return {
+                question: (bestMatch.metadata as any).question,
+                answer: (bestMatch.metadata as any).answer
+            };
+        }
+    }
+
+    // If there are new embeddings or no cached QA found, generate an answer.
+    const context = await fetchUpdatedContext(userId, questionEmbedding, selectedSources);
+    const answer = await generateAnswer(question, context);
+    return { question, answer };
+}
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'POST') {
+        return res.status(405).json({ message: 'Method not allowed' });
+    }
+
+    // Expect the body to be either of type UserQuestions or UserQA.
+    // Optionally, UserQuestions might include a "selectedSources" field.
+    const body = req.body as any;
+    const selectedSources: string[] | undefined = body.selectedSources;
+
+    if ('questions' in body) {
+        const userQuestions = body as UserQuestions;
+        const answers: QuestionAnswer[] = await Promise.all(
+            userQuestions.questions.map(async (question) => {
+                const qa = await retrieveQA(userQuestions.userId, question.question, selectedSources);
+                if (qa) return qa;
+                const contextEmbedding = await embedText(question.question);
+                const context = await fetchUpdatedContext(userQuestions.userId, contextEmbedding, selectedSources);
+                const answer = await generateAnswer(question.question, context);
+                return { question: question.question, answer };
+            })
+        );
+        return res.status(200).json({ userId: userQuestions.userId, qa: answers });
+    } else if ('qa' in body) {
+        const userQA = body as UserQA;
+        for (const qa of userQA.qa) {
+            await insertQA(userQA.userId, qa);
+        }
+        return res.status(200).json({ message: 'QA pairs inserted successfully' });
+    } else {
+        return res.status(400).json({ message: 'Invalid request body' });
+    }
+}

@@ -1,0 +1,132 @@
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+import HashUtil from '../../util/hashToFixedDigits';
+import { ethers } from 'ethers';
+import { getContract } from 'thirdweb';
+import {
+    WEBAI_TOKEN_ADDRESS, MINTER_PRIVATE_KEY, RPC_URL,
+} from '../../constants/constants';
+
+// Initialize Vercel KV client
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+// Define the structure of the request body
+interface AddFreeChatsRequest {
+    userKey: string;
+    freeTrades?: number;
+    freeUploads?: number;
+    freeCustomGPT?: number;
+    webAIamount?: number;
+}
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    // Allow only POST requests
+    if (req.method !== 'POST') {
+        res.setHeader('Allow', 'POST');
+        return res.status(405).json({ message: 'Method Not Allowed' });
+    }
+
+    const { userKey, freeTrades, freeUploads, freeCustomGPT, webAIamount } =
+        req.body as AddFreeChatsRequest;
+
+    if (!userKey) {
+        return res.status(400).json({ message: 'User key is required.' });
+    }
+
+    console.log('Request body:', req.body);
+
+    const promises = [];
+
+    // **1. Process `webAIamount` if it exists and is > 0**
+    if (webAIamount && webAIamount > 0) {
+        console.log(`Processing minting of ${webAIamount} tokens for ${userKey}`);
+
+        const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
+        const wallet = new ethers.Wallet(MINTER_PRIVATE_KEY, provider);
+
+        const erc20Abi = [
+            "function mintTo(address to, uint256 amount) public",
+        ];
+
+        const contract = new ethers.Contract(WEBAI_TOKEN_ADDRESS, erc20Abi, wallet);
+
+        promises.push(
+            (async () => {
+                try {
+                    // Fetch recommended gas price and ensure it's above minimum
+                    const feeData = await provider.getFeeData();
+                    console.log('Fee Data:', feeData);
+
+                    const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas?.gte(ethers.utils.parseUnits('25', 'gwei'))
+                        ? feeData.maxPriorityFeePerGas
+                        : ethers.utils.parseUnits('25', 'gwei');
+
+                    const maxFeePerGas = feeData.maxFeePerGas?.gte(ethers.utils.parseUnits('30', 'gwei'))
+                        ? feeData.maxFeePerGas
+                        : ethers.utils.parseUnits('30', 'gwei');
+
+                    console.log(`Using maxPriorityFeePerGas: ${ethers.utils.formatUnits(maxPriorityFeePerGas, 'gwei')} gwei`);
+                    console.log(`Using maxFeePerGas: ${ethers.utils.formatUnits(maxFeePerGas, 'gwei')} gwei`);
+
+                    const tx = await contract.mintTo(
+                        userKey,
+                        ethers.utils.parseUnits(webAIamount.toString(), 18),
+                        {
+                            maxPriorityFeePerGas,
+                            maxFeePerGas,
+                        }
+                    );
+
+                    await tx.wait();
+                    console.log(`Minted ${webAIamount} tokens to ${userKey}`);
+                } catch (error: any) {
+                    console.error('Error minting tokens:', error);
+                    throw new Error(`Failed to mint ${webAIamount} tokens: ${error.message}`);
+                }
+            })()
+        );
+    }
+
+
+
+    // **2. Handle KV Store Updates**
+    try {
+        const hashedUserKey = HashUtil.hashTo(userKey);
+
+        if (freeTrades && freeTrades > 0) {
+            console.log(`Adding ${freeTrades} free trades for ${userKey}`);
+            const freeTradesKey = `${hashedUserKey}:freeTrades`;
+            promises.push(kv.incrby(freeTradesKey, freeTrades));
+        }
+
+        if (freeUploads && freeUploads > 0) {
+            console.log(`Adding ${freeUploads} free uploads for ${userKey}`);
+            const freeUploadsKey = `${hashedUserKey}:freeUploads`;
+            promises.push(kv.incrby(freeUploadsKey, freeUploads));
+        }
+
+        if (freeCustomGPT && freeCustomGPT > 0) {
+            console.log(`Adding ${freeCustomGPT} free Custom GPT requests for ${userKey}`);
+            const freeCustomGPTKey = `${hashedUserKey}:freeCustomGPT`;
+            promises.push(kv.incrby(freeCustomGPTKey, freeCustomGPT));
+        }
+
+        // Execute all promises concurrently
+        await Promise.all(promises);
+
+        console.log('Perks updated successfully.');
+
+        return res.status(200).json({
+            message: 'Perks updated successfully.',
+        });
+    } catch (error: any) {
+        console.error('Error updating perks:', error);
+        return res.status(500).json({
+            message: 'Failed to process perks.',
+            error: error.message,
+        });
+    }
+}

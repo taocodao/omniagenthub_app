@@ -1,0 +1,32 @@
+// contexts/MarketingChatModalContext.tsx
+
+import React, { createContext, useState, ReactNode } from 'react';
+import MarketingChatModal from '../components/MarketingChatModal';
+
+interface MarketingChatModalContextProps {
+    openChat: () => void;
+    closeChat: () => void;
+}
+
+export const MarketingChatModalContext = createContext<MarketingChatModalContextProps>({
+    openChat: () => { },
+    closeChat: () => { },
+});
+
+interface MarketingChatModalProviderProps {
+    children: ReactNode;
+}
+
+export const MarketingChatModalProvider: React.FC<MarketingChatModalProviderProps> = ({ children }) => {
+    const [isChatModalOpen, setIsChatModalOpen] = useState<boolean>(false);
+
+    const openChat = () => setIsChatModalOpen(true);
+    const closeChat = () => setIsChatModalOpen(false);
+
+    return (
+        <MarketingChatModalContext.Provider value={{ openChat, closeChat }}>
+            {children}
+            <MarketingChatModal isOpen={isChatModalOpen} onClose={closeChat} />
+        </MarketingChatModalContext.Provider>
+    );
+};

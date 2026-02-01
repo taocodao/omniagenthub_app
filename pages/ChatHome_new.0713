@@ -1,0 +1,102 @@
+// pages/ChatHome_new.tsx
+
+import React, { useState, useEffect } from 'react';
+import { useActiveAccount } from 'thirdweb/react';
+import SignIn from '../components/SignIn';
+import Navbar from '../components/Navbar_marketing';
+import Shop from '../pages/shop_marketing';
+import ChatHomeMarketing from './ChatHome_marketing';
+import styles from '../styles/ChatHomeNew.module.css';
+
+
+
+const ChatHomeNew: React.FC = () => {
+    // Option 1: Union type with specific interface
+    interface RoleData {
+        role: string;
+    }
+
+
+    const address = useActiveAccount()?.address;
+    const [selectedCategory, setSelectedCategory] = useState('Favorite');
+    const [selectedRole, setSelectedRole] = useState<RoleData | null>(null);
+    const [isShopExpanded, setIsShopExpanded] = useState(true);
+
+    // Handle category change from Navbar
+    useEffect(() => {
+        window.onCategoryChange = (category: string) => {
+            setSelectedCategory(category);
+            setIsShopExpanded(true);
+            setSelectedRole(null); // Clear selected role when category changes
+        };
+
+        window.onRoleClick = () => {
+            setIsShopExpanded(!isShopExpanded);
+        };
+
+        window.setSelectedRole = (roleName: string) => {
+            // Find the role object if needed, or just store the name
+            setSelectedRole({ role: roleName });
+        };
+
+        window.setIsShopExpanded = (expanded: boolean) => {
+            setIsShopExpanded(expanded);
+        };
+
+        return () => {
+            delete window.onCategoryChange;
+            delete window.onRoleClick;
+            delete window.setSelectedRole;
+            delete window.setIsShopExpanded;
+        };
+    }, [isShopExpanded]);
+
+    // Handle role selection from Shop
+    const handleRoleSelect = (role: any) => {
+        setSelectedRole(role);
+        setIsShopExpanded(true); // Collapse shop when role is selected
+    };
+
+    // Add new handler for dropdown role selection
+    const handleDropdownRoleSelect = (role: any) => {
+        setSelectedRole(role);
+        // Keep shop expanded when selecting from dropdown
+        setIsShopExpanded(false);
+    };
+
+    return (
+        <div className={styles.container}>
+            {!address ? (
+                <SignIn />
+            ) : (
+                <>
+                    {/* Navbar at the top */}
+                    <Navbar isMarketingPage={true} />
+
+                    {/* Main content area */}
+                    <div className={styles.mainContent}>
+                        {/* Shop section */}
+                        <div className={`${styles.shopSection} ${isShopExpanded ? styles.expanded : styles.collapsed}`}>
+                            <Shop
+                                selectedCategory={selectedCategory}
+                                isExpanded={!!(selectedCategory && selectedRole)}
+                                onRoleSelect={handleRoleSelect}
+                            />
+                        </div>
+
+                        {/* ChatHome Marketing section */}
+                        <div className={styles.chatSection}>
+                            <ChatHomeMarketing
+                                selectedRole1={selectedRole}
+                                isShopExpanded={isShopExpanded}
+                                onDropdownRoleSelect={handleDropdownRoleSelect}
+                            />
+                        </div>
+                    </div>
+                </>
+            )}
+        </div>
+    );
+};
+
+export default ChatHomeNew;

@@ -1,0 +1,51 @@
+// pages/api/addRating.ts
+
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+
+// Initialize the Vercel KV client
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+// Define the handler for the API route
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    console.log(`[addRating] Incoming request: Method=${req.method}`);
+
+    // Only allow POST requests
+    if (req.method !== 'POST') {
+        console.warn(`[addRating] Method not allowed: ${req.method}`);
+        return res.status(405).json({ message: 'Method not allowed. Use POST.' });
+    }
+
+    const { userAddress, department, role, rating } = req.body;
+    console.log(`[addRating] Request Body: userAddress=${userAddress}, department='${department}', role='${role}', rating=${rating}`);
+
+    // Validate the presence of required fields
+    if (!userAddress || !department || !role || rating === undefined) {
+        console.error('[addRating] Missing required fields in request body.');
+        return res.status(400).json({ message: 'User address, department, role, and rating are required.' });
+    }
+
+    // Trim and lowercase department and role for consistency
+    const trimmedDepartment = department.trim().toLowerCase();
+    const trimmedRole = role.trim().toLowerCase();
+    console.log(`[addRating] Trimmed and Lowercased: department='${trimmedDepartment}', role='${trimmedRole}'`);
+
+    // Generate a unique key for storing the rating
+    const key = `${userAddress}:${trimmedDepartment}:${trimmedRole}`;
+    console.log(`[addRating] Generated KV Key: ${key}`);
+
+    try {
+        // Store the rating in Vercel KV
+        await kv.set(key, rating);
+        console.log(`[addRating] Successfully set key ${key} with rating ${rating}`);
+
+        // Respond with a success message
+        return res.status(200).json({ message: 'Rating added successfully.' });
+    } catch (error) {
+        console.error(`[addRating] Error saving rating to KV database:`, error);
+        return res.status(500).json({ message: 'Error saving rating to KV database.' });
+    }
+}

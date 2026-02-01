@@ -1,0 +1,534 @@
+// pages/api/scrape-webhook.ts
+
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { ApifyClient } from 'apify-client';
+import { createClient } from '@vercel/kv';
+import { cleanText, truncateText, createAndStoreEmbeddings } from '../../utils/embeddings';
+
+interface ScrapeJobDetails {
+    normalizedUrl: string;
+    userId: string;
+    url: string;
+    status: string;
+    startedAt: string;
+    apifyRunId?: string;
+    sitemapTried?: boolean;
+    completedAt?: string;
+    pageCount?: number;
+    sharedUserIds?: string[];
+    error?: string;
+}
+
+interface ScrapedItem {
+    url: string;
+    text: string;
+    html?: string;
+    title?: string;
+    metadata?: {
+        description?: string;
+        keywords?: string[];
+    };
+}
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+const apifyClient = new ApifyClient({
+    token: process.env.APIFY_API_TOKEN!,
+});
+
+
+
+const logger = {
+    info: (message: string, data?: any) => {
+        console.log(`[INFO] ${new Date().toISOString()} - ${message}`, data ? JSON.stringify(data) : '');
+    },
+    error: (message: string, data?: any) => {
+        console.error(`[ERROR] ${new Date().toISOString()} - ${message}`, data ? JSON.stringify(data) : '');
+    },
+    warn: (message: string, data?: any) => {
+        console.warn(`[WARN] ${new Date().toISOString()} - ${message}`, data ? JSON.stringify(data) : '');
+    }
+};
+
+// Process a batch of pages to generate and store embeddings
+async function processBatch(items: ScrapedItem[], userId: string, sourceKey: string, version: number, sharedUserIds: string[] = []) {
+    const initialShared: string[] = Array.from(new Set([userId, ...(sharedUserIds || [])]));
+
+    // Track success and failure counts
+    let successCount = 0;
+    let failureCount = 0;
+
+    // Process each item
+    for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const itemUrl = item.url;
+
+        if (!itemUrl || !item.text) {
+            logger.warn(`Skipping item with missing URL or text`, { itemUrl });
+            continue;
+        }
+
+        const cleanedText = cleanText(item.text);
+        if (!cleanedText.trim()) {
+            logger.warn(`Skipping URL due to empty content`, { itemUrl });
+            continue;
+        }
+
+        const finalText = cleanedText.split(' ').length > 3000 ? truncateText(cleanedText, 3000) : cleanedText;
+        const versionId = version + i;
+
+        // Process for each shared user
+        for (const uid of initialShared) {
+            try {
+                await createAndStoreEmbeddings(uid, sourceKey, finalText, versionId, true);
+                successCount++;
+            } catch (error) {
+                logger.error(`Failed to store embeddings`, { userId: uid, url: itemUrl, error });
+                failureCount++;
+            }
+        }
+
+        // Log progress periodically
+        if (i % 10 === 0 || i === items.length - 1) {
+            logger.info(`Embedding progress`, { current: i + 1, total: items.length });
+        }
+    }
+
+    return { successCount, failureCount };
+}
+function isValidJobId(jobId: string): boolean {
+    return /^scrape-\d{13}-[a-z0-9]{5}$/.test(jobId);
+}
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    logger.info('Webhook handler received request', { method: req.method, url: req.url });
+
+    if (req.method !== 'POST') {
+        logger.warn('Non-POST request rejected');
+        return res.status(405).json({ success: false, message: 'Method not allowed' });
+    }
+
+
+
+    try {
+        let jobId = req.query.jobId as string;
+        let { status = '', datasetId = '', runId = '', eventType = '' } = req.body as {
+            status?: string;
+            datasetId?: string;
+            runId?: string;
+            eventType?: string;
+        };
+
+        // Handle template variables
+        if (status?.includes('{{')) status = '';
+        if (datasetId?.includes('{{')) datasetId = '';
+        if (runId?.includes('{{')) runId = '';
+
+        if (!status && eventType && !eventType.includes('{{')) {
+            status = eventType;
+        }
+
+        logger.info('Webhook data received', { jobId, status, datasetId, runId });
+        // Add to scrape-webhook.ts handler
+        if (datasetId.includes('{{')) {
+            logger.error('Invalid datasetId template variable received', { datasetId });
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid dataset ID format'
+            });
+        }
+
+        if (!isValidJobId(jobId)) {
+            logger.error('Invalid job ID format', { jobId });
+            return res.status(400).json({ success: false });
+        }
+
+        // Fallback mechanism for finding jobId
+        if (!jobId && runId) {
+            const mappedJobId = await kv.get(`apify-run-map:${runId}`);
+            if (mappedJobId) {
+                jobId = mappedJobId as string;
+                logger.info('Found job ID from run mapping', { runId, jobId });
+            }
+        }
+
+        if (!jobId && req.body.runId?.startsWith('~')) {
+            const apifyRunId = req.body.runId.replace('~', '');
+            const mappedJobId = await kv.get(`apify-run-map:${apifyRunId}`);
+            if (mappedJobId) {
+                jobId = mappedJobId as string;
+                logger.info('Found job ID from raw run ID', { apifyRunId, jobId });
+            }
+        }
+
+        if (!jobId) {
+            logger.error('No valid job ID found in request');
+            return res.status(400).json({ success: false, message: 'Job ID required' });
+        }
+
+        logger.info(`Fetching job details`, { jobId });
+        const jobDetails = await kv.get(`scrape-job:${jobId}`) as ScrapeJobDetails | null;
+
+        if (!jobDetails) {
+            logger.warn(`Job not found`, { jobId });
+            return res.status(404).json({ success: false, message: 'Job not found' });
+        }
+
+        // Determine event status
+        let eventStatus = 'FAILED';
+        if (typeof status === 'string' && (status === 'ACTOR.RUN.SUCCEEDED' || status === 'SUCCEEDED')) {
+            eventStatus = 'SUCCEEDED';
+        }
+
+        // Handle sitemap crawl result
+        if (jobDetails.sitemapTried && jobDetails.apifyRunId) {
+            if (eventStatus === 'SUCCEEDED') {
+                try {
+                    // Fetch dataset from Apify
+                    const dataset = await apifyClient.dataset(datasetId || '').listItems();
+
+                    if (dataset.items && dataset.items.length > 0) {
+                        logger.info(`Sitemap crawl successful`, { pageCount: dataset.items.length });
+
+                        // Update job status
+                        await kv.set(`scrape-job:${jobId}`, {
+                            ...jobDetails,
+                            status: 'PROCESSING',
+                            pageCount: dataset.items.length
+                        });
+
+                        // Fire and forget: Process embeddings in background
+                        (async () => {
+                            try {
+                                const version = Date.now();
+                                const sourceKey = `scrape:${jobDetails.normalizedUrl}`;
+
+                                const datasetItems = await apifyClient.dataset(datasetId || '').listItems();
+
+
+                                // Process embeddings in batches
+                                const { successCount, failureCount } = await processBatch(
+                                    (dataset.items as unknown) as ScrapedItem[],
+                                    jobDetails.userId,
+                                    sourceKey,
+                                    version,
+                                    jobDetails.sharedUserIds
+                                );
+
+                                // Update job status and metadata
+                                await kv.set(`scrape-job:${jobId}`, {
+                                    ...jobDetails,
+                                    status: 'SUCCEEDED',
+                                    completedAt: new Date().toISOString(),
+                                    pageCount: dataset.items.length
+                                });
+
+                                // Update website metadata
+                                await kv.set(`website:${jobDetails.normalizedUrl}`, {
+                                    scrapedAt: new Date().toISOString(),
+                                    pageCount: dataset.items.length,
+                                    embeddingsSuccessful: successCount,
+                                    embeddingsFailed: failureCount
+                                });
+
+                                // Store version information
+                                await kv.set(`lastScrapeVersion:${jobDetails.userId}:${jobDetails.normalizedUrl}`, version);
+
+                                // Update embedding mappings
+                                const initialShared = Array.from(new Set([jobDetails.userId, ...(jobDetails.sharedUserIds || [])]));
+                                await kv.set(`embeddingMapping:${sourceKey}`, initialShared);
+                                await kv.set(`embeddingOwner:${sourceKey}`, jobDetails.userId);
+
+                                // Update global embedding index
+                                const indexKey = "embeddingIndex1";
+                                let currentIndex: string[] = await kv.get(indexKey) as string[] || [];
+                                if (!Array.isArray(currentIndex)) currentIndex = [];
+
+                                if (!currentIndex.includes(sourceKey)) {
+                                    currentIndex.push(sourceKey);
+                                    await kv.set(indexKey, currentIndex);
+                                }
+
+                                logger.info(`Scraping job completed successfully`, { jobId, pageCount: dataset.items.length });
+                            } catch (error) {
+                                logger.error(`Error processing embeddings`, { error });
+
+                                // Update job with error status
+                                await kv.set(`scrape-job:${jobId}`, {
+                                    ...jobDetails,
+                                    status: 'FAILED',
+                                    completedAt: new Date().toISOString(),
+                                    error: error instanceof Error ? error.message : 'Unknown error processing embeddings'
+                                });
+                            }
+                        })();
+
+                        // Respond to webhook immediately
+                        return res.status(200).json({
+                            success: true,
+                            job: jobId,
+                            status: 'PROCESSING'
+                        });
+
+                    } else {
+                        // Sitemap crawl returned no results, try direct URL crawl
+                        logger.warn(`Sitemap crawl returned no results, trying direct URL`, { url: jobDetails.url });
+
+                        // Update job status to indicate fallback
+                        await kv.set(`scrape-job:${jobId}`, {
+                            ...jobDetails,
+                            status: 'CRAWLING_FALLBACK',
+                            sitemapTried: true
+                        });
+
+                        // Start direct URL crawl
+                        const baseUrl = process.env.NEXTAUTH_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
+                        const webhookUrl = `${baseUrl}/api/scrape-webhook?jobId=${jobId}`;
+
+                        const fallbackRun = await apifyClient.actor('apify/website-content-crawler').call({
+                            startUrls: [{ url: jobDetails.url }],
+                            maxCrawlPages: 50,
+                            maxCrawlDepth: 2,
+                            webhooks: [
+                                {
+                                    eventTypes: ['ACTOR.RUN.SUCCEEDED', 'ACTOR.RUN.FAILED', 'ACTOR.RUN.TIMED_OUT'],
+                                    requestUrl: webhookUrl
+                                }
+                            ]
+                        });
+
+                        // Update job with fallback run ID
+                        await kv.set(`scrape-job:${jobId}`, {
+                            ...jobDetails,
+                            status: 'CRAWLING_FALLBACK',
+                            apifyRunId: fallbackRun.id
+                        });
+
+                        // Create mapping for the new run ID
+                        await kv.set(`apify-run-map:${fallbackRun.id}`, jobId);
+
+                        return res.status(200).json({
+                            success: true,
+                            job: jobId,
+                            status: 'CRAWLING_FALLBACK'
+                        });
+                    }
+                } catch (error) {
+                    logger.error(`Error processing dataset`, { error });
+
+                    // Update job with error
+                    await kv.set(`scrape-job:${jobId}`, {
+                        ...jobDetails,
+                        status: 'FAILED',
+                        completedAt: new Date().toISOString(),
+                        error: error instanceof Error ? error.message : 'Unknown error processing dataset'
+                    });
+
+                    return res.status(500).json({
+                        success: false,
+                        job: jobId,
+                        status: 'FAILED',
+                        error: error instanceof Error ? error.message : 'Unknown error'
+                    });
+                }
+            } else {
+                // Sitemap crawl failed, try direct URL crawl
+                logger.warn(`Sitemap crawl failed, trying direct URL`, { url: jobDetails.url });
+
+                // Update job status
+                await kv.set(`scrape-job:${jobId}`, {
+                    ...jobDetails,
+                    status: 'CRAWLING_FALLBACK'
+                });
+
+                // Start direct URL crawl
+                const baseUrl = process.env.NEXTAUTH_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
+                const webhookUrl = `${baseUrl}/api/scrape-webhook?jobId=${jobId}`;
+
+                const fallbackRun = await apifyClient.actor('apify/website-content-crawler').call({
+                    startUrls: [{ url: jobDetails.url }],
+                    maxCrawlPages: 25,
+                    maxCrawlDepth: 1,
+                    webhooks: [
+                        {
+                            eventTypes: ['ACTOR.RUN.SUCCEEDED', 'ACTOR.RUN.FAILED', 'ACTOR.RUN.TIMED_OUT'],
+                            requestUrl: webhookUrl
+                        }
+                    ]
+                });
+
+                // Update job with fallback run ID
+                await kv.set(`scrape-job:${jobId}`, {
+                    ...jobDetails,
+                    status: 'CRAWLING_FALLBACK',
+                    apifyRunId: fallbackRun.id
+                });
+
+                // Create mapping for the new run ID
+                await kv.set(`apify-run-map:${fallbackRun.id}`, jobId);
+
+                return res.status(200).json({
+                    success: true,
+                    job: jobId,
+                    status: 'CRAWLING_FALLBACK'
+                });
+            }
+        } else if (jobDetails.status === 'CRAWLING_FALLBACK' && eventStatus === 'SUCCEEDED') {
+            // Fallback crawl succeeded
+            try {
+                // Fetch dataset from Apify
+                const dataset = await apifyClient.dataset(datasetId || '').listItems();
+
+                if (dataset.items && dataset.items.length > 0) {
+                    logger.info(`Fallback crawl successful`, { pageCount: dataset.items.length });
+
+                    // Update job status
+                    await kv.set(`scrape-job:${jobId}`, {
+                        ...jobDetails,
+                        status: 'PROCESSING',
+                        pageCount: dataset.items.length
+                    });
+
+                    // Fire and forget: Process embeddings in background
+                    (async () => {
+                        try {
+                            const version = Date.now();
+                            const sourceKey = `scrape:${jobDetails.normalizedUrl}`;
+
+                            // Process embeddings
+                            const { successCount, failureCount } = await processBatch(
+                                (dataset.items as unknown) as ScrapedItem[],
+                                jobDetails.userId,
+                                sourceKey,
+                                version,
+                                jobDetails.sharedUserIds
+                            );
+
+                            // Update job status and metadata
+                            await kv.set(`scrape-job:${jobId}`, {
+                                ...jobDetails,
+                                status: 'SUCCEEDED',
+                                completedAt: new Date().toISOString(),
+                                pageCount: dataset.items.length
+                            });
+
+                            // Update website metadata
+                            await kv.set(`website:${jobDetails.normalizedUrl}`, {
+                                scrapedAt: new Date().toISOString(),
+                                pageCount: dataset.items.length,
+                                embeddingsSuccessful: successCount,
+                                embeddingsFailed: failureCount
+                            });
+
+                            // Store version information
+                            await kv.set(`lastScrapeVersion:${jobDetails.userId}:${jobDetails.normalizedUrl}`, version);
+
+                            // Update embedding mappings
+                            const initialShared = Array.from(new Set([jobDetails.userId, ...(jobDetails.sharedUserIds || [])]));
+                            await kv.set(`embeddingMapping:${sourceKey}`, initialShared);
+                            await kv.set(`embeddingOwner:${sourceKey}`, jobDetails.userId);
+
+                            // Update global embedding index
+                            const indexKey = "embeddingIndex1";
+                            let currentIndex: string[] = await kv.get(indexKey) as string[] || [];
+                            if (!Array.isArray(currentIndex)) currentIndex = [];
+
+                            if (!currentIndex.includes(sourceKey)) {
+                                currentIndex.push(sourceKey);
+                                await kv.set(indexKey, currentIndex);
+                            }
+
+                            logger.info(`Scraping job completed successfully`, { jobId, pageCount: dataset.items.length });
+                        } catch (error) {
+                            logger.error(`Error processing embeddings`, { error });
+
+                            // Update job with error status
+                            await kv.set(`scrape-job:${jobId}`, {
+                                ...jobDetails,
+                                status: 'FAILED',
+                                completedAt: new Date().toISOString(),
+                                error: error instanceof Error ? error.message : 'Unknown error processing embeddings'
+                            });
+                        }
+                    })();
+
+                    // Respond to webhook immediately
+                    return res.status(200).json({
+                        success: true,
+                        job: jobId,
+                        status: 'PROCESSING'
+                    });
+                } else {
+                    // Fallback crawl returned no results
+                    logger.warn(`Fallback crawl returned no results`, { url: jobDetails.url });
+
+                    // Update job status
+                    await kv.set(`scrape-job:${jobId}`, {
+                        ...jobDetails,
+                        status: 'FAILED',
+                        completedAt: new Date().toISOString(),
+                        error: 'No content found to scrape'
+                    });
+
+                    return res.status(200).json({
+                        success: true,
+                        job: jobId,
+                        status: 'FAILED',
+                        error: 'No content found to scrape'
+                    });
+                }
+            } catch (error) {
+                logger.error(`Error processing dataset`, { error });
+
+                // Update job with error
+                await kv.set(`scrape-job:${jobId}`, {
+                    ...jobDetails,
+                    status: 'FAILED',
+                    completedAt: new Date().toISOString(),
+                    error: error instanceof Error ? error.message : 'Unknown error processing dataset'
+                });
+
+                return res.status(500).json({
+                    success: false,
+                    job: jobId,
+                    status: 'FAILED',
+                    error: error instanceof Error ? error.message : 'Unknown error'
+                });
+            }
+        } else if (eventStatus !== 'SUCCEEDED') {
+            // Crawl failed completely
+            logger.warn(`Crawl failed`, { status: eventStatus });
+
+            // Update job status
+            await kv.set(`scrape-job:${jobId}`, {
+                ...jobDetails,
+                status: 'FAILED',
+                completedAt: new Date().toISOString(),
+                error: `Crawl failed with status: ${status || eventStatus || 'unknown'}`
+            });
+
+            return res.status(200).json({
+                success: true,
+                job: jobId,
+                status: 'FAILED'
+            });
+        }
+
+        // Fallback response for any unhandled cases
+        return res.status(200).json({
+            success: true,
+            job: jobId,
+            status: 'ACKNOWLEDGED'
+        });
+
+    } catch (error) {
+        logger.error('Error processing webhook', { error });
+        return res.status(500).json({
+            success: false,
+            message: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+}

@@ -1,0 +1,8 @@
+import React from 'react';
+import Shop from './shop'; // Assuming 'shop.tsx' exists in the same directory
+
+const IndexPage = () => {
+    return <Shop />;
+};
+
+export default IndexPage;

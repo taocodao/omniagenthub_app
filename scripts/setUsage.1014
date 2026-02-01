@@ -1,0 +1,194 @@
+// scripts/setUsage.js
+
+require('dotenv').config(); // Load environment variables from .env
+const axios = require('axios');
+
+// Configuration from environment variables
+const ADDRESS = process.env.ADDRESS || '0x3ae3C71eeb08273A49c4Eb8642CFB25340C9bFDd';
+const BASE_URL = process.env.BASE_URL || 'http://localhost:3000/api';
+
+// Utility function to generate random integer between min and max (inclusive)
+const getRandomInt = (min = 1000, max = 5000) => {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+};
+
+// Function to fetch all departments
+const getDepartments = async () => {
+    console.log('Fetching departments...');
+    try {
+        const response = await axios.post(`${BASE_URL}/get-departments`, {});
+        if (response.status === 200) {
+            console.log('Departments fetched successfully:', response.data);
+            return response.data; // Assuming it's an array of department names
+        } else {
+            console.error('Failed to fetch departments:', response.status, response.statusText);
+            return [];
+        }
+    } catch (error) {
+        console.error('Error fetching departments:', error.message);
+        return [];
+    }
+};
+
+// Function to fetch roles for a given department
+const getRoles = async (department) => {
+    console.log(`Fetching roles for department "${department}"...`);
+    try {
+        const response = await axios.post(`${BASE_URL}/get-roles`, { department });
+        if (response.status === 200) {
+            console.log(`Roles fetched for department "${department}":`, response.data.roles);
+            return response.data.roles || [];
+        } else {
+            console.error(`Failed to fetch roles for department "${department}":`, response.status, response.statusText);
+            return [];
+        }
+    } catch (error) {
+        console.error(`Error fetching roles for department "${department}":`, error.message);
+        return [];
+    }
+};
+
+// Function to set initial usage count for a given role and department
+const setInitialUsage = async (department, role, initialCount) => {
+    console.log(`Setting initial usage for role "${role}" in department "${department}": ${initialCount}`);
+    try {
+        const response = await axios.post(`${BASE_URL}/updateUsage`, {
+            department,
+            role,
+            initialCount
+        });
+
+        if (response.status === 200) {
+            console.log(`✅ Successfully set initial usage for role "${role}" in department "${department}" to ${initialCount}`);
+        } else {
+            console.error(`❌ Failed to set initial usage for role "${role}" in department "${department}":`, response.status, response.statusText);
+        }
+    } catch (error) {
+        if (error.response) {
+            // Server responded with a status other than 2xx
+            console.error(`❌ Error setting initial usage for role "${role}" in department "${department}":`, error.response.data);
+        } else if (error.request) {
+            // No response received
+            console.error(`❌ No response received when setting initial usage for role "${role}" in department "${department}".`);
+        } else {
+            // Other errors
+            console.error(`❌ Error setting up request for role "${role}" in department "${department}":`, error.message);
+        }
+    }
+};
+
+// Function to set initial usage counts for all roles in a department
+const setInitialUsageForDepartment = async (department) => {
+    const roles = await getRoles(department);
+
+    if (roles.length === 0) {
+        console.warn(`No roles found for department "${department}". Skipping.`);
+        return;
+    }
+
+    console.log(`Found ${roles.length} role(s) in department "${department}":`, roles);
+
+    // Create an array of promises for setting initial usage counts
+    const usagePromises = roles.map(async (role) => {
+        const initialCount = getRandomInt(1000, 5000);
+        await setInitialUsage(department, role, initialCount);
+        // Optional: Introduce a small delay to avoid overwhelming the server
+        await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay
+    });
+
+    // Execute all usage submissions in parallel
+    await Promise.all(usagePromises);
+};
+
+// Function to set initial usage count for a specific role in a department
+const setInitialUsageForRole = async (department, role) => {
+    const initialCount = getRandomInt(1000, 5000);
+    await setInitialUsage(department, role, initialCount);
+};
+
+// Main function to orchestrate the process
+const main = async () => {
+    console.log('Script started.');
+
+    // Parse command-line arguments
+    const args = process.argv.slice(2);
+
+    // Initialize variables
+    let mode = 'prod';
+    let department = null;
+    let role = null;
+
+    // Simple argument parsing
+    // Usage:
+    // node scripts/setUsage.js <mode> [department] [role]
+    // mode: 'test' or 'prod' (required)
+    // department: name of the department (optional)
+    // role: name of the role (optional)
+
+    if (args.length < 1) {
+        console.error('Usage: node scripts/setUsage.js <mode> [department] [role]');
+        console.error('mode: "test" or "prod"');
+        process.exit(1);
+    }
+
+    mode = args[0].toLowerCase();
+
+    if (!['test', 'prod'].includes(mode)) {
+        console.error('Invalid mode. Use "test" or "prod".');
+        process.exit(1);
+    }
+
+    if (args.length >= 2) {
+        department = args[1];
+    }
+
+    if (args.length >= 3) {
+        role = args[2];
+    }
+
+    console.log(`Running in "${mode}" mode.`);
+
+    // Fetch departments
+    const departments = await getDepartments();
+
+    if (departments.length === 0) {
+        console.error('No departments found. Exiting.');
+        process.exit(1);
+    }
+
+    let departmentsToProcess = [];
+
+    if (department) {
+        if (!departments.includes(department)) {
+            console.error(`Department "${department}" does not exist.`);
+            process.exit(1);
+        }
+        departmentsToProcess = [department];
+    } else {
+        // If no department is specified, use mode to determine
+        if (mode === 'test') {
+            departmentsToProcess = [departments[0]];
+        } else {
+            departmentsToProcess = departments;
+        }
+    }
+
+    console.log(`Processing ${departmentsToProcess.length} department(s):`, departmentsToProcess);
+
+    for (const dept of departmentsToProcess) {
+        console.log(`\nProcessing department: "${dept}"`);
+
+        if (role) {
+            // Update usage for specific role
+            await setInitialUsageForRole(dept, role);
+        } else {
+            // Update usage for all roles in the department
+            await setInitialUsageForDepartment(dept);
+        }
+    }
+
+    console.log('\nInitial usage setting process completed.');
+};
+
+// Execute the main function
+main();

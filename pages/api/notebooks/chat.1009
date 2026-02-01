@@ -1,0 +1,341 @@
+// pages/api/notebooks/chat.ts - COMPLETE FIXED VERSION
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+import axios from 'axios';
+
+const kv = createClient({
+  url: process.env.KV_REST_API_URL!,
+  token: process.env.KV_REST_API_TOKEN!,
+});
+
+const SURFSENSE_API_URL = process.env.SURFSENSE_API_URL || 'https://surfsense-backend-730233624615.us-central1.run.app';
+const SURFSENSE_JWT_TOKEN = process.env.SURFSENSE_JWT_TOKEN!;
+
+interface NotebookSource {
+  id: string;
+  title: string;
+  type: 'file' | 'website' | 'text';
+  status: 'uploading' | 'processing' | 'completed' | 'error';
+  progress: number;
+  dateCreated: string;
+  selected: boolean;
+  surfsenseDocId?: number;
+  surfsenseSearchSpaceId?: number;
+  fileName?: string;
+  fileType?: string;
+}
+
+interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
+  sourcesUsed?: string[];
+}
+
+interface ChatRequest {
+  userKey: string;
+  notebookId: string;
+  query: string;
+  selectedSources?: string[];
+  sources?: NotebookSource[];
+  userAddress: string;
+  conversationHistory?: ChatMessage[];
+}
+
+interface ChatResponse {
+  success: boolean;
+  response?: string;
+  sourcesUsed?: string[];
+  searchSpaceId?: number;
+  messageId?: string;
+  timestamp?: string;
+  message?: string;
+}
+
+interface Notebook {
+  id: string;
+  title: string;
+  sources?: NotebookSource[];
+  surfsenseSearchSpaceId?: number;
+  userAddress: string;
+}
+
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse<ChatResponse>
+): Promise<void> {
+  if (req.method !== 'POST') {
+    res.status(405).json({ success: false, message: 'Method Not Allowed' });
+    return;
+  }
+
+  try {
+    const {
+      userKey,
+      notebookId,
+      query,
+      selectedSources = [],
+      sources: sourcesFromRequest = [],
+      conversationHistory = []
+    } = req.body as ChatRequest;
+
+    if (!userKey || !query?.trim() || !notebookId) {
+      res.status(400).json({
+        success: false,
+        message: 'Missing required parameters'
+      });
+      return;
+    }
+
+    if (!SURFSENSE_JWT_TOKEN) {
+      throw new Error('SURFSENSE_JWT_TOKEN not configured');
+    }
+
+    console.log('💬 Chat query:', query);
+    console.log('📚 Selected sources:', selectedSources);
+
+    // Get notebook from KV
+    const notebookKey = `${userKey}:notebook:${notebookId}`;
+    const notebookData = await kv.get(notebookKey);
+
+    if (!notebookData) {
+      res.status(404).json({ success: false, message: 'Notebook not found' });
+      return;
+    }
+
+    const notebook: Notebook = typeof notebookData === 'string' 
+      ? JSON.parse(notebookData)
+      : notebookData as Notebook;
+
+    const searchSpaceId = notebook.surfsenseSearchSpaceId;
+
+    if (!searchSpaceId) {
+      res.status(400).json({
+        success: false,
+        message: 'No search space configured for this notebook. Please upload sources first.'
+      });
+      return;
+    }
+
+    // ✅ CRITICAL FIX: Extract document IDs and source titles
+    const selectedDocumentIds: number[] = [];
+    const selectedSourceTitles: string[] = [];
+    
+    if (selectedSources.length > 0) {
+      console.log('🔍 Extracting source information...');
+      
+      // Use sources from request if available, otherwise from notebook
+      const sourcesToUse = sourcesFromRequest.length > 0 ? sourcesFromRequest : notebook.sources || [];
+      
+      for (const sourceId of selectedSources) {
+        const source = sourcesToUse.find(s => s.id === sourceId);
+        if (source) {
+          selectedSourceTitles.push(source.title);
+          if (source.surfsenseDocId) {
+            selectedDocumentIds.push(source.surfsenseDocId);
+            console.log(`✅ Found document: ${source.title} (ID: ${source.surfsenseDocId})`);
+          } else {
+            console.warn(`⚠️ Source "${source.title}" has no surfsenseDocId`);
+          }
+        } else {
+          console.warn(`⚠️ Source ID "${sourceId}" not found`);
+        }
+      }
+    }
+
+    console.log('🔍 Search space:', searchSpaceId);
+    console.log('📄 Selected document IDs:', selectedDocumentIds);
+    console.log('📚 Selected source titles:', selectedSourceTitles);
+
+    if (selectedSourceTitles.length === 0) {
+      res.status(400).json({
+        success: false,
+        message: 'No sources selected. Please select at least one source.'
+      });
+      return;
+    }
+
+    if (selectedDocumentIds.length === 0) {
+      res.status(400).json({
+        success: false,
+        message: 'Selected sources are not yet indexed. Please wait for processing to complete.'
+      });
+      return;
+    }
+
+    // Format messages - SIMPLE, NO HISTORY
+    const messages = [{
+      role: 'user' as const,
+      content: query
+    }];
+
+    console.log('📤 Calling SurfSense with document IDs:', selectedDocumentIds);
+
+    // ✅ CRITICAL FIX: Call SurfSense with document_ids_to_add_in_context
+    const chatResponse = await axios.post(
+      `${SURFSENSE_API_URL}/api/v1/chat`,
+      {
+        messages: messages,
+        data: {
+          search_space_id: searchSpaceId,
+          research_mode: "QNA",
+          selected_connectors: [],
+          search_mode: "CHUNKS",
+          document_ids_to_add_in_context: selectedDocumentIds  // ✅ THIS IS THE FIX!
+        }
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${SURFSENSE_JWT_TOKEN}`,
+          'Content-Type': 'application/json',
+          'Accept': 'text/plain'
+        },
+        timeout: 60000,
+        responseType: 'stream'
+      }
+    );
+
+    let responseText = '';
+    let sourcesUsed: string[] = [];
+    let fullRawResponse = '';  // DEBUG: capture everything
+
+    // Parse streaming response
+    return new Promise<void>((resolve, reject) => {
+      chatResponse.data.on('data', (chunk: Buffer) => {
+        const chunkStr = chunk.toString();
+        fullRawResponse += chunkStr;  // DEBUG
+        const lines = chunkStr.split('\n');
+        
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          
+          console.log('📨 Stream line:', line.substring(0, 100));  // DEBUG
+          
+          try {
+            // Handle text responses starting with "0:"
+            if (line.startsWith('0:')) {
+              const textData = line.substring(2);  // Remove "0:"
+              try {
+                // Try parsing as JSON string
+                const parsed = JSON.parse(textData);
+                if (typeof parsed === 'string') {
+                  responseText += parsed;
+                  console.log('✅ Text chunk:', parsed.substring(0, 50));
+                }
+              } catch (e) {
+                // If not valid JSON, treat as plain text
+                // Remove surrounding quotes if present
+                const cleanText = textData.replace(/^"|"$/g, '');
+                responseText += cleanText;
+                console.log('✅ Text chunk (non-JSON):', cleanText.substring(0, 50));
+              }
+            }
+            // Handle metadata responses starting with "8:"
+            else if (line.startsWith('8:')) {
+              const data = line.substring(2);
+              try {
+                const parsed = JSON.parse(data);
+                if (Array.isArray(parsed)) {
+                  for (const item of parsed) {
+                    if (item.type === 'sources' && item.data?.nodes) {
+                      sourcesUsed = item.data.nodes.map((node: any) => 
+                        node.metadata?.title || node.text || 'Unknown Source'
+                      );
+                      console.log('✅ Found sources:', sourcesUsed);
+                    }
+                  }
+                }
+              } catch (e) {
+                // Ignore parse errors for metadata
+              }
+            }
+            // Handle continuation lines (text that got split across chunks)
+            else if (!line.match(/^\d+:\[/) && line.trim().length > 0 && !line.includes(':{')) {
+              // This is likely a continuation of text from previous "0:" chunk
+              responseText += line;
+              console.log('✅ Continuation:', line.substring(0, 50));
+            }
+          } catch (error) {
+            console.log('⚠️ Line parse error:', error);
+          }
+        }
+      });
+
+      chatResponse.data.on('end', async () => {
+        try {
+          console.log('✅ Stream ended. Response length:', responseText.length);
+          console.log('📄 Full raw response (first 500 chars):', fullRawResponse.substring(0, 500));  // DEBUG
+          
+          // If no response text, provide fallback
+          if (!responseText.trim()) {
+            responseText = 'I apologize, but I could not generate a response. Please try rephrasing your question or check if the documents are properly uploaded.';
+          }
+
+          // Store conversation history
+          const conversationKey = `chat:${userKey}:${notebookId}`;
+          
+          const updatedHistory = [
+            ...conversationHistory,
+            {
+              id: `msg_${Date.now()}_user`,
+              role: 'user' as const,
+              content: query,
+              timestamp: new Date().toISOString()
+            },
+            {
+              id: `msg_${Date.now()}_assistant`,
+              role: 'assistant' as const,
+              content: responseText,
+              timestamp: new Date().toISOString(),
+              sourcesUsed: sourcesUsed.length > 0 ? sourcesUsed : selectedSourceTitles
+            }
+          ];
+          
+          await kv.set(conversationKey, JSON.stringify(updatedHistory), { ex: 86400 });
+
+          console.log('✅ Response generated successfully');
+          console.log('📚 Sources used:', sourcesUsed.length > 0 ? sourcesUsed : selectedSourceTitles);
+
+          res.status(200).json({
+            success: true,
+            response: responseText,
+            sourcesUsed: sourcesUsed.length > 0 ? sourcesUsed : selectedSourceTitles,
+            searchSpaceId,
+            messageId: `msg_${Date.now()}`,
+            timestamp: new Date().toISOString()
+          });
+          
+          resolve();
+        } catch (error) {
+          console.error('❌ Error storing conversation:', error);
+          reject(error);
+        }
+      });
+
+      chatResponse.data.on('error', (error: any) => {
+        console.error('❌ Stream error:', error);
+        reject(error);
+      });
+    });
+
+  } catch (error) {
+    console.error('❌ Chat error:', error);
+    
+    if (axios.isAxiosError(error)) {
+      const errorData = error.response?.data;
+      console.error('❌ Axios error details:', errorData);
+      
+      res.status(error.response?.status || 500).json({
+        success: false,
+        message: `Chat failed: ${typeof errorData === 'string' ? errorData : JSON.stringify(errorData?.detail || error.message)}`
+      });
+      return;
+    }
+
+    res.status(500).json({
+      success: false,
+      message: `Chat failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+    });
+  }
+}

@@ -1,0 +1,158 @@
+import { createClient } from '@vercel/kv';
+import OpenAI from 'openai';  // Import the OpenAI library
+import { Assistant } from 'experts';
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL,
+    token: process.env.KV_REST_API_TOKEN,
+});
+
+// Instantiate OpenAI client
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY || '',
+});
+
+class MyAssistant extends Assistant {
+    constructor(options) {
+        super(options);
+    }
+}
+
+// 1. createAssistant function
+export default async function createAssistant(assistantId) {
+    console.log(`Checking for existing assistant mapping for ID: ${assistantId}`);
+
+    // Check if realAssistantId already exists in the database
+    let realAssistantId = await kv.get(`assistant-mapping:${assistantId}`);
+
+    if (realAssistantId) {
+        console.log(`Found existing assistant mapping: ${realAssistantId}`);
+
+        // Check if instructions exist for the assistant ID before validating
+        const existingInstructions = await kv.get(`assistant:${assistantId}:instructions`);
+
+        if (!existingInstructions) {
+            console.error(`Instructions not found for assistant ID: ${assistantId}`);
+            throw new Error(`Instructions not found for assistant ID: ${assistantId}`);
+        }
+
+        console.log(`Instructions exist for assistant ID: ${assistantId}`);
+
+        // Validate if the assistantId is valid by trying to create a thread and a message
+        try {
+            console.log(`Validating assistant ID: ${realAssistantId}`);
+
+            // Create a new thread
+            const thread = await openai.beta.threads.create({
+                // Any initial properties of the thread you may need
+            });
+
+            console.log(`Thread created with ID: ${thread.id}`);
+
+            const createdMessage = await openai.beta.threads.messages.create(thread.id, {
+                role: 'user',
+                content: 'Testing Assistant ID',
+            });
+            console.log('Message created with ID:', createdMessage.id);
+
+            // Run the assistant and get the response (non-streaming)
+            const response = await openai.beta.threads.runs.create(thread.id, {
+                assistant_id: realAssistantId, // Use realAssistantId here
+            });
+
+            if (response) {
+                console.log(`Assistant ID ${realAssistantId} is valid.`);
+                return realAssistantId; // Return if valid
+            } else {
+                return null;
+            }
+        } catch (error) {
+            console.error('Error details:', error); // Log the complete error for debugging
+            console.error(`Invalid assistant ID: ${realAssistantId}, recreating...`);
+            return null;
+        }
+    }
+
+    // If no valid realAssistantId exists, or if validation failed, create a new assistant
+    console.log(`Creating a new assistant for ID: ${assistantId}.`);
+    return await re_createAssistant(assistantId);
+}
+
+
+// No changes needed for re_createAssistant function
+// 2. re_createAssistant function (Always creates a new assistant)
+async function re_createAssistant(assistantId) {
+    console.log(`Fetching existing instructions for assistant ID: ${assistantId}`);
+
+    const existingInstructions = await kv.get(`assistant:${assistantId}:instructions`);
+
+    if (!existingInstructions) {
+        console.error(`Instructions not found for assistant ID: ${assistantId}`);
+        throw new Error(`Instructions not found for assistant ID: ${assistantId}`);
+    }
+
+    console.log(`Instructions fetched successfully for assistant ID: ${assistantId}`);
+
+    const instructionsString = typeof existingInstructions === 'object'
+        ? JSON.stringify(existingInstructions)
+        : String(existingInstructions);
+
+    const maxRetries = 5;
+    const retryDelay = 1000;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+            console.log(`Attempt ${attempt + 1}: Trying to acquire lock for assistant creation`);
+
+            const lockKey = `lock:assistant:${assistantId}`;
+            const lockAcquired = await kv.set(lockKey, 'locked', { nx: true, ex: 30 });
+
+            if (!lockAcquired) {
+                console.warn(`Lock not acquired, retrying after ${retryDelay}ms... (Attempt ${attempt + 1})`);
+                if (attempt === maxRetries - 1) {
+                    console.error(`Failed to acquire lock after ${maxRetries} attempts`);
+                    throw new Error('Failed to acquire lock after multiple attempts');
+                }
+                await new Promise(resolve => setTimeout(resolve, retryDelay));
+                continue;
+            }
+
+            console.log(`Lock acquired. Proceeding to create a new assistant for ID: ${assistantId}`);
+
+            try {
+                // Create a new assistant
+                const assistantInstance = await MyAssistant.create({
+                    name: `Assistant_${assistantId}`,
+                    instructions: instructionsString,
+                    model: process.env.GPT_MODEL,
+                    temperature: 0.5,
+                    apiKey: process.env.OPENAI_API_KEY,
+                });
+
+                console.log(`Initializing assistant...`);
+                await assistantInstance.init();
+                const newRealAssistantId = assistantInstance.id;
+
+                console.log(`Assistant created successfully with ID: ${newRealAssistantId}`);
+
+                // Update KV with the new assistant-mapping
+                await kv.set(`assistant-mapping:${assistantId}`, newRealAssistantId);
+                console.log(`Assistant mapping updated in KV for ID: ${assistantId}`);
+
+                return newRealAssistantId;  // Return the newly created assistant ID
+            } finally {
+                console.log(`Releasing lock for assistant creation with ID: ${assistantId}`);
+                await kv.del(lockKey);  // Always release the lock
+            }
+        } catch (error) {
+            console.error(`Error during attempt ${attempt + 1}:`, error);
+            if (attempt === maxRetries - 1) {
+                console.error(`Max retries reached. Throwing error.`);
+                throw error;  // Rethrow error after max retries
+            }
+            await new Promise(resolve => setTimeout(resolve, retryDelay));  // Retry after delay
+        }
+    }
+}
+
+export { createAssistant, re_createAssistant };

@@ -1,0 +1,83 @@
+// pages/chatbotwin.tsx
+import React, { useState } from "react";
+import { useActiveAccount } from "thirdweb/react";
+import styles from "../styles/ChatBot.module.css"; // Create your own CSS file to style the chat window
+import { LocalizedText } from "../util/LocalizedText";
+import { toast } from "react-toastify";
+
+interface Message {
+    sender: "user" | "bot";
+    text: string;
+}
+
+const ChatBot: React.FC = () => {
+    const account = useActiveAccount();
+    const userId = account?.address || "anonymous";
+    const [messages, setMessages] = useState<Message[]>([]);
+    const [input, setInput] = useState("");
+    const [loading, setLoading] = useState(false);
+
+    const sendMessage = async () => {
+        if (!input.trim()) return;
+        const userMessage: Message = { sender: "user", text: input.trim() };
+        setMessages((prev) => [...prev, userMessage]);
+        setLoading(true);
+
+        try {
+            const res = await fetch("/api/chat_bot", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ userId, question: input.trim() }),
+            });
+            if (res.ok) {
+                const data = await res.json();
+                const botMessage: Message = { sender: "bot", text: data.answer };
+                setMessages((prev) => [...prev, botMessage]);
+            } else {
+                toast.error("Failed to get answer from the bot.");
+            }
+        } catch (error) {
+            console.error("Error sending message:", error);
+            toast.error("An error occurred while contacting the bot.");
+        } finally {
+            setLoading(false);
+            setInput("");
+        }
+    };
+
+    return (
+        <div className={styles.chatContainer}>
+            <div className={styles.chatWindow}>
+                {messages.map((msg, idx) => (
+                    <div key={idx} className={msg.sender === "user" ? styles.userMessage : styles.botMessage}>
+                        <p>{msg.text}</p>
+                    </div>
+                ))}
+                {loading && (
+                    <div className={styles.botMessage}>
+                        <p>
+                            <LocalizedText name="Bot is typing..." />
+                        </p>
+                    </div>
+                )}
+            </div>
+            <div className={styles.inputContainer}>
+                <input
+                    type="text"
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    placeholder="Type your question..."
+                    className={styles.inputBox}
+                    onKeyPress={(e) => {
+                        if (e.key === "Enter") sendMessage();
+                    }}
+                />
+                <button onClick={sendMessage} className={styles.sendButton} disabled={loading}>
+                    Send
+                </button>
+            </div>
+        </div>
+    );
+};
+
+export default ChatBot;

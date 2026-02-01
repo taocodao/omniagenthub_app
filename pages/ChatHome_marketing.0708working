@@ -1,0 +1,2681 @@
+// pages/ChatHome_marketing.tsx
+
+import { useActiveAccount } from "thirdweb/react";
+import styles from "../styles/ChatHome1.module.css";
+import Navbar from "../components/Navbar";
+import { useState, useEffect, useRef, useCallback, useContext, ChangeEvent } from "react";
+import SignIn from "../components/SignIn";
+import RatingComponent from "../components/RatingComponent";
+import Head from "next/head";
+import { useSharedContext } from "../context/SharedContext";
+import { useRouter } from "next/router";
+import ChatBase from "../components/ChatBase";
+import { ChatBaseStream } from "../components/ChatBaseStream";
+import { ChatBaseStream1 } from "../components/ChatBaseStream_marketing";
+import { LocalizedText, getLocalizedString } from "../util/LocalizedText";
+import { LocalizationContext } from "../util/LocalizationContext";
+import { usePayment } from "../hook/Payment_Process";
+import { UPLOAD_FILE_FEE, PLATFORM_NAME } from "../constants/constants";
+import { toast } from "react-toastify";
+import TaskItem from "../components/TaskItem";
+import RoleItem from "../components/RoleItem";
+import axios from "axios";
+import { debounce } from 'lodash'
+import { ToastContainer } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
+
+// Define interfaces
+interface RoleData {
+    department: string;
+    role: string;
+}
+
+interface UserProfile {
+    id: string;
+    name: string;
+    business: string;        // Raw string content
+    USP: string;            // Raw string content  
+    persona: string;        // Raw string content
+    challenges: string;     // FIXED: Single string instead of array
+    websiteUrl?: string;
+    description?: string;
+    createdAt: string;
+    updatedAt: string;
+    isOwned?: boolean; // NEW: To distinguish owned vs shared profiles
+    ownerAddress?: string; // NEW: Original owner's address
+}
+
+interface LocalizedMessages {
+    cleanupSuccess: string;
+    cleanupFailed: string;
+    cleanupError: string;
+    translateFailed: string;
+    uploadSuccess: string;
+    uploadFailed: string;
+}
+
+// NEW: Interface for role mapping with pricing
+interface RoleMapping {
+    price: number;
+    user: string;
+}
+
+// NEW: Share Manager interfaces
+interface ShareManagerProps {
+    embedding: any;
+    currentUserAddress: string;
+    currentUserName: string;
+    onUpdateShare: (users: { userAddress: string; userName: string }[]) => void;
+    onClose: () => void;
+    style?: React.CSSProperties;
+}
+
+const ShareManager: React.FC<ShareManagerProps> = ({
+    embedding,
+    currentUserAddress,
+    currentUserName,
+    onUpdateShare,
+    onClose,
+    style,
+}) => {
+    const [newShare, setNewShare] = useState("");
+    const [sharedUsers, setSharedUsers] = useState<{ userAddress: string; userName: string }[]>([]);
+    const [availableUsers, setAvailableUsers] = useState<{ userAddress: string; userName: string }[]>([]);
+    const [selectedToRemove, setSelectedToRemove] = useState("");
+    const [selectedToAdd, setSelectedToAdd] = useState("");
+
+    const fetchSharedUsers = async () => {
+        try {
+            const res = await axios.get(`/api/profileSharing/get?profileId=${embedding.key}`);
+            if (res.data && res.data.selectedSources) {
+                setSharedUsers(res.data.selectedSources);
+                onUpdateShare(res.data.selectedSources);
+            }
+        } catch (error) {
+            console.error("Error fetching shared users:", error);
+        }
+    };
+
+    const fetchAvailableUsers = async () => {
+        try {
+            const res = await axios.get(`/api/getCompanyUsers?userAddress=${currentUserAddress}`);
+            if (res.data && res.data.users) {
+                setAvailableUsers(res.data.users);
+            }
+        } catch (error) {
+            console.error("Error fetching available company users:", error);
+        }
+    };
+
+    useEffect(() => {
+        fetchSharedUsers();
+        fetchAvailableUsers();
+    }, [currentUserName]);
+
+    const handleAdd = async () => {
+        if (!selectedToAdd) return;
+        try {
+            // NEW: Get the full profile data before sharing
+            console.log(`🔄 Fetching profile data for sharing: ${embedding.key}`);
+            const profileResponse = await fetch(`/api/get-user-profile-detail?profileId=${embedding.key}&userAddress=${currentUserAddress}`);
+            let profileData = null;
+
+            if (profileResponse.ok) {
+                const result = await profileResponse.json();
+                if (result.success && result.profile) {
+                    profileData = result.profile;
+                    console.log(`✅ Found profile data for sharing:`, profileData.name);
+                } else {
+                    console.log(`❌ Profile data not found:`, result);
+                }
+            } else {
+                console.log(`❌ Profile fetch failed with status:`, profileResponse.status);
+            }
+
+            if (!profileData) {
+                toast.error("Failed to get profile data for sharing");
+                return;
+            }
+
+            const res = await axios.post("/api/profileSharing/add", {
+                userAddress: selectedToAdd,
+                profileId: embedding.key,
+                profileData: profileData // NEW: Include the profile data
+            });
+
+            console.log(`✅ Profile shared successfully with data:`, res.data);
+            toast.success(res.data.message || "Added shared user successfully");
+            await fetchSharedUsers();
+            setSelectedToAdd("");
+        } catch (error: any) {
+            console.error("❌ Error adding shared user:", error);
+            toast.error(error.response?.data?.error || "Error adding shared user");
+        }
+    };
+
+
+
+    const handleRemove = async () => {
+        if (!selectedToRemove) return;
+        try {
+            const res = await axios.post("/api/profileSharing/remove", {
+                userAddress: selectedToRemove,
+                profileId: embedding.key, // This is actually the profile.id
+            });
+            toast.success(res.data.message || "Removed shared user successfully");
+            await fetchSharedUsers();
+            setSelectedToRemove("");
+        } catch (error: any) {
+            toast.error(error.response?.data?.error || "Error removing shared user");
+        }
+    };
+    return (
+        <div
+            style={{
+                position: "relative",
+                backgroundColor: "white",
+                border: "1px solid #ccc",
+                padding: "1rem",
+                boxShadow: "0 0 10px rgba(0,0,0,0.2)",
+                zIndex: 1000,
+                width: "350px",
+                maxHeight: "450px",
+                borderRadius: "8px",
+                overflow: "auto",
+                ...style,
+            }}
+        >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+                <h3 style={{ margin: 0, color: "blue" }}>
+                    <LocalizedText name="Share Profile" />
+                </h3>
+                <button onClick={onClose} style={{ background: "none", border: "none", fontSize: "1.5rem", cursor: "pointer" }}>
+                    ×
+                </button>
+            </div>
+
+            <div style={{ marginBottom: "1rem" }}>
+                <label style={{ fontWeight: "bold", color: "blue", display: "block", marginBottom: "0.5rem" }}>
+                    <LocalizedText name="Currently Shared Users" />:
+                </label>
+                <select
+                    value={selectedToRemove}
+                    onChange={(e) => setSelectedToRemove(e.target.value)}
+                    style={{
+                        width: "100%",
+                        padding: "0.5rem",
+                        borderRadius: "4px",
+                        border: "1px solid #ccc",
+                        marginBottom: "0.5rem"
+                    }}
+                >
+                    <option value=""><LocalizedText name="Select a user to remove" /></option>
+                    {sharedUsers.map((user) => (
+                        <option key={user.userAddress} value={user.userAddress}>
+                            {user.userName} ({user.userAddress.slice(0, 6)}...{user.userAddress.slice(-4)})
+                        </option>
+                    ))}
+                </select>
+                <button
+                    onClick={handleRemove}
+                    disabled={!selectedToRemove}
+                    style={{
+                        padding: "0.5rem 1rem",
+                        backgroundColor: "red",
+                        color: "white",
+                        border: "none",
+                        borderRadius: "4px",
+                        cursor: selectedToRemove ? "pointer" : "not-allowed",
+                        width: "100%"
+                    }}
+                >
+                    <LocalizedText name="Remove" />
+                </button>
+            </div>
+
+            <div>
+                <label style={{ fontWeight: "bold", color: "blue", display: "block", marginBottom: "0.5rem" }}>
+                    <LocalizedText name="Add User to Share" />:
+                </label>
+                <select
+                    value={selectedToAdd}
+                    onChange={(e) => setSelectedToAdd(e.target.value)}
+                    style={{
+                        width: "100%",
+                        padding: "0.5rem",
+                        borderRadius: "4px",
+                        border: "1px solid #ccc",
+                        marginBottom: "0.5rem",
+                    }}
+                >
+                    <option value=""><LocalizedText name="Select a user to add" /></option>
+                    {availableUsers
+                        .filter((user) => !sharedUsers.some((shared) => shared.userAddress === user.userAddress))
+                        .map((user) => (
+                            <option key={user.userAddress} value={user.userAddress}>
+                                {user.userName} ({user.userAddress.slice(0, 6)}...{user.userAddress.slice(-4)})
+                            </option>
+                        ))}
+                </select>
+                <button
+                    onClick={handleAdd}
+                    disabled={!selectedToAdd}
+                    style={{
+                        padding: "0.5rem 1rem",
+                        backgroundColor: "green",
+                        color: "white",
+                        border: "none",
+                        borderRadius: "4px",
+                        width: "100%",
+                        cursor: selectedToAdd ? "pointer" : "not-allowed",
+                    }}
+                >
+                    <LocalizedText name="Add" />
+                </button>
+            </div>
+        </div>
+    );
+};
+interface ChatHomeMarketingProps {
+    selectedRole1?: string;
+    selectedCategory?: string;
+}
+const ChatHomeMarketing: React.FC<ChatHomeMarketingProps> = ({
+    selectedRole1,
+    selectedCategory
+}) => {
+    const { language, setLanguage } = useContext(LocalizationContext);
+    const account = useActiveAccount();
+    const address = account?.address;
+    const router = useRouter();
+    const [selectedRole, setSelectedRole] = useState<RoleData | null>(null);
+    const [roles, setRoles] = useState<RoleData[]>([]);
+    const [tasks, setTasks] = useState<string[]>([]);
+    const [selectedTask, setSelectedTask] = useState<string | null>(null);
+    const [isRatingModalOpen, setIsRatingModalOpen] = useState(false);
+
+    // User Profile States
+    const [userProfiles, setUserProfiles] = useState<UserProfile[]>([]);
+    const [selectedProfile, setSelectedProfile] = useState<UserProfile | null>(null);
+    const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
+    const [isProfileChatRunning, setIsProfileChatRunning] = useState(false);
+    const [profileChatInitialMessage, setProfileChatInitialMessage] = useState("");
+    const [isEditingProfile, setIsEditingProfile] = useState(false);
+    const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
+    const profileButtonRef = useRef<HTMLDivElement>(null);
+    // NEW: State to store task-to-role mapping for favorite tasks
+    const [taskToRoleMap, setTaskToRoleMap] = useState<{ [task: string]: string }>({});
+    // NEW: State to store the actual role to use for task execution
+    const [executionRole, setExecutionRole] = useState<string | null>(null);
+
+    // URL/text input dialog states
+    const [showUrlInputDialog, setShowUrlInputDialog] = useState(false);
+    const [profileInputData, setProfileInputData] = useState({
+        websiteUrl: '',
+        description: ''
+    });
+
+    // NEW: State to control if profile creation is happening in modal
+    const [showProfileCreationModal, setShowProfileCreationModal] = useState(false);
+
+    // NEW: State for role mapping pricing
+    const [roleMapping, setRoleMapping] = useState<RoleMapping | null>(null);
+
+    // NEW: Share modal states
+    const [showShareModal, setShowShareModal] = useState(false);
+    const [shareProfile, setShareProfile] = useState<UserProfile | null>(null);
+
+    const { freeChatsLeft, setFreeChatsLeft, freeUploadsLeft, setFreeUploadsLeft, freeWebScrapeLeft, setFreeWebScrapeLeft } = useSharedContext();
+
+    const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
+    const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+    const [modalContent, setModalContent] = useState("");
+    const roleButtonRef = useRef<HTMLDivElement>(null);
+    const taskButtonRef = useRef<HTMLDivElement>(null);
+    const [isRoleDropdownOpen, setIsRoleDropdownOpen] = useState(false);
+    const [isTaskDropdownOpen, setIsTaskDropdownOpen] = useState(false);
+    const [selectedLanguage, setSelectedLanguage] = useState<string>("English");
+    const [languages, setLanguages] = useState<string[]>([]);
+    const [taskDescription, setTaskDescription] = useState<string | null>(null);
+    const [hoveredTask, setHoveredTask] = useState<string | null>(null);
+    const { process_payment, isPaymentProcessing } = usePayment();
+    const [isTaskModalVisible, setIsTaskModalVisible] = useState(false);
+    const [modalPosition, setModalPosition] = useState({ top: 0, left: 0 });
+    const [isTooltipVisible, setIsTooltipVisible] = useState(false);
+    const modalRef = useRef<HTMLDivElement>(null);
+    const [activeButton, setActiveButton] = useState<string | null>(null);
+    const [isRoleModalVisible, setIsRoleModalVisible] = useState(false);
+    const [roleModalPosition, setRoleModalPosition] = useState({ top: 0, left: 0 });
+    const [roleDescription, setRoleDescription] = useState<string | null>(null);
+    const [activeRoleButton, setActiveRoleButton] = useState<string | null>(null);
+    const hasAddedFavoriteFromURL = useRef(false);
+    const [selectedDepartment, setSelectedDepartment] = useState<string | null>(null);
+    const [isFavoriteTasksLoaded, setIsFavoriteTasksLoaded] = useState<boolean>(false);
+    const [isChatRunning, setIsChatRunning] = useState(false);
+    const [favoriteTasks, setFavoriteTasks] = useState<string[]>([]);
+    const [isRunButtonDisabled, setIsRunButtonDisabled] = useState(false);
+    const [isRunButtonHovered, setIsRunButtonHovered] = useState(false);
+    const buttonRef = useRef<HTMLButtonElement | null>(null);
+    const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+
+    // NEW: Constant for the favorite task role
+    const FAVORITE_TASK_ROLE = "Favorite Task";
+
+    // UPDATED: Fetch roles from vibe marketing department excluding User Research Collector + add Favorite Task role
+    const fetchRoles = useCallback(async () => {
+        try {
+            const response = await fetch('/api/get-roles', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ department: "Vibe Marketing" }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch roles.');
+            }
+
+            const data: { roles: string[] } = await response.json();
+            const allRoles = Array.isArray(data.roles) ? data.roles : [];
+
+            // Filter out "User Research Collector" from vibe marketing roles
+            const filteredRoles = allRoles.filter(roleName => roleName !== "User Research Collector");
+
+            // Convert string roles to RoleData objects
+            const roleDataArray: RoleData[] = filteredRoles.map(roleName => ({
+                department: "Vibe Marketing",
+                role: roleName
+            }));
+
+            // NEW: Add hardcoded "Favorite Task" role at the top
+            const favoriteTaskRole: RoleData = {
+                department: "Vibe Marketing",
+                role: FAVORITE_TASK_ROLE
+            };
+
+            const allRolesWithFavorite = [favoriteTaskRole, ...roleDataArray];
+            setRoles(allRolesWithFavorite);
+
+            // FIXED: Only auto-select first role if no URL parameters are present
+            const hasUrlParams = router.query.selectedRole && router.query.selectedCategory;
+
+            if (allRolesWithFavorite.length > 0 && !hasUrlParams) {
+                const initialRole = allRolesWithFavorite[0];
+                setSelectedRole(initialRole);
+
+                // Only fetch tasks if address is available, otherwise let the useEffect handle it
+                if (address) {
+                    console.log(`🔄 Fetching initial tasks for role: ${initialRole.role}`);
+                    await fetchTasks(initialRole.department, initialRole.role);
+                } else {
+                    console.log(`⏳ Address not available yet, will fetch tasks when ready`);
+                }
+
+                // NEW: Fetch role mapping for pricing
+                await fetchRoleMapping(initialRole);
+            } else if (!hasUrlParams) {
+                setSelectedRole(null);
+                setTasks([]);
+            }
+
+            // If URL params exist, let the URL parameter useEffect handle the selection
+        } catch (error) {
+            console.error('Error fetching roles:', error);
+            toast.error('Error fetching roles.');
+            setRoles([]);
+        }
+    }, [router.query]);
+
+    // NEW: Handler for hardcoded Productivity Improvement profile
+    const handleSelectProductivityProfile = async () => {
+        const productivityProfile = {
+            id: "productivity-improvement",
+            name: "Productivity Improvement",
+            business: "General productivity consulting and improvement services",
+            USP: "Streamlined processes and efficiency optimization",
+            persona: "Professionals seeking workflow optimization and productivity enhancement",
+            challenges: "Time management, process inefficiencies, and productivity bottlenecks",
+            websiteUrl: "",
+            description: "Hardcoded profile for productivity improvement tasks",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            isOwned: true,
+            ownerAddress: address
+        };
+
+        if (selectedProfile?.id === "productivity-improvement") {
+            setSelectedProfile(null);
+            toast.info(await getLocalizedString("Deselected Productivity Improvement profile", language));
+        } else {
+            setSelectedProfile(productivityProfile);
+            toast.info(await getLocalizedString("Selected Productivity Improvement profile", language));
+        }
+        setIsProfileDropdownOpen(false);
+    };
+
+    // NEW: Function to fetch role mapping and pricing
+    const fetchRoleMapping = async (role: RoleData) => {
+        try {
+            // Skip role mapping for Favorite Task role
+            if (role.role === FAVORITE_TASK_ROLE) {
+                setRoleMapping({ price: 1, user: PLATFORM_NAME });
+                return;
+            }
+
+            const response = await fetch("/api/get-role-mappings", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    department: role.department,
+                    role: role.role,
+                }),
+            });
+            if (response.ok) {
+                const mapping = await response.json();
+                setRoleMapping(mapping);
+            }
+        } catch (error) {
+            console.error("Error fetching role mapping:", error);
+            setRoleMapping({ price: 1, user: PLATFORM_NAME }); // fallback
+        }
+    };
+
+    // UPDATED: Call fetchRoles on component mount, but don't auto-select if URL params exist
+    useEffect(() => {
+        if (address) {
+            fetchRoles();
+        }
+    }, [address, fetchRoles]);
+
+    // FIXED: Handle URL parameters for auto-selection of role and task
+    useEffect(() => {
+        const initializeData = async () => {
+            // Only run if we have the required URL parameters and roles are loaded
+            if (router.query.selectedRole && router.query.selectedCategory && roles.length > 0) {
+                const selectedRoleData: RoleData = {
+                    role: router.query.selectedRole as string,
+                    department: router.query.selectedCategory as string,
+                };
+                setSelectedRole(selectedRoleData);
+                await fetchTasks(selectedRoleData.department, selectedRoleData.role);
+                await fetchRoleMapping(selectedRoleData);
+
+                if (router.query.selectedTask) {
+                    setSelectedTask(router.query.selectedTask as string);
+                    try {
+                        const response = await fetch("/api/add-role-mapping", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                userAddress: address,
+                                department: selectedRoleData.department,
+                                role: selectedRoleData.role,
+                            }),
+                        });
+                        if (!response.ok) {
+                            throw new Error("Failed to add role mapping");
+                        }
+                        if (router.query.language && typeof router.query.language === "string") {
+                            const languageFromURL = router.query.language;
+                            setSelectedLanguage(languageFromURL);
+                            setLanguage(languageFromURL);
+                        }
+                    } catch (error) {
+                        console.error(`Error adding role mapping:`, error);
+                    }
+                    setIsChatRunning(false);
+                } else {
+                    setSelectedTask(null);
+                }
+            }
+
+            // Handle language parameter
+            if (router.query.language && typeof router.query.language === "string") {
+                const languageFromURL = router.query.language;
+                setSelectedLanguage(languageFromURL);
+                setLanguage(languageFromURL);
+            }
+        };
+        initializeData();
+    }, [router.query, roles]); // Add roles as dependency
+
+    // NEW: Re-fetch tasks for Favorite Task role when address becomes available
+    useEffect(() => {
+        if (address && selectedRole && selectedRole.role === FAVORITE_TASK_ROLE) {
+            console.log(`🔄 Address available, re-fetching favorite tasks for role: ${selectedRole.role}`);
+            fetchTasks(selectedRole.department, selectedRole.role);
+        }
+    }, [address, selectedRole]);
+
+    // NEW: Function to fetch shared profiles
+    const fetchSharedProfiles = async () => {
+        if (!address) return [];
+        try {
+            const response = await fetch(`/api/get-shared-profiles?userAddress=${address}`);
+            if (response.ok) {
+                const result = await response.json();
+                if (result.success) {
+                    return result.profiles || [];
+                }
+            }
+        } catch (error) {
+            console.error("Error fetching shared profiles:", error);
+        }
+        return [];
+    };
+
+    // UPDATED: Fetch both owned and shared profiles with enhanced debug logging
+    const fetchUserProfiles = async () => {
+        if (!address) return;
+        try {
+            console.log(`🔄 Fetching profiles for user: ${address}`);
+
+            // Fetch owned profiles
+            const ownedResponse = await fetch(`/api/get-user-profiles?userAddress=${address}`);
+            let ownedProfiles: UserProfile[] = [];
+
+            if (ownedResponse.ok) {
+                const result = await ownedResponse.json();
+                if (result.success) {
+                    ownedProfiles = (result.profiles || []).map((profile: UserProfile) => ({
+                        ...profile,
+                        isOwned: true,
+                        ownerAddress: address
+                    }));
+                    console.log(`✅ Found ${ownedProfiles.length} owned profiles:`, ownedProfiles.map(p => p.name));
+                }
+            } else {
+                console.error(`❌ Owned profiles API failed with status ${ownedResponse.status}`);
+            }
+
+            // Fetch shared profiles with detailed logging
+            console.log(`🔄 Fetching shared profiles for ${address}...`);
+            const sharedResponse = await fetch(`/api/get-shared-profiles?userAddress=${address}`);
+            let sharedProfiles: UserProfile[] = [];
+
+            console.log(`📡 Shared profiles API response status: ${sharedResponse.status}`);
+
+            if (sharedResponse.ok) {
+                const result = await sharedResponse.json();
+                console.log(`📦 Shared profiles API response:`, result);
+
+                if (result.success && result.profiles && Array.isArray(result.profiles)) {
+                    sharedProfiles = result.profiles.map((profile: UserProfile) => ({
+                        ...profile,
+                        isOwned: false
+                    }));
+                    console.log(`✅ Found ${sharedProfiles.length} shared profiles:`, sharedProfiles.map(p => ({
+                        id: p.id,
+                        name: p.name,
+                        owner: p.ownerAddress
+                    })));
+                } else {
+                    console.log(`❌ No shared profiles found or API error:`, result);
+                }
+            } else {
+                const errorText = await sharedResponse.text();
+                console.error(`❌ Shared profiles API failed with status ${sharedResponse.status}:`, errorText);
+            }
+
+            // Combine both owned and shared profiles
+            const allProfiles = [...ownedProfiles, ...sharedProfiles];
+            setUserProfiles(allProfiles);
+
+            console.log(`📊 Profile Summary for ${address}:`);
+            console.log(`- Owned profiles: ${ownedProfiles.length}`);
+            console.log(`- Shared profiles: ${sharedProfiles.length}`);
+            console.log(`- Total profiles: ${allProfiles.length}`);
+
+            if (allProfiles.length === 0) {
+                console.log(`⚠️ No profiles found for user ${address}`);
+            }
+
+        } catch (error) {
+            console.error("❌ Error fetching user profiles:", error);
+            toast.error(await getLocalizedString("Network error loading profiles.", language));
+        }
+    };
+
+
+
+
+    // FIXED: Updated fetchProfileDetails with proper API response handling
+    const fetchProfileDetails = async (profileId: string): Promise<UserProfile | null> => {
+        try {
+            const response = await fetch(`/api/get-user-profile-detail?profileId=${profileId}&userAddress=${address}`);
+
+            if (response.ok) {
+                const result = await response.json();
+                if (result.success && result.profile) {
+                    return result.profile;
+                } else {
+                    console.error("Profile not found or error:", result.message);
+                    return null;
+                }
+            } else {
+                console.error("HTTP error fetching profile detail:", response.status);
+                return null;
+            }
+        } catch (error) {
+            console.error("Error fetching profile details:", error);
+            return null;
+        }
+    };
+
+    const handleCreateNewProfile = async () => {
+        if (!address) {
+            toast.error(await getLocalizedString("Please connect your wallet.", language));
+            return;
+        }
+
+        // FIXED Issue 2: Get localized prepopulated text
+        const prepopulatedText = await getLocalizedString(`Please answer the following questions to create your user profile:
+
+1. 150-word company description
+2. Unique value proposition statement
+3. Primary customer persona details
+4. Top 3 customer pain points base
+
+Please provide detailed and clear answers to each question.
+
+Your answers:
+1. Company Description: [Your answer here]
+2. Value Proposition: [Your answer here]
+3. Customer Persona: [Your answer here]
+4. Pain Points: [Your answer here]`, language);
+
+        setProfileInputData({
+            websiteUrl: '',
+            description: prepopulatedText // FIXED Issue 2: Pre-populate with localized text
+        });
+
+        // Show URL/text input dialog
+        setShowUrlInputDialog(true);
+        setIsProfileDropdownOpen(false);
+    };
+
+    const handleUrlInputSubmit = async () => {
+        if (!profileInputData.websiteUrl.trim() && !profileInputData.description.trim()) {
+            toast.error(await getLocalizedString("Please provide either a website URL or description", language));
+            return;
+        }
+
+        // CHANGE 3: Don't change the role in dropdown when creating profile
+        // Keep the currently selected role unchanged
+
+        // Create standardized initial message with exact 4 questions
+        let initialMessage = '';
+        if (profileInputData.websiteUrl.trim()) {
+            initialMessage = `Please analyze the following website URL: ${profileInputData.websiteUrl} 
+
+${profileInputData.description.trim() ? `Additional context: ${profileInputData.description}\n\n` : ''}
+
+Based on the website content, please answer these 4 questions exactly with in-depth detail:
+
+1. 150-word company description
+2. Unique value proposition statement
+3. Primary customer persona details
+4. Top 3 customer pain points base
+
+Then provide your completed comprehensive result in this exact format using these placeholder names:
+
+1. business: '[your answer to question 1]'
+2. USP: '[your answer to question 2]'
+3. persona: '[your answer to question 3]'
+4. challenges: '[your answer to question 4]'`;
+        } else {
+            initialMessage = `Please analyze the following business information:
+
+${profileInputData.description}
+
+Based on this information, please answer these 4 questions exactly:
+
+1. 150-word company description
+2. Unique value proposition statement
+3. Primary customer persona details
+4. Top 3 customer pain points base
+
+Then provide your completed result in this exact format using these placeholder names:
+
+1. business: '[your answer to question 1]'
+2. USP: '[your answer to question 2]'
+3. persona: '[your answer to question 3]'
+4. challenges: '[your answer to question 4]'`;
+        }
+        // NEW: Prepend language instruction to the context message
+        const languagePrefix = `Please proceed to the task in language: ${language}. `;
+        setProfileChatInitialMessage(languagePrefix + initialMessage);
+
+        // MODIFIED: Keep the modal open and show profile creation inside modal
+        setShowUrlInputDialog(false);
+        setShowProfileCreationModal(true);
+        setIsProfileChatRunning(true);
+        setIsEditingProfile(false);
+
+        // Reset input data
+        setProfileInputData({
+            websiteUrl: '',
+            description: ''
+        });
+    };
+
+    const handleUrlInputCancel = () => {
+        setShowUrlInputDialog(false);
+        setProfileInputData({
+            websiteUrl: '',
+            description: ''
+        });
+    };
+
+    const handleEditProfile = async (profile: UserProfile) => {
+        if (!profile.isOwned) {
+            toast.error(await getLocalizedString("You can only edit profiles you own.", language));
+            return;
+        }
+
+        setSelectedProfile(profile);
+        setEditingProfileId(profile.id);
+        setIsEditingProfile(true);
+
+        // Pre-populate with existing profile data
+        const existingProfileMessage = `Please review and update this existing profile: ${profile.name}
+
+Current profile data:
+- Business: ${profile.business}
+- USP: ${profile.USP}
+- Persona: ${profile.persona}
+- Challenges: ${profile.challenges}
+
+${profile.websiteUrl ? `Website URL: ${profile.websiteUrl}` : ''}
+${profile.description ? `Additional Info: ${profile.description}` : ''}
+
+Please answer these 4 questions to update the profile:
+
+1. 150-word company description
+2. Unique value proposition statement
+3. Primary customer persona details
+4. Top 3 customer pain points base
+
+Then provide your updated result in this exact format:
+
+1. business: '[your answer to question 1]'
+2. USP: '[your answer to question 2]'
+3. persona:' [your answer to question 3]'
+4. challenges: '[your answer to question 4]'`;
+
+        setProfileChatInitialMessage(existingProfileMessage);
+        setShowProfileCreationModal(true);
+        setIsProfileChatRunning(true);
+        setIsProfileDropdownOpen(false);
+    };
+
+    // CHANGE 1: Modified to handle exclusive checkbox selection
+    const handleSelectProfile = async (profile: UserProfile) => {
+        // If clicking the same profile, unselect it
+        if (selectedProfile?.id === profile.id) {
+            setSelectedProfile(null);
+            toast.info(await getLocalizedString(`Deselected profile: ${profile.name}`, language));
+        } else {
+            // Select the new profile (exclusive selection)
+            setSelectedProfile(profile);
+            toast.info(await getLocalizedString(`Selected profile: ${profile.name}`, language));
+        }
+        setIsProfileDropdownOpen(false);
+    };
+
+    // FIXED: Updated handleSaveProfile to handle both create and update
+    const handleSaveProfile = async (profileData: any, profileName: string, profileId?: string) => {
+        if (!address || !profileName.trim()) {
+            toast.error(await getLocalizedString("Please provide a profile name.", language));
+            return;
+        }
+
+        try {
+            let response;
+
+            if (profileId) {
+                // FIXED: Update existing profile
+                response = await fetch('/api/update-user-profile', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        profileId: profileId,
+                        name: profileName.trim(),
+                        business: profileData.business || '',
+                        USP: profileData.USP || '',
+                        persona: profileData.persona || '',
+                        challenges: profileData.challenges || '',
+                        websiteUrl: profileInputData.websiteUrl || '',
+                        userAddress: address
+                    }),
+                });
+            } else {
+                // Create new profile
+                response = await fetch('/api/save-user-profile', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        name: profileName.trim(),
+                        business: profileData.business || '',
+                        USP: profileData.USP || '',
+                        persona: profileData.persona || '',
+                        challenges: profileData.challenges || '',
+                        websiteUrl: profileInputData.websiteUrl || '',
+                        userAddress: address
+                    }),
+                });
+            }
+
+            const result = await response.json();
+
+            if (response.ok && result.success) {
+                toast.success(await getLocalizedString(profileId ? "Profile updated successfully!" : "Profile saved successfully!", language));
+
+                // Refresh profiles list
+                await fetchUserProfiles();
+
+                // Close modal and reset states
+                setShowProfileCreationModal(false);
+                setIsProfileChatRunning(false);
+                setIsEditingProfile(false);
+                setEditingProfileId(null);
+            } else {
+                toast.error(result.message || await getLocalizedString("Failed to save profile.", language));
+            }
+        } catch (error) {
+            console.error("Error saving profile:", error);
+            toast.error(await getLocalizedString("Error saving profile. Please try again.", language));
+        }
+    };
+
+    // UPDATED: Prevent deletion of shared profiles
+    const handleDeleteProfile = async (profileId: string) => {
+        const profile = userProfiles.find(p => p.id === profileId);
+        if (!profile?.isOwned) {
+            toast.error(await getLocalizedString("You can only delete profiles you own.", language));
+            return;
+        }
+
+        const confirmDelete = await getLocalizedString("Are you sure you want to delete this profile?", language);
+        if (!window.confirm(confirmDelete)) return;
+
+        try {
+            const response = await fetch('/api/delete-user-profile', {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    profileId: profileId,
+                    userAddress: address
+                }),
+            });
+
+            const result = await response.json();
+
+            if (response.ok && result.success) {
+                setUserProfiles(prev => prev.filter(p => p.id !== profileId));
+                if (selectedProfile?.id === profileId) {
+                    setSelectedProfile(null);
+                }
+                toast.success(await getLocalizedString("Profile deleted successfully!", language));
+            } else {
+                toast.error(result.message || await getLocalizedString("Failed to delete profile.", language));
+            }
+        } catch (error) {
+            console.error("Error deleting profile:", error);
+            toast.error(await getLocalizedString("Error deleting profile. Please try again.", language));
+        }
+    };
+
+    // Fetch user profiles on component mount
+    useEffect(() => {
+        if (address) {
+            fetchUserProfiles();
+        }
+    }, [address]);
+
+    // Existing functions
+    const fetchUserPerks = useCallback(async () => {
+        if (!address) return;
+        try {
+            const response = await fetch(`/api/get-user-perks?userAddress=${encodeURIComponent(address)}`);
+            if (response.ok) {
+                const data = await response.json();
+                setFreeChatsLeft(data.freeTrades);
+                setFreeUploadsLeft(data.freeUploads);
+                setFreeWebScrapeLeft(data.freeWebScrape);
+            } else {
+                const errorData = await response.json();
+                toast.error(errorData.message || "Failed to retrieve perks.");
+            }
+        } catch (error) {
+            console.error("Error fetching user perks:", error);
+            toast.error("An unexpected error occurred while fetching perks.");
+        }
+    }, [address]);
+
+    useEffect(() => {
+        if (address) {
+            fetchUserPerks();
+        } else {
+            setFreeChatsLeft(null);
+            setFreeUploadsLeft(null);
+            setFreeWebScrapeLeft(null);
+        }
+    }, [address, fetchUserPerks]);
+
+    // Rest of existing functions...
+    const addFavorite = useCallback(
+        async (task: string) => {
+            if (!address || !selectedRole) return;
+            if (favoriteTasks.includes(task)) return;
+            try {
+                const response = await fetch("/api/add-task-favorite", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        userAddress: address,
+                        department: selectedRole.department,
+                        role: selectedRole.role,
+                        task: task,
+                    }),
+                });
+                if (!response.ok) throw new Error("Failed to add favorite task");
+                setFavoriteTasks((prev) => [...prev, task]);
+                toast.info(<LocalizedText name={`Task ${task} Favorited`} />, {
+                    style: { backgroundColor: "#4CAF50", color: "#fff" },
+                });
+            } catch (error) {
+                console.error("Error adding favorite task:", error);
+                toast.error(<LocalizedText name="Failed To Update Favorite" />);
+            }
+        },
+        [address, selectedRole, favoriteTasks]
+    );
+
+    // NEW: Function to fetch all favorite tasks across all roles with role mapping
+    const fetchAllFavoriteTasks = async () => {
+        if (!address) return { tasks: [], taskToRoleMap: {} };
+        try {
+            const allFavoriteTasks: string[] = [];
+            const taskToRoleMap: { [task: string]: string } = {};
+
+            // Get all roles first
+            const rolesResponse = await fetch('/api/get-roles', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ department: "Vibe Marketing" }),
+            });
+
+            if (rolesResponse.ok) {
+                const rolesData = await rolesResponse.json();
+                const allRoles = rolesData.roles || [];
+
+                // Filter out special roles
+                const regularRoles = allRoles.filter((role: string) =>
+                    role !== "User Research Collector" && role !== FAVORITE_TASK_ROLE
+                );
+
+                // For each role, get favorite tasks
+                for (const role of regularRoles) {
+                    try {
+                        const favoritesResponse = await fetch("/api/get-task-favorites", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                userAddress: address,
+                                department: "Vibe Marketing",
+                                role: role,
+                            }),
+                        });
+
+                        if (favoritesResponse.ok) {
+                            const favoritesData = await favoritesResponse.json();
+                            const favoriteTasks = favoritesData.favoriteTasks || [];
+
+                            // Add tasks and map them to their original role
+                            for (const task of favoriteTasks) {
+                                if (!allFavoriteTasks.includes(task)) {
+                                    allFavoriteTasks.push(task);
+                                    taskToRoleMap[task] = role;
+                                    console.log(`📝 Mapped task "${task}" to role "${role}"`);
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        console.error(`Error fetching favorites for role ${role}:`, error);
+                    }
+                }
+            }
+
+            console.log(`📊 Final favorite tasks:`, allFavoriteTasks);
+            console.log(`🗺️ Final task to role mapping:`, taskToRoleMap);
+
+            return {
+                tasks: allFavoriteTasks,
+                taskToRoleMap: taskToRoleMap
+            };
+        } catch (error) {
+            console.error("Error fetching all favorite tasks:", error);
+            return { tasks: [], taskToRoleMap: {} };
+        }
+    };
+
+
+
+    const fetchFavoriteTasks = async () => {
+        if (!address || !selectedRole) return;
+        try {
+            const response = await fetch("/api/get-task-favorites", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    userAddress: address,
+                    department: selectedRole.department,
+                    role: selectedRole.role,
+                }),
+            });
+            if (!response.ok) throw new Error("Failed to fetch favorite tasks");
+            const data = await response.json();
+            setFavoriteTasks(data.favoriteTasks || []);
+        } catch (error) {
+            console.error("Error fetching favorite tasks:", error);
+        } finally {
+            setIsFavoriteTasksLoaded(true);
+        }
+    };
+
+    useEffect(() => {
+        fetchFavoriteTasks();
+    }, [selectedRole, address]);
+
+    const toggleFavorite = useCallback(
+        async (task: string) => {
+            if (!address || !selectedRole) return;
+
+            // NEW: For Favorite Task role, only allow removal (unfavoriting)
+            if (selectedRole.role === FAVORITE_TASK_ROLE) {
+                // Find the original role for this task
+                const originalRole = taskToRoleMap[task];
+                if (!originalRole) {
+                    toast.error(<LocalizedText name="Unable to find original role for this task" />);
+                    return;
+                }
+
+                try {
+                    const response = await fetch("/api/remove-task-favorite", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            userAddress: address,
+                            department: selectedRole.department,
+                            role: originalRole, // Use the original role
+                            task: task,
+                        }),
+                    });
+                    if (!response.ok) throw new Error("Failed to remove favorite task");
+
+                    // Remove from current favorite tasks list
+                    setFavoriteTasks((prev) => prev.filter((t) => t !== task));
+
+                    // Remove from current tasks list (since we're in Favorite Task view)
+                    setTasks((prev) => prev.filter((t) => t !== task));
+
+                    // Update taskToRoleMap
+                    setTaskToRoleMap((prev) => {
+                        const newMap = { ...prev };
+                        delete newMap[task];
+                        return newMap;
+                    });
+
+                    toast.info(<LocalizedText name={`Removed ${task} from favorites`} />, {
+                        style: { backgroundColor: "#F44336", color: "#fff" },
+                    });
+                } catch (error) {
+                    console.error("Error removing favorite task:", error);
+                    toast.error(<LocalizedText name="Failed to remove favorite" />);
+                }
+                return;
+            }
+
+            // Original logic for non-favorite roles
+            const isFavorited = favoriteTasks.includes(task);
+            const endpoint = isFavorited ? "/api/remove-task-favorite" : "/api/add-task-favorite";
+            try {
+                const response = await fetch(endpoint, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        userAddress: address,
+                        department: selectedRole.department,
+                        role: selectedRole.role,
+                        task: task,
+                    }),
+                });
+                if (!response.ok) throw new Error("Failed to update favorite task");
+                if (isFavorited) {
+                    setFavoriteTasks((prev) => prev.filter((t) => t !== task));
+                } else {
+                    setFavoriteTasks((prev) => [...prev, task]);
+                }
+                toast.info(
+                    !isFavorited ? (
+                        <LocalizedText name={`Task ${task} Favorited`} />
+                    ) : (
+                        <LocalizedText name={`Task ${task} Unfavorited`} />
+                    ),
+                    { style: { backgroundColor: !isFavorited ? "#4CAF50" : "#F44336", color: "#fff" } }
+                );
+            } catch (error) {
+                console.error("Error updating favorite task:", error);
+                toast.error(<LocalizedText name="Failed To Update Favorite" />);
+            }
+        },
+        [address, selectedRole, favoriteTasks, taskToRoleMap]
+    );
+
+
+    const handleTaskChange = (task: string) => {
+        setSelectedTask(task);
+        setExecutionRole(null); // NEW: Reset execution role when changing tasks
+        setIsTaskDropdownOpen(false);
+        setIsTaskModalVisible(false);
+        setIsRoleModalVisible(false);
+        setIsChatRunning(false);
+        setIsRunButtonDisabled(false);
+        setProfileChatInitialMessage("");
+    };
+
+
+    const handleDescriptionClick = async (event: React.MouseEvent<HTMLButtonElement>, task: string) => {
+        event.stopPropagation();
+        setIsRoleModalVisible(false);
+        setTaskDescription(null);
+        setActiveButton(task);
+        const targetElement = event.currentTarget;
+        if (!targetElement) {
+            console.error("event.currentTarget is null");
+            return;
+        }
+        const rect = targetElement.getBoundingClientRect();
+        setModalPosition({ top: rect.top + window.scrollY, left: rect.right + 10 + window.scrollX });
+        setIsTaskModalVisible(true);
+        if (!selectedRole) {
+            console.error("selectedRole is null");
+            return;
+        }
+        if (taskDescription && activeButton === task) return;
+        try {
+            // NEW: For Favorite Task role, use the original role for the specific task
+            let roleToUse = selectedRole.role;
+            if (selectedRole.role === FAVORITE_TASK_ROLE && taskToRoleMap[task]) {
+                roleToUse = taskToRoleMap[task];
+                console.log(`🔄 Using original role "${roleToUse}" for favorite task "${task}"`);
+            }
+
+            const response = await fetch("/api/get_task_description", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    department: selectedRole.department,
+                    role: roleToUse, // Use the correct role (original role for favorite tasks)
+                    task,
+                    language: language,
+                }),
+            });
+
+            if (!response.ok) throw new Error("Failed to fetch task description");
+            const data = await response.json();
+            setTaskDescription(data.description);
+        } catch (error) {
+            console.error("Error fetching task description:", error);
+            setTaskDescription("");
+        }
+    };
+
+    const handleRoleDescriptionClick = async (event: React.MouseEvent<HTMLButtonElement>, roleData: { department: string; role: string }) => {
+        event.stopPropagation();
+        setRoleDescription(null);
+        const { department, role } = roleData;
+        const uniqueKey = `${department}:${role}`;
+        setActiveRoleButton(uniqueKey);
+        const targetElement = event.currentTarget;
+        if (!targetElement) {
+            console.error("event.currentTarget is null");
+            return;
+        }
+        const rect = targetElement.getBoundingClientRect();
+        setRoleModalPosition({ top: rect.top - 100 + window.scrollY, left: rect.left - 465 + window.scrollX });
+        setIsRoleModalVisible(true);
+
+        // NEW: Handle Favorite Task role description
+        if (role === FAVORITE_TASK_ROLE) {
+            setRoleDescription("This role displays all your favorite tasks from across all personas. Select this to view and work with tasks you've marked as favorites.");
+            return;
+        }
+
+        try {
+            const response = await fetch("/api/get_role_description", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ department, role, language: language }),  // ✅ CORRECT: Using language from LocalizationContext
+            });
+            if (!response.ok) throw new Error("Failed to fetch role description");
+            const data = await response.json();
+            setRoleDescription(data.description);
+        } catch (error) {
+            console.error("Error fetching role description:", error);
+            setRoleDescription("");
+        }
+    };
+
+    const handleRoleChange = (role: RoleData) => {
+        setSelectedRole(role);
+        setSelectedTask(null);
+        setExecutionRole(null); // NEW: Reset execution role when changing roles
+        fetchTasks(role.department, role.role);
+        fetchRoleMapping(role);
+        setIsRoleDropdownOpen(false);
+        setIsChatRunning(false);
+        setIsRunButtonDisabled(false);
+        setProfileChatInitialMessage("");
+    };
+
+    // UPDATED: Fetch tasks - handle Favorite Task role specially
+    const fetchTasks = async (department: string, role: string): Promise<void> => {
+        try {
+            // NEW: Handle Favorite Task role specially
+            if (role === FAVORITE_TASK_ROLE) {
+                const favoriteData = await fetchAllFavoriteTasks();
+                setTasks(Array.isArray(favoriteData.tasks) ? favoriteData.tasks : []);
+                setTaskToRoleMap(favoriteData.taskToRoleMap || {}); // Store the mapping
+                return;
+            }
+
+            // Clear task-to-role mapping for non-favorite roles
+            setTaskToRoleMap({});
+
+            const response = await fetch("/api/get-tasks", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ department, role, userAddress: address }),
+            });
+            if (!response.ok) throw new Error("Failed to fetch tasks");
+            const tasksData = await response.json();
+            setTasks(tasksData.tasks);
+        } catch (error) {
+            console.error("Error fetching tasks:", error);
+        }
+    };
+
+
+    // Toggle functions
+    const toggleTaskDropdown = () => {
+        if (isTaskDropdownOpen) {
+            handleCloseDropdown();
+        } else {
+            setIsTaskDropdownOpen(true);
+        }
+        setIsRoleDropdownOpen(false);
+        setIsProfileDropdownOpen(false);
+    };
+
+    const toggleRoleDropdown = () => {
+        setIsRoleDropdownOpen(!isRoleDropdownOpen);
+        setIsTaskDropdownOpen(false);
+        setIsProfileDropdownOpen(false);
+    };
+
+    const toggleProfileDropdown = () => {
+        setIsProfileDropdownOpen(!isProfileDropdownOpen);
+        setIsTaskDropdownOpen(false);
+        setIsRoleDropdownOpen(false);
+    };
+
+    const handleCloseDropdown = () => {
+        setIsTaskDropdownOpen(false);
+        setIsTaskModalVisible(false);
+        setActiveButton(null);
+        setActiveRoleButton(null);
+        setIsRoleModalVisible(false);
+        setIsRoleDropdownOpen(false);
+        setIsProfileDropdownOpen(false);
+    };
+
+    const handleClickOutside = useCallback((event: MouseEvent) => {
+        if (
+            taskButtonRef.current &&
+            !taskButtonRef.current.contains(event.target as Node) &&
+            profileButtonRef.current &&
+            !profileButtonRef.current.contains(event.target as Node) &&
+            roleButtonRef.current &&
+            !roleButtonRef.current.contains(event.target as Node) &&
+            modalRef.current &&
+            !modalRef.current.contains(event.target as Node)
+        ) {
+            handleCloseDropdown();
+        }
+    }, []);
+
+    useEffect(() => {
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, [handleClickOutside]);
+
+    // UPDATED: Execute task function with brand profile check
+    const debouncedExecuteTask = useCallback(
+        debounce((event: React.MouseEvent<HTMLButtonElement>) => {
+            const actuallyExecuteTask = async (e: React.MouseEvent<HTMLButtonElement>) => {
+                e.stopPropagation();
+                if (isProcessingPayment) {
+                    console.log("Payment already in progress, ignoring additional click");
+                    return;
+                }
+                if (isRunButtonDisabled) return;
+
+                // 1. Check if brand profile is selected
+                if (!selectedProfile) {
+                    toast.error(await getLocalizedString("Please select a brand profile first before executing the task.", language));
+                    return;
+                }
+
+                setIsRunButtonDisabled(true);
+                if (!selectedRole) {
+                    toast.error(await getLocalizedString("Please select a persona.", language));
+                    setIsRunButtonDisabled(false);
+                    return;
+                }
+
+                try {
+                    setIsProcessingPayment(true);
+                    // 3. Retrieve detailed profile information
+                    let profileDetails;
+                    if (selectedProfile.id === "productivity-improvement") {
+                        // Use the hardcoded profile directly
+                        profileDetails = selectedProfile;
+                    } else if (selectedProfile.isOwned === false) {
+                        // NEW: For shared profiles ONLY, use the data we already have
+                        console.log(`✅ Using shared profile data directly: ${selectedProfile.name}`);
+                        profileDetails = selectedProfile;
+                    } else {
+                        // UNCHANGED: Fetch from API for owned profiles (preserves existing logic)
+                        profileDetails = await fetchProfileDetails(selectedProfile.id);
+                        if (!profileDetails) {
+                            toast.error(await getLocalizedString("Failed to retrieve profile details.", language));
+                            setIsRunButtonDisabled(false);
+                            return;
+                        }
+                    }
+
+
+                    // 4. Start chat with profile context
+                    // NEW: Determine the correct role to use for execution
+                    let roleForExecution = selectedRole!.role;
+                    if (selectedRole!.role === FAVORITE_TASK_ROLE && taskToRoleMap[selectedTask!]) {
+                        roleForExecution = taskToRoleMap[selectedTask!];
+                        //console.log(`🔄 Executing favorite task "${selectedTask}" with original role "${roleForExecution}"`);
+                    }
+
+                    // Set the execution role for the ChatBaseStream
+                    setExecutionRole(roleForExecution);
+
+                    // 4. Start chat with profile context
+                    await startChatWithProfileContext(profileDetails);
+
+
+
+
+                } catch (error) {
+                    console.error("Error executing task with profile context:", error);
+                    toast.error(await getLocalizedString("Error processing task with profile context.", language));
+                    setIsRunButtonDisabled(false);
+                } finally {
+                    setTimeout(() => {
+                        setIsProcessingPayment(false);
+                    }, 5000);
+                }
+            };
+
+            actuallyExecuteTask(event);
+        }, 500, { leading: true, trailing: false }),
+        [isProcessingPayment, isRunButtonDisabled, selectedRole, selectedProfile, address, language, process_payment]
+    );
+
+    // UPDATED: Execute task function with brand profile check
+    /*   const debouncedExecuteTask = useCallback(
+           debounce((event: React.MouseEvent<HTMLButtonElement>) => {
+               const actuallyExecuteTask = async (e: React.MouseEvent<HTMLButtonElement>) => {
+                   e.stopPropagation();
+                   console.log(`🚀 Starting task execution...`);
+   
+                   if (isProcessingPayment) {
+                       console.log("⚠️ Payment already in progress, ignoring additional click");
+                       return;
+                   }
+                   if (isRunButtonDisabled) {
+                       console.log("⚠️ Run button is disabled, ignoring click");
+                       return;
+                   }
+   
+                   // 1. Check if brand profile is selected
+                   console.log(`🔍 Checking selected profile:`, selectedProfile);
+                   if (!selectedProfile) {
+                       console.log("❌ No brand profile selected");
+                       toast.error(await getLocalizedString("Please select a brand profile first before executing the task.", language));
+                       return;
+                   }
+                   console.log(`✅ Brand profile selected: ${selectedProfile.name} (ID: ${selectedProfile.id}, isOwned: ${selectedProfile.isOwned})`);
+   
+                   setIsRunButtonDisabled(true);
+   
+                   console.log(`🔍 Checking selected role:`, selectedRole);
+                   if (!selectedRole) {
+                       console.log("❌ No role selected");
+                       toast.error(await getLocalizedString("Please select a persona.", language));
+                       setIsRunButtonDisabled(false);
+                       return;
+                   }
+                   console.log(`✅ Role selected: ${selectedRole.role} (Department: ${selectedRole.department})`);
+   
+                   console.log(`🔍 Selected task: ${selectedTask}`);
+                   console.log(`🔍 Current taskToRoleMap:`, taskToRoleMap);
+                   console.log(`🔍 Available tasks in taskToRoleMap:`, Object.keys(taskToRoleMap));
+   
+                   try {
+                       setIsProcessingPayment(true);
+                       console.log(`💰 Payment processing started`);
+   
+                       // 3. Retrieve detailed profile information
+                       console.log(`📊 Retrieving profile details...`);
+                       let profileDetails;
+                       if (selectedProfile.id === "productivity-improvement") {
+                           console.log(`🔧 Using hardcoded productivity profile`);
+                           profileDetails = selectedProfile;
+                       } else if (selectedProfile.isOwned === false) {
+                           console.log(`🔗 Using shared profile data directly: ${selectedProfile.name}`);
+                           profileDetails = selectedProfile;
+                       } else {
+                           console.log(`📡 Fetching owned profile details from API for: ${selectedProfile.id}`);
+                           profileDetails = await fetchProfileDetails(selectedProfile.id);
+                           if (!profileDetails) {
+                               console.log(`❌ Failed to fetch profile details for: ${selectedProfile.id}`);
+                               toast.error(await getLocalizedString("Failed to retrieve profile details.", language));
+                               setIsRunButtonDisabled(false);
+                               return;
+                           }
+                           console.log(`✅ Successfully fetched profile details: ${profileDetails.name}`);
+                       }
+   
+                       // 4. Start chat with profile context
+                       // NEW: Determine the correct role to use for execution
+                       console.log(`🎯 Determining execution role...`);
+                       console.log(`🎯 Current role: ${selectedRole!.role}`);
+                       console.log(`🎯 Is Favorite Task role? ${selectedRole!.role === FAVORITE_TASK_ROLE}`);
+                       console.log(`🎯 Selected task: ${selectedTask}`);
+                       console.log(`🎯 Task in taskToRoleMap? ${selectedTask ? taskToRoleMap[selectedTask] : 'No task selected'}`);
+   
+                       let roleForExecution = selectedRole!.role;
+                       if (selectedRole!.role === FAVORITE_TASK_ROLE && taskToRoleMap[selectedTask!]) {
+                           const originalRole = taskToRoleMap[selectedTask!];
+                           roleForExecution = originalRole;
+                           console.log(`🔄 Executing favorite task "${selectedTask}" with original role "${roleForExecution}"`);
+                           console.log(`🔄 Role mapping: ${selectedTask} -> ${originalRole}`);
+                       } else if (selectedRole!.role === FAVORITE_TASK_ROLE) {
+                           console.log(`⚠️ WARNING: Favorite task selected but no role mapping found for task "${selectedTask}"`);
+                           console.log(`⚠️ Available task mappings:`, Object.entries(taskToRoleMap));
+                           console.log(`⚠️ Will use Favorite Task role, which may cause assistant lookup issues`);
+                       } else {
+                           console.log(`ℹ️ Using current role "${roleForExecution}" (not a favorite task)`);
+                       }
+   
+                       // Set the execution role for the ChatBaseStream
+                       console.log(`🎯 Setting execution role: "${roleForExecution}"`);
+                       setExecutionRole(roleForExecution);
+   
+                       // Log what will be passed to ChatBaseStream
+                       console.log(`📡 ChatBaseStream will receive:`);
+                       console.log(`  - role: "${roleForExecution}"`);
+                       console.log(`  - task: "${selectedTask}"`);
+                       console.log(`  - department: "${selectedRole!.department}"`);
+                       console.log(`  - user: "${roleMapping?.user || PLATFORM_NAME}"`);
+                       console.log(`  - price: ${roleMapping?.price || 0.01}`);
+   
+                       // 4. Start chat with profile context
+                       console.log(`💬 Starting chat with profile context...`);
+                       await startChatWithProfileContext(profileDetails);
+                       console.log(`✅ Chat started successfully`);
+   
+                   } catch (error) {
+                       console.error("❌ Error executing task with profile context:", error);
+                       console.error("❌ Error details:", {
+                           selectedRole: selectedRole?.role,
+                           selectedTask,
+                           roleForExecution: executionRole,
+                           taskToRoleMap,
+                           error: error
+                       });
+                       toast.error(await getLocalizedString("Error processing task with profile context.", language));
+                       setIsRunButtonDisabled(false);
+                   } finally {
+                       console.log(`🔄 Cleaning up payment processing in 5 seconds...`);
+                       setTimeout(() => {
+                           setIsProcessingPayment(false);
+                           console.log(`✅ Payment processing cleanup completed`);
+                       }, 5000);
+                   }
+               };
+   
+               actuallyExecuteTask(event);
+           }, 500, { leading: true, trailing: false }),
+           [isProcessingPayment, isRunButtonDisabled, selectedRole, selectedProfile, address, language, process_payment, taskToRoleMap, selectedTask, executionRole, roleMapping]
+       );*/
+
+    // FIXED: Function to start chat with brand profile placeholder content
+    const startChatWithProfileContext = async (profileDetails: UserProfile) => {
+        try {
+            if (!roleMapping) {
+                await fetchRoleMapping(selectedRole!);
+            }
+
+            // Get the raw profile content from API or use hardcoded profile
+            let profileData;
+            if (selectedProfile!.id === "productivity-improvement") {
+                // Use the hardcoded profile directly
+                profileData = selectedProfile;
+            } else if (selectedProfile!.isOwned === false) {
+                // NEW: For shared profiles ONLY, use the data we already have
+                console.log(`✅ Using shared profile data for chat context: ${selectedProfile!.name}`);
+                profileData = selectedProfile;
+            } else {
+                // UNCHANGED: Fetch from API for owned profiles (preserves existing logic)
+                profileData = await fetchProfileDetails(selectedProfile!.id);
+                if (!profileData) {
+                    toast.error(await getLocalizedString("Failed to retrieve profile details.", language));
+                    return;
+                }
+            }
+
+            // Create brand_profile string with the four keyword contents in single quotes
+            const brand_profile = `\n business: '${profileData?.business}' \n
+
+USP: '${profileData?.USP}' \n
+
+persona: '${profileData?.persona}' \n
+
+challenges: '${profileData?.challenges}' `;
+
+            // Create initial message with brand_profile placeholder
+            let initialMessage = '';
+
+            // NEW: Special handling for Productivity Improvement profile
+            if (selectedProfile?.id === "productivity-improvement") {
+                initialMessage = `Please proceed to the task in language:${language}. 
+
+You are an AI assistant helping with productivity improvement tasks. Before proceeding with any task, please carefully examine the prompt for any placeholders surrounded by angle brackets like <placeholder>.
+
+When you encounter placeholders in the format <placeholder>, please:
+
+1. Politely ask the user to provide the specific information for that placeholder
+2. Provide context about why this information is needed based on the task
+3. Guide the user with helpful suggestions or examples for what type of information would be appropriate
+4. Wait for the user's response before proceeding with the task
+
+For example:
+- If you see <project name>, ask: "I notice you need to specify a project name. Could you please tell me the name of the project you'd like to focus on? This will help me provide more targeted productivity advice."
+- If you see <team size>, ask: "To provide the most relevant productivity strategies, could you please let me know your team size? For example, are you working alone, with a small team (2-5 people), or a larger group?"
+- If you see <industry>, ask: "Understanding your industry context would help me tailor the productivity recommendations. What industry or field are you working in?"
+
+Please be conversational, helpful, and provide guidance to help users give you the most useful information for completing their productivity improvement tasks.
+
+Continue in ${language} after all placeholders are resolved.`;
+            } else {
+                // Original logic for regular profiles
+                initialMessage = brand_profile
+                    ? `Please proceed to the task in language:${language} using the place holder content in \n ${brand_profile}.\n 
+
+Instructions for placeholder handling:
+- Each content value is enclosed in single quotes for proper parsing
+- When you encounter placeholders in the prompt section of the assistant like <business>, <USP>, <persona>, or <challenges> with angle brackets, replace them with the corresponding values provided above
+- If you encounter any other placeholder (e.g., [Industry Trend], <meeting notes or document>, or anything using square brackets [ ] or angle brackets <> that is not one of the core placeholders above), or any input required, do the following:
+   ➤ First, attempt to extract and infer the missing information from the user's provided **profile, context, or task description**.
+   ➤ If the relevant data is **not available** in the context or profile, **pause and ask the user** to provide the missing value for that specific placeholder before continuing.
+
+- Once all placeholders are resolved, continue writing in the same language as the user.
+
+- Never fabricate or guess placeholder values that are critical to output accuracy or business context.`
+                    : '';
+            }
+
+            console.log('Task execution with brand profile:', initialMessage);
+
+            // Set up chat with brand profile context
+            setProfileChatInitialMessage(initialMessage);
+            setIsProfileChatRunning(false);
+            setIsChatRunning(true);
+
+            // NEW: Store the original role for task execution if it's a favorite task
+            if (selectedRole!.role === FAVORITE_TASK_ROLE && taskToRoleMap[selectedTask!]) {
+                console.log(`🔄 Executing favorite task "${selectedTask}" with original role "${taskToRoleMap[selectedTask!]}"`);
+            }
+
+        } catch (error) {
+            console.error("Error starting chat with profile context:", error);
+            throw error;
+        }
+    };
+
+    const handleExecuteTask = (e: React.MouseEvent<HTMLButtonElement>) => {
+        e.preventDefault();
+        debouncedExecuteTask(e);
+    };
+
+    return (
+        <>
+            <Head>
+                <title>Web3AIstore - Marketing</title>
+                <link rel="icon" href="/favicon.ico" />
+            </Head>
+            <main className={styles.main}>
+                <div className={styles.container}>
+
+                    <>
+
+
+                        <ToastContainer
+                            position="top-right"
+                            autoClose={5000}
+                            hideProgressBar={false}
+                            newestOnTop={false}
+                            closeOnClick
+                            rtl={false}
+                            pauseOnFocusLoss
+                            draggable
+                            pauseOnHover
+                            style={{ zIndex: 10000 }}
+                        />
+
+                        {/* URL/Text Input Dialog for New Profile */}
+                        {showUrlInputDialog && (
+                            <div className={styles.modalOverlay1}>
+                                <div
+                                    className={styles.modalContent1}
+                                    style={{
+                                        padding: "2rem",
+                                        maxWidth: "600px",
+                                        position: "relative",
+                                        backgroundColor: "white",
+                                        borderRadius: "12px",
+                                        boxShadow: "0 8px 32px rgba(0,0,0,0.3)"
+                                    }}
+                                >
+                                    <h2 style={{ marginBottom: "1rem", textAlign: "center", color: "#333" }}>
+                                        <LocalizedText name="Create a New Brand Profile" />
+                                    </h2>
+
+                                    <p style={{ marginBottom: "2rem", color: "#666", textAlign: "center", fontSize: "16px" }}>
+                                        <LocalizedText name="To create a new brand profile, I can either analyze your website or work with information you provide. Please choose one option below:" />
+                                    </p>
+
+                                    {/* Website URL Input */}
+                                    <div style={{ marginBottom: "2rem" }}>
+                                        <label style={{
+                                            display: "block",
+                                            marginBottom: "0.5rem",
+                                            fontWeight: "bold",
+                                            color: "#333"
+                                        }}>
+                                            <LocalizedText name="🌐 Option 1: Website URL (Recommended)" />
+                                        </label>
+                                        <input
+                                            type="url"
+                                            value={profileInputData.websiteUrl}
+                                            onChange={(e) => setProfileInputData(prev => ({
+                                                ...prev,
+                                                websiteUrl: e.target.value,
+                                                description: e.target.value ? '' : prev.description
+                                            }))}
+                                            placeholder="https://your-company-website.com"
+                                            style={{
+                                                width: "100%",
+                                                padding: "0.75rem",
+                                                fontSize: "16px",
+                                                border: "2px solid #ddd",
+                                                borderRadius: "8px",
+                                                marginBottom: "0.5rem"
+                                            }}
+                                        />
+                                        <p style={{ fontSize: "14px", color: "#666", fontStyle: "italic" }}>
+                                            <LocalizedText name="AI will analyze your website to extract brand information, target audience, and value proposition" />
+                                        </p>
+                                    </div>
+
+                                    {/* OR Divider */}
+                                    <div style={{
+                                        textAlign: "center",
+                                        margin: "1.5rem 0",
+                                        position: "relative"
+                                    }}>
+                                        <div style={{
+                                            height: "1px",
+                                            backgroundColor: "#ddd",
+                                            position: "absolute",
+                                            width: "100%",
+                                            top: "50%"
+                                        }}></div>
+                                        <span style={{
+                                            backgroundColor: "white",
+                                            padding: "0 1rem",
+                                            color: "#666",
+                                            fontWeight: "bold"
+                                        }}>
+                                            <LocalizedText name="OR" />
+                                        </span>
+                                    </div>
+
+                                    {/* Description Input */}
+                                    <div style={{ marginBottom: "2rem" }}>
+                                        <label style={{
+                                            display: "block",
+                                            marginBottom: "0.5rem",
+                                            fontWeight: "bold",
+                                            color: "#333"
+                                        }}>
+                                            <LocalizedText name="📝 Option 2: Answer Profile Questions" />
+                                        </label>
+                                        <textarea
+                                            value={profileInputData.description}
+                                            onChange={(e) => setProfileInputData(prev => ({
+                                                ...prev,
+                                                description: e.target.value,
+                                                websiteUrl: e.target.value && e.target.value !== `Please answer the following questions to create your user profile:
+
+1. 150-word company description
+2. Unique value proposition statement
+3. Primary customer persona details
+4. Top 3 customer pain points base
+
+Please provide detailed and clear answers to each question.
+
+Your answers:
+1. Company Description: [Your answer here]
+2. Value Proposition: [Your answer here]
+3. Customer Persona: [Your answer here]
+4. Pain Points: [Your answer here]` ? '' : prev.websiteUrl
+                                            }))}
+                                            placeholder="The questions will be pre-filled for you..."
+                                            rows={12}
+                                            style={{
+                                                width: "100%",
+                                                padding: "0.75rem",
+                                                fontSize: "14px",
+                                                border: "2px solid #ddd",
+                                                borderRadius: "8px",
+                                                marginBottom: "0.5rem",
+                                                resize: "vertical",
+                                                fontFamily: "monospace"
+                                            }}
+                                        />
+                                        <p style={{ fontSize: "14px", color: "#666", fontStyle: "italic" }}>
+                                            <LocalizedText name="Please answer each question with detailed information about your business" />
+                                        </p>
+                                    </div>
+
+                                    {/* Action Buttons */}
+                                    <div style={{ display: "flex", gap: "1rem", justifyContent: "center" }}>
+                                        <button
+                                            onClick={handleUrlInputCancel}
+                                            style={{
+                                                padding: "0.75rem 2rem",
+                                                fontSize: "16px",
+                                                backgroundColor: "#6c757d",
+                                                color: "white",
+                                                border: "none",
+                                                borderRadius: "8px",
+                                                cursor: "pointer"
+                                            }}
+                                        >
+                                            <LocalizedText name="Cancel" />
+                                        </button>
+                                        <button
+                                            onClick={handleUrlInputSubmit}
+                                            disabled={!profileInputData.websiteUrl.trim() && !profileInputData.description.trim()}
+                                            style={{
+                                                padding: "0.75rem 2rem",
+                                                fontSize: "16px",
+                                                backgroundColor: (!profileInputData.websiteUrl.trim() && !profileInputData.description.trim())
+                                                    ? "#ccc" : "#007bff",
+                                                color: "white",
+                                                border: "none",
+                                                borderRadius: "8px",
+                                                cursor: (!profileInputData.websiteUrl.trim() && !profileInputData.description.trim())
+                                                    ? "not-allowed" : "pointer",
+                                                fontWeight: "bold"
+                                            }}
+                                        >
+                                            {profileInputData.websiteUrl.trim() ? (
+                                                <LocalizedText name="🚀 Analyze & Create Profile" />
+                                            ) : (
+                                                <LocalizedText name="🚀 Create New Brand Profile" />
+                                            )}
+                                        </button>
+                                    </div>
+
+                                    {/* Help Text */}
+                                    <div style={{
+                                        marginTop: "1.5rem",
+                                        padding: "1rem",
+                                        backgroundColor: "#f8f9fa",
+                                        borderRadius: "6px",
+                                        fontSize: "14px",
+                                        color: "#666"
+                                    }}>
+                                        <strong><LocalizedText name="💡 Tip:" /></strong>{" "}
+                                        <LocalizedText name="The AI will ask you 4 specific questions and format the output with exact placeholders: Business, USP, persona, and Challenge." />
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* CHANGE 2: Profile Creation Modal - Expandable and Auto-scroll */}
+                        {showProfileCreationModal && isProfileChatRunning && (
+                            <div className={styles.modalOverlay1} style={{ zIndex: 10001 }}>
+                                <div
+                                    className={styles.modalContent1}
+                                    style={{
+                                        padding: "1rem",
+                                        maxWidth: "98vw",
+                                        maxHeight: "98vh",
+                                        width: "1400px",
+                                        height: "90vh",
+                                        position: "relative",
+                                        backgroundColor: "white",
+                                        borderRadius: "12px",
+                                        boxShadow: "0 8px 32px rgba(0,0,0,0.3)",
+                                        display: "flex",
+                                        flexDirection: "column",
+                                        resize: "both", // CHANGE 2: Make modal resizable
+                                        overflow: "auto" // CHANGE 2: Enable auto-scroll
+                                    }}
+                                >
+                                    {/* Modal Header */}
+                                    <div style={{
+                                        display: "flex",
+                                        justifyContent: "space-between",
+                                        alignItems: "center",
+                                        marginBottom: "1rem",
+                                        paddingBottom: "0.5rem",
+                                        borderBottom: "1px solid #eee",
+                                        flexShrink: 0 // Prevent header from shrinking
+                                    }}>
+                                        <h2 style={{ margin: 0, color: "#333" }}>
+                                            <LocalizedText name={isEditingProfile ? "Edit Brand Profile" : "Create New Brand Profile"} />
+                                        </h2>
+                                        <button
+                                            onClick={() => {
+                                                setShowProfileCreationModal(false);
+                                                setIsProfileChatRunning(false);
+                                                setIsEditingProfile(false);
+                                                setEditingProfileId(null);
+                                            }}
+                                            style={{
+                                                background: "transparent",
+                                                border: "none",
+                                                fontSize: "24px",
+                                                cursor: "pointer",
+                                                color: "#666",
+                                                padding: "0",
+                                                width: "30px",
+                                                height: "30px",
+                                                display: "flex",
+                                                alignItems: "center",
+                                                justifyContent: "center"
+                                            }}
+                                        >
+                                            ×
+                                        </button>
+                                    </div>
+
+                                    {/* CHANGE 2: Modal Content - Expandable ChatBaseStream1 */}
+                                    <div style={{
+                                        flex: 1,
+                                        overflow: "auto", // CHANGE 2: Enable scrolling for streaming content
+                                        minHeight: 0 // Allow flex child to shrink
+                                    }}>
+                                        <ChatBaseStream1
+                                            role="User Research Collector"
+                                            task="create profile"
+                                            initialMessage={profileChatInitialMessage}
+                                            department="Vibe Marketing"
+                                            user={roleMapping?.user || PLATFORM_NAME}
+                                            price={roleMapping?.price || 0.01} // CHANGE 4: Use role mapping price
+                                            onSaveProfile={handleSaveProfile}
+                                            isEditingProfile={isEditingProfile}
+                                            existingProfileName={selectedProfile?.name} // FIXED Issue 3: Pass existing profile name
+                                            existingProfileId={selectedProfile?.id} // ✅ FIXED: Add this line
+                                            onCancelProfile={() => {
+                                                setShowProfileCreationModal(false);
+                                                setIsProfileChatRunning(false);
+                                                setIsEditingProfile(false);
+                                                setEditingProfileId(null);
+                                            }}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* FIXED: Always show dropdowns at top, even when chat is running */}
+                        <div
+                            style={{
+                                display: "flex",
+                                flexDirection: "row",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                padding: "1px",
+                                width: "100%",
+                                marginBottom: isChatRunning ? "1rem" : "0", // Add margin when chat is running
+                            }}
+                        >
+                            <h3
+                                style={{ cursor: selectedRole ? "pointer" : "default", marginRight: "20px" }}
+                                onClick={() => selectedRole && setIsRatingModalOpen(true)}
+                            >
+                                {selectedRole ? <LocalizedText name="Review" /> : <LocalizedText name="" />}
+                            </h3>
+                            <div
+                                style={{
+                                    display: "flex",
+                                    flexDirection: "row",
+                                    justifyContent: "space-between",
+                                    alignItems: "center",
+                                    width: "100%",
+                                }}
+                            >
+                                {/* Task Dropdown (Left) */}
+                                <div
+                                    ref={taskButtonRef}
+                                    style={{
+                                        flex: 1,
+                                        position: "relative",
+                                        textAlign: "center",
+                                        display: "flex",
+                                        alignItems: "center",
+                                    }}
+                                >
+                                    <div
+                                        style={{
+                                            border: "2px solid #444",
+                                            padding: "0.5rem 1rem",
+                                            borderRadius: "8px",
+                                            cursor: "pointer",
+                                            backgroundColor: "blue",
+                                            position: "relative",
+                                            maxWidth: "600px",
+                                            flex: 1,
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "space-between",
+                                        }}
+                                        onClick={toggleTaskDropdown}
+                                    >
+                                        {selectedTask && (
+                                            <span
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    if (selectedTask) toggleFavorite(selectedTask);
+                                                }}
+                                                style={{
+                                                    cursor: "pointer",
+                                                    color: (selectedRole?.role === FAVORITE_TASK_ROLE || favoriteTasks.includes(selectedTask)) ? "gold" : "grey",
+                                                    marginRight: "10px",
+                                                    fontSize: "24px",
+                                                }}
+                                                title={selectedRole?.role === FAVORITE_TASK_ROLE ? "Click to remove from favorites" : (favoriteTasks.includes(selectedTask) ? "Click to unfavorite" : "Click to favorite")}
+                                            >
+                                                &#9733;
+                                            </span>
+                                        )}
+
+                                        <p style={{ fontSize: "18px", margin: 0, flex: 1, textAlign: "left" }}>
+                                            {selectedTask ? <LocalizedText name={selectedTask} /> : <LocalizedText name="Select a Task" />}
+                                        </p>
+                                        {selectedTask && (
+                                            <div className={styles.tooltipWrapper} style={{ position: "relative" }}>
+                                                <button
+                                                    ref={buttonRef}
+                                                    style={{
+                                                        marginRight: "0.2px",
+                                                        padding: "0.1rem 0.5rem",
+                                                        borderRadius: "4px",
+                                                        cursor: isRunButtonDisabled ? "default" : "pointer",
+                                                        backgroundColor: isRunButtonDisabled ? "#rgba(0, 208, 255, 0.95)" : "#0070f3",
+                                                        color: "white",
+                                                        border: "none",
+                                                        fontSize: "18px",
+                                                        fontWeight: "bold",
+                                                        boxShadow: isRunButtonDisabled ? "none" : "2px 4px red",
+                                                        transform: isRunButtonDisabled ? "none" : "scale(1)",
+                                                        transition: "transform 0.2s",
+                                                    }}
+                                                    onClick={(e) => {
+                                                        if (buttonRef.current?.getAttribute('data-processing') === 'true' || isProcessingPayment) {
+                                                            return;
+                                                        }
+                                                        buttonRef.current?.setAttribute('data-processing', 'true');
+
+                                                        handleExecuteTask(e);
+
+                                                        setTimeout(() => {
+                                                            if (!isRunButtonDisabled && buttonRef.current) {
+                                                                buttonRef.current.removeAttribute('data-processing');
+                                                            }
+                                                        }, 3000);
+                                                    }}
+                                                    onMouseEnter={(e) => {
+                                                        if (!isRunButtonDisabled) {
+                                                            e.currentTarget.style.transform = "scale(0.8)";
+                                                            e.currentTarget.style.backgroundColor = "#1e0af3";
+                                                            e.currentTarget.style.boxShadow = "1px 2px red";
+                                                        }
+                                                    }}
+                                                    onMouseLeave={(e) => {
+                                                        if (!isRunButtonDisabled) {
+                                                            e.currentTarget.style.transform = "scale(1)";
+                                                            e.currentTarget.style.backgroundColor = "#0070f3";
+                                                            e.currentTarget.style.boxShadow = "2px 4px red";
+                                                        }
+                                                    }}
+                                                    disabled={isRunButtonDisabled}
+                                                >
+                                                    {isChatRunning ? <LocalizedText name="In Progress" /> : <LocalizedText name="Execute" />}
+                                                </button>
+                                                <span className={styles.tooltip}>
+                                                    <LocalizedText name="Click to execute the task" />
+                                                </span>
+                                            </div>
+                                        )}
+                                    </div>
+                                    {isTaskDropdownOpen && (
+                                        <div
+                                            style={{
+                                                position: "absolute",
+                                                top: "100%",
+                                                left: 0,
+                                                width: "100%",
+                                                maxWidth: "600px",
+                                                backgroundColor: "blue",
+                                                padding: "1rem",
+                                                marginTop: "0px",
+                                                borderRadius: "8px",
+                                                boxShadow: "0 2px 10px rgba(0,0,0,0.2)",
+                                                zIndex: 1000,
+                                                fontSize: 18,
+                                            }}
+                                        >
+                                            {Array.isArray(tasks) && tasks.map((task) => (
+                                                <TaskItem
+                                                    key={task}
+                                                    task={task}
+                                                    handleTaskChange={handleTaskChange}
+                                                    handleDescriptionClick={handleDescriptionClick}
+                                                    selectedTask={selectedTask}
+                                                    activeButton={activeButton}
+                                                    isFavorited={selectedRole?.role === FAVORITE_TASK_ROLE ? true : favoriteTasks.includes(task)} // All tasks in Favorite role show as favorited
+                                                    toggleFavorite={toggleFavorite}
+                                                />
+                                            ))}
+
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* CHANGE 1: User Profile Dropdown with Exclusive Checkboxes */}
+                                <div
+                                    ref={profileButtonRef}
+                                    style={{
+                                        position: "relative",
+                                        marginLeft: "1rem",
+                                        marginRight: "1rem",
+                                    }}
+                                >
+                                    <div
+                                        style={{
+                                            border: "2px solid #444",
+                                            padding: "0.5rem 1rem",
+                                            borderRadius: "8px",
+                                            cursor: "pointer",
+                                            backgroundColor: selectedProfile ? "blue" : "darkblue",
+                                            color: "white",
+                                            fontSize: "18px",
+                                            minWidth: "200px",
+                                            textAlign: "center",
+                                        }}
+                                        onClick={toggleProfileDropdown}
+                                    >
+                                        {selectedProfile ? (
+                                            <LocalizedText name={`✓ ${selectedProfile.name}`} />
+                                        ) : (
+                                            <LocalizedText name="Select Brand Profile ▼" />
+                                        )}
+                                    </div>
+
+                                    {/* CHANGE 1: Profile Dropdown with Exclusive Checkboxes */}
+                                    {isProfileDropdownOpen && (
+                                        <div
+                                            style={{
+                                                position: "absolute",
+                                                top: "100%",
+                                                left: "50%",
+                                                transform: "translateX(-50%)",
+                                                backgroundColor: "white",
+                                                border: "2px solid #ccc",
+                                                borderRadius: "8px",
+                                                boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
+                                                zIndex: 1000,
+                                                minWidth: "350px",
+                                                maxHeight: "400px",
+                                                overflowY: "auto",
+                                                marginTop: "5px",
+                                            }}
+                                        >
+
+                                            {/* Create New Profile Option */}
+                                            <div
+                                                style={{
+                                                    padding: "1rem",
+                                                    borderBottom: "1px solid #eee",
+                                                    backgroundColor: "#f8f9fa",
+                                                }}
+                                            >
+                                                <button
+                                                    onClick={handleCreateNewProfile}
+                                                    style={{
+                                                        width: "100%",
+                                                        padding: "0.75rem",
+                                                        backgroundColor: "darkblue",
+                                                        color: "white",
+                                                        border: "none",
+                                                        borderRadius: "6px",
+                                                        cursor: "pointer",
+                                                        fontSize: "16px",
+                                                        fontWeight: "bold",
+                                                        marginBottom: "0.5rem"
+                                                    }}
+                                                >
+                                                    <LocalizedText name="+ Create a New Brand Profile" />
+                                                </button>
+
+                                                {/* Hardcoded Productivity Improvement Profile with Checkbox */}
+                                                <div
+                                                    style={{
+                                                        borderBottom: "1px solid #eee",
+                                                        padding: "0.75rem",
+                                                        backgroundColor: selectedProfile?.id === "productivity-improvement" ? "#e3f2fd" : "white",
+                                                        display: "flex",
+                                                        alignItems: "center",
+                                                        gap: "0.75rem"
+                                                    }}
+                                                >
+                                                    {/* Checkbox for Productivity Improvement */}
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={selectedProfile?.id === "productivity-improvement"}
+                                                        onChange={() => handleSelectProductivityProfile()}
+                                                        style={{
+                                                            width: "18px",
+                                                            height: "18px",
+                                                            cursor: "pointer",
+                                                            flexShrink: 0
+                                                        }}
+                                                    />
+
+                                                    <div style={{
+                                                        flex: 1,
+                                                        cursor: "pointer"
+                                                    }}
+                                                        onClick={() => handleSelectProductivityProfile()}>
+                                                        <h4 style={{
+                                                            margin: "0 0 0.25rem 0",
+                                                            color: "#333",
+                                                            fontSize: "16px",
+                                                            display: "flex",
+                                                            alignItems: "center",
+                                                            gap: "0.5rem"
+                                                        }}>
+                                                            ⚡ <LocalizedText name="Productivity Improvement" />
+                                                        </h4>
+                                                        <p style={{
+                                                            margin: 0,
+                                                            fontSize: "12px",
+                                                            color: "#666",
+                                                            fontStyle: "italic"
+                                                        }}>
+                                                            <LocalizedText name="Built-in profile for productivity tasks" />
+                                                        </p>
+                                                    </div>
+                                                </div>
+
+                                            </div>
+
+
+                                            {/* Existing Profiles with Exclusive Checkboxes */}
+                                            <div style={{ maxHeight: "250px", overflowY: "auto" }}>
+                                                {userProfiles.length === 0 ? (
+                                                    <div style={{ padding: "1rem", textAlign: "center", color: "#666" }}>
+                                                        <LocalizedText name="No brand profiles yet. Create your first profile!" />
+                                                    </div>
+                                                ) : (
+                                                    userProfiles.map((profile) => (
+                                                        <div
+                                                            key={profile.id}
+                                                            style={{
+                                                                borderBottom: "1px solid #eee",
+                                                                padding: "0.75rem",
+                                                                backgroundColor: selectedProfile?.id === profile.id ? "#e3f2fd" :
+                                                                    (!profile.isOwned ? "#f8f9fa" : "white"), // Different background for shared profiles
+                                                                display: "flex",
+                                                                alignItems: "center",
+                                                                gap: "0.75rem",
+                                                                border: !profile.isOwned ? "1px dashed #007bff" : "none", // Dashed border for shared profiles
+                                                                borderRadius: !profile.isOwned ? "4px" : "0"
+                                                            }}
+                                                        >
+                                                            {/* Exclusive Checkbox */}
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={selectedProfile?.id === profile.id}
+                                                                onChange={() => handleSelectProfile(profile)}
+                                                                style={{
+                                                                    width: "18px",
+                                                                    height: "18px",
+                                                                    cursor: "pointer",
+                                                                    flexShrink: 0
+                                                                }}
+                                                            />
+
+                                                            {/* Profile Name with Enhanced Owner Info */}
+                                                            <div style={{
+                                                                flex: 1,
+                                                                cursor: "pointer"
+                                                            }}
+                                                                onClick={() => handleSelectProfile(profile)}>
+
+                                                                {/* Profile Icon and Name */}
+                                                                <h4 style={{
+                                                                    margin: "0 0 0.25rem 0",
+                                                                    color: "#333",
+                                                                    fontSize: "16px",
+                                                                    display: "flex",
+                                                                    alignItems: "center",
+                                                                    gap: "0.5rem"
+                                                                }}>
+                                                                    {/* Icon to distinguish profile types */}
+                                                                    <span style={{ fontSize: "14px" }}>
+                                                                        {profile.isOwned ? "👤" : "🔗"}
+                                                                    </span>
+                                                                    {profile.name}
+                                                                </h4>
+
+                                                                {/* Enhanced Owner Info for Shared Profiles */}
+                                                                {!profile.isOwned && (
+                                                                    <div style={{
+                                                                        fontSize: "12px",
+                                                                        color: "#666",
+                                                                        marginTop: "0.25rem",
+                                                                        fontStyle: "italic"
+                                                                    }}>
+                                                                        <span style={{
+                                                                            backgroundColor: "#e3f2fd",
+                                                                            padding: "2px 6px",
+                                                                            borderRadius: "3px",
+                                                                            fontSize: "11px",
+                                                                            fontWeight: "bold"
+                                                                        }}>
+                                                                            <LocalizedText name="Shared by" /> {profile.ownerAddress?.slice(0, 6)}...{profile.ownerAddress?.slice(-4)}
+                                                                        </span>
+                                                                    </div>
+                                                                )}
+
+                                                                {/* Read-only indicator for shared profiles */}
+                                                                {!profile.isOwned && (
+                                                                    <div style={{
+                                                                        fontSize: "10px",
+                                                                        color: "#999",
+                                                                        marginTop: "0.25rem"
+                                                                    }}>
+                                                                        <LocalizedText name="Read-only access" />
+                                                                    </div>
+                                                                )}
+                                                            </div>
+
+                                                            {/* Action Buttons Section */}
+                                                            <div style={{ display: "flex", gap: "0.25rem", flexShrink: 0 }}>
+                                                                {profile.isOwned ? (
+                                                                    // Show full action buttons for owned profiles
+                                                                    <>
+                                                                        <button
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                handleEditProfile(profile);
+                                                                            }}
+                                                                            style={{
+                                                                                padding: "0.25rem 0.5rem",
+                                                                                backgroundColor: "#2196F3",
+                                                                                color: "white",
+                                                                                border: "none",
+                                                                                borderRadius: "3px",
+                                                                                cursor: "pointer",
+                                                                                fontSize: "12px",
+                                                                            }}
+                                                                            title="Edit this profile"
+                                                                        >
+                                                                            <LocalizedText name="Edit" />
+                                                                        </button>
+
+                                                                        <button
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                setShareProfile(profile);
+                                                                                setShowShareModal(true);
+                                                                            }}
+                                                                            style={{
+                                                                                padding: "0.25rem 0.5rem",
+                                                                                backgroundColor: "#ffa500",
+                                                                                color: "white",
+                                                                                border: "none",
+                                                                                borderRadius: "3px",
+                                                                                cursor: "pointer",
+                                                                                fontSize: "12px",
+                                                                            }}
+                                                                            title="Share this profile with team members"
+                                                                        >
+                                                                            <LocalizedText name="Share" />
+                                                                        </button>
+
+                                                                        <button
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                handleDeleteProfile(profile.id);
+                                                                            }}
+                                                                            style={{
+                                                                                padding: "0.25rem 0.5rem",
+                                                                                backgroundColor: "#f44336",
+                                                                                color: "white",
+                                                                                border: "none",
+                                                                                borderRadius: "3px",
+                                                                                cursor: "pointer",
+                                                                                fontSize: "12px",
+                                                                            }}
+                                                                            title="Delete this profile"
+                                                                        >
+                                                                            <LocalizedText name="Del" />
+                                                                        </button>
+                                                                    </>
+                                                                ) : (
+                                                                    // Show ONLY a shared indicator for shared profiles - NO ACTION BUTTONS
+                                                                    <div style={{
+                                                                        display: "flex",
+                                                                        flexDirection: "column",
+                                                                        alignItems: "center",
+                                                                        gap: "2px"
+                                                                    }}>
+                                                                        <span style={{
+                                                                            padding: "0.25rem 0.5rem",
+                                                                            backgroundColor: "#17a2b8",
+                                                                            color: "white",
+                                                                            borderRadius: "3px",
+                                                                            fontSize: "11px",
+                                                                            fontWeight: "bold"
+                                                                        }}>
+                                                                            <LocalizedText name="SHARED" />
+                                                                        </span>
+                                                                        <span style={{
+                                                                            fontSize: "9px",
+                                                                            color: "#999",
+                                                                            textAlign: "center"
+                                                                        }}>
+                                                                            <LocalizedText name="View Only" />
+                                                                        </span>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    ))
+                                                )}
+                                            </div>
+
+
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Role Dropdown (Right) - UPDATED to highlight Favorite Task role */}
+                                <div
+                                    ref={roleButtonRef}
+                                    style={{
+                                        position: "relative",
+                                        width: "100%",
+                                        maxWidth: "400px",
+                                    }}
+                                >
+                                    <div
+                                        style={{
+                                            marginLeft: "1rem",
+                                            border: "2px solid #444",
+                                            padding: "0.5rem 1rem",
+                                            borderRadius: "8px",
+                                            cursor: "pointer",
+                                            backgroundColor: selectedRole?.role === FAVORITE_TASK_ROLE ? "blue" : "blue",
+                                            color: selectedRole?.role === FAVORITE_TASK_ROLE ? "white" : "white",
+                                            position: "relative",
+                                            zIndex: 1000,
+                                            width: "100%",
+                                            boxSizing: "border-box",
+                                        }}
+                                        onClick={toggleRoleDropdown}
+                                    >
+                                        <p style={{ fontSize: "17px", margin: 0 }}>
+                                            {selectedRole ? <LocalizedText name={selectedRole.role} /> : <LocalizedText name="Select a Persona" />}
+                                        </p>
+                                    </div>
+                                    {isRoleDropdownOpen && (
+                                        <div
+                                            style={{
+                                                position: "absolute",
+                                                top: "100%",
+                                                left: 0,
+                                                width: "100%",
+                                                backgroundColor: "blue",
+                                                padding: "1rem",
+                                                marginTop: "0px",
+                                                borderRadius: "8px",
+                                                boxShadow: "0 2px 10px rgba(0,0,0,0.2)",
+                                                zIndex: 1000,
+                                                fontSize: "18px",
+                                            }}
+                                        >
+                                            {roles.map((role) => (
+                                                <RoleItem
+                                                    key={role.role}
+                                                    role={role.role}
+                                                    department={role.department}
+                                                    handleRoleChange={handleRoleChange}
+                                                    handleRoleDescriptionClick={handleRoleDescriptionClick}
+                                                    selectedRole={selectedRole?.role ?? null}
+                                                    activeRoleButton={activeRoleButton}
+                                                />
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Render ChatBaseStream when regular task is running - ALWAYS SHOW BELOW DROPDOWNS */}
+                        {isChatRunning && (
+                            <div style={{ marginTop: "1rem" }}>
+                                <ChatBaseStream
+                                    initialMessage={profileChatInitialMessage}
+                                    role={executionRole || selectedRole!.role} // ✅ Use execution role if available
+                                    task={selectedTask!}
+                                    department={selectedRole!.department}
+                                    user={roleMapping?.user || PLATFORM_NAME}
+                                    price={roleMapping?.price || 0.01}
+                                />
+                            </div>
+                        )}
+
+
+                        {/* Share Profile Modal */}
+                        {showShareModal && shareProfile && address && (
+                            <div style={{
+                                position: "fixed",
+                                top: 0,
+                                left: 0,
+                                right: 0,
+                                bottom: 0,
+                                backgroundColor: "rgba(0,0,0,0.3)",
+                                zIndex: 10003,
+                                display: "flex",
+                                justifyContent: "center",
+                                alignItems: "flex-start",
+                                paddingTop: "150px"
+                            }}>
+                                <ShareManager
+                                    embedding={{ key: shareProfile.id }}
+                                    currentUserAddress={address}
+                                    currentUserName={`User ${address.slice(0, 6)}...${address.slice(-4)}`}
+                                    onUpdateShare={() => { }}
+                                    onClose={() => setShowShareModal(false)}
+                                    style={{
+                                        width: "400px",
+                                        maxHeight: "500px",
+                                        position: "relative",
+                                        overflow: "auto"
+                                    }}
+                                />
+                            </div>
+                        )}
+
+                        {/* Rating Modal */}
+                        {isRatingModalOpen && selectedRole && (
+                            <RatingComponent
+                                tokenId=""
+                                isOpen={isRatingModalOpen}
+                                onClose={() => setIsRatingModalOpen(false)}
+                                department={selectedRole.department}
+                                role={selectedRole.role}
+                                userAddress={address}
+                            />
+                        )}
+                    </>
+
+                </div>
+                {/* Task Modal */}
+                {isTaskModalVisible && (
+                    <div
+                        ref={modalRef}
+                        style={{
+                            position: "absolute",
+                            top: modalPosition.top,
+                            left: modalPosition.left,
+                            backgroundColor: "blue",
+                            color: "white",
+                            padding: "15px",
+                            border: "1px solid #ccc",
+                            borderRadius: "8px",
+                            boxShadow: "2px 2px 5px darkred",
+                            width: "400px",
+                            zIndex: 1000,
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <button
+                            style={{
+                                position: "absolute",
+                                top: "5px",
+                                right: "5px",
+                                background: "transparent",
+                                border: "none",
+                                fontSize: "16px",
+                                cursor: "pointer",
+                            }}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setIsTaskModalVisible(false);
+                            }}
+                        >
+                            &times;
+                        </button>
+                        <h4 style={{ textAlign: "center", marginTop: "6px", marginBottom: "10px" }}>
+                            <LocalizedText name="Task Description" />
+                        </h4>
+                        <p style={{ marginTop: "6px" }}>
+                            {taskDescription ? (
+                                taskDescription
+                            ) : (
+                                <LocalizedText name="Please wait, Still loading ...." />
+                            )}
+                        </p>
+                    </div>
+                )}
+                {/* Role Modal */}
+                {isRoleModalVisible && (
+                    <div
+                        ref={modalRef}
+                        style={{
+                            position: "absolute",
+                            top: roleModalPosition.top,
+                            left: roleModalPosition.left,
+                            backgroundColor: "blue",
+                            color: "white",
+                            padding: "15px",
+                            border: "1px solid #ccc",
+                            borderRadius: "8px",
+                            boxShadow: "2px 2px 5px darkred",
+                            width: "450px",
+                            zIndex: 1000,
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <button
+                            style={{
+                                position: "absolute",
+                                top: "5px",
+                                right: "5px",
+                                background: "transparent",
+                                border: "none",
+                                fontSize: "16px",
+                                cursor: "pointer",
+                            }}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setIsRoleModalVisible(false);
+                            }}
+                        >
+                            &times;
+                        </button>
+                        <h4 style={{ textAlign: "center", marginTop: "6px", marginBottom: "10px" }}>
+                            <LocalizedText name={`Persona Description `} />
+                        </h4>
+                        <p style={{ marginTop: "20px" }}>
+                            {roleDescription ? (
+                                roleDescription
+                            ) : (
+                                <LocalizedText name="Please wait, Still loading ...." />
+                            )}
+                        </p>
+                    </div>
+                )}
+            </main>
+        </>
+    );
+};
+
+export default ChatHomeMarketing;

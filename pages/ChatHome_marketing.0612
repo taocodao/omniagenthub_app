@@ -1,0 +1,1733 @@
+import { useActiveAccount } from "thirdweb/react";
+import styles from "../styles/ChatHome1.module.css";
+import Navbar from "../components/Navbar";
+import { useState, useEffect, useRef, useCallback, useContext, ChangeEvent } from "react";
+import SignIn from "../components/SignIn";
+import RatingComponent from "../components/RatingComponent";
+import Head from "next/head";
+import { useSharedContext } from "../context/SharedContext";
+import { useRouter } from "next/router";
+import ChatBase from "../components/ChatBase";
+import { ChatBaseStream } from "../components/ChatBaseStream";
+import { ChatBaseStream1 } from "../components/ChatBaseStream_marketing";
+import { LocalizedText, getLocalizedString } from "../util/LocalizedText";
+import { LocalizationContext } from "../util/LocalizationContext";
+import { usePayment } from "../hook/Payment_Process";
+import { UPLOAD_FILE_FEE, PLATFORM_NAME } from "../constants/constants";
+import { toast } from "react-toastify";
+import TaskItem from "../components/TaskItem";
+import RoleItem from "../components/RoleItem";
+import axios from "axios";
+import { debounce } from 'lodash'
+import { ToastContainer } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
+
+// Define interfaces
+interface RoleData {
+    department: string;
+    role: string;
+}
+
+interface UserProfile {
+    id: string;
+    name: string;
+    business: {
+        name: string;
+        product: string;
+    };
+    persona: {
+        title: string;
+        industry: string;
+        company_size: string;
+        location: string;
+        pain_points_role: string;
+    };
+    USP: string;
+    challenges: string[];
+    websiteUrl?: string;
+    description?: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
+interface LocalizedMessages {
+    cleanupSuccess: string;
+    cleanupFailed: string;
+    cleanupError: string;
+    translateFailed: string;
+    uploadSuccess: string;
+    uploadFailed: string;
+}
+
+// NEW: Interface for role mapping with pricing
+interface RoleMapping {
+    price: number;
+    user: string;
+}
+
+const ChatHome: React.FC = () => {
+    const { language, setLanguage } = useContext(LocalizationContext);
+    const account = useActiveAccount();
+    const address = account?.address;
+    const [selectedRole, setSelectedRole] = useState<RoleData | null>(null);
+    const [roles, setRoles] = useState<RoleData[]>([]);
+    const [tasks, setTasks] = useState<string[]>([]);
+    const [selectedTask, setSelectedTask] = useState<string | null>(null);
+    const [isRatingModalOpen, setIsRatingModalOpen] = useState(false);
+
+    // User Profile States
+    const [userProfiles, setUserProfiles] = useState<UserProfile[]>([]);
+    const [selectedProfile, setSelectedProfile] = useState<UserProfile | null>(null);
+    const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
+    const [isProfileChatRunning, setIsProfileChatRunning] = useState(false);
+    const [profileChatInitialMessage, setProfileChatInitialMessage] = useState("");
+    const [isEditingProfile, setIsEditingProfile] = useState(false);
+    const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
+    const profileButtonRef = useRef<HTMLDivElement>(null);
+
+    // URL/text input dialog states
+    const [showUrlInputDialog, setShowUrlInputDialog] = useState(false);
+    const [profileInputData, setProfileInputData] = useState({
+        websiteUrl: '',
+        description: ''
+    });
+
+    // NEW: State to control if profile creation is happening in modal
+    const [showProfileCreationModal, setShowProfileCreationModal] = useState(false);
+
+    // NEW: State for role mapping pricing
+    const [roleMapping, setRoleMapping] = useState<RoleMapping | null>(null);
+
+    const { freeChatsLeft, setFreeChatsLeft, freeUploadsLeft, setFreeUploadsLeft, freeWebScrapeLeft, setFreeWebScrapeLeft } = useSharedContext();
+
+    const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
+    const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+    const [modalContent, setModalContent] = useState("");
+    const router = useRouter();
+    const roleButtonRef = useRef<HTMLDivElement>(null);
+    const taskButtonRef = useRef<HTMLDivElement>(null);
+    const [isRoleDropdownOpen, setIsRoleDropdownOpen] = useState(false);
+    const [isTaskDropdownOpen, setIsTaskDropdownOpen] = useState(false);
+    const [selectedLanguage, setSelectedLanguage] = useState<string>("English");
+    const [languages, setLanguages] = useState<string[]>([]);
+    const [taskDescription, setTaskDescription] = useState<string | null>(null);
+    const [hoveredTask, setHoveredTask] = useState<string | null>(null);
+    const { process_payment, isPaymentProcessing } = usePayment();
+    const [isTaskModalVisible, setIsTaskModalVisible] = useState(false);
+    const [modalPosition, setModalPosition] = useState({ top: 0, left: 0 });
+    const [isTooltipVisible, setIsTooltipVisible] = useState(false);
+    const modalRef = useRef<HTMLDivElement>(null);
+    const [activeButton, setActiveButton] = useState<string | null>(null);
+    const [isRoleModalVisible, setIsRoleModalVisible] = useState(false);
+    const [roleModalPosition, setRoleModalPosition] = useState({ top: 0, left: 0 });
+    const [roleDescription, setRoleDescription] = useState<string | null>(null);
+    const [activeRoleButton, setActiveRoleButton] = useState<string | null>(null);
+    const hasAddedFavoriteFromURL = useRef(false);
+    const [selectedDepartment, setSelectedDepartment] = useState<string | null>(null);
+    const [isFavoriteTasksLoaded, setIsFavoriteTasksLoaded] = useState<boolean>(false);
+    const [isChatRunning, setIsChatRunning] = useState(false);
+    const [favoriteTasks, setFavoriteTasks] = useState<string[]>([]);
+    const [isRunButtonDisabled, setIsRunButtonDisabled] = useState(false);
+    const [isRunButtonHovered, setIsRunButtonHovered] = useState(false);
+    const buttonRef = useRef<HTMLButtonElement | null>(null);
+    const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+
+    // UPDATED: Fetch roles from vibe marketing department excluding User Research Collector  
+    const fetchRoles = useCallback(async () => {
+        try {
+            const response = await fetch('/api/get-roles', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ department: "Vibe Marketing" }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch roles.');
+            }
+
+            const data: { roles: string[] } = await response.json();
+            const allRoles = Array.isArray(data.roles) ? data.roles : [];
+
+            // Filter out "User Research Collector" from vibe marketing roles
+            const filteredRoles = allRoles.filter(roleName => roleName !== "User Research Collector");
+
+            // Convert string roles to RoleData objects
+            const roleDataArray: RoleData[] = filteredRoles.map(roleName => ({
+                department: "Vibe Marketing",
+                role: roleName
+            }));
+
+            setRoles(roleDataArray);
+
+            // Auto-select first role if available
+            if (roleDataArray.length > 0) {
+                const initialRole = roleDataArray[0];
+                setSelectedRole(initialRole);
+                await fetchTasks(initialRole.department, initialRole.role);
+                // NEW: Fetch role mapping for pricing
+                await fetchRoleMapping(initialRole);
+            } else {
+                setSelectedRole(null);
+                setTasks([]);
+            }
+        } catch (error) {
+            console.error('Error fetching roles:', error);
+            toast.error('Error fetching roles.');
+            setRoles([]);
+        }
+    }, []);
+
+    // NEW: Function to fetch role mapping and pricing
+    const fetchRoleMapping = async (role: RoleData) => {
+        try {
+            const response = await fetch("/api/get-role-mappings", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    department: role.department,
+                    role: role.role,
+                }),
+            });
+            if (response.ok) {
+                const mapping = await response.json();
+                setRoleMapping(mapping);
+            }
+        } catch (error) {
+            console.error("Error fetching role mapping:", error);
+            setRoleMapping({ price: 1, user: PLATFORM_NAME }); // fallback
+        }
+    };
+
+    // UPDATED: Call fetchRoles on component mount
+    useEffect(() => {
+        fetchRoles();
+    }, [fetchRoles]);
+
+    // User Profile Functions
+    const fetchUserProfiles = async () => {
+        if (!address) return;
+        try {
+            const response = await fetch(`/api/get-user-profiles?userAddress=${address}`);
+            if (response.ok) {
+                const result = await response.json();
+                if (result.success) {
+                    setUserProfiles(result.profiles || []);
+                }
+            }
+        } catch (error) {
+            console.error("Error fetching user profiles:", error);
+        }
+    };
+
+    // NEW: Function to retrieve detailed profile information from database
+    const fetchProfileDetails = async (profileId: string): Promise<UserProfile | null> => {
+        try {
+            const response = await fetch(`/api/get-user-profile-detail?profileId=${profileId}&userAddress=${address}`);
+            if (response.ok) {
+                const result = await response.json();
+                if (result.success) {
+                    return result.profile;
+                }
+            }
+            return null;
+        } catch (error) {
+            console.error("Error fetching profile details:", error);
+            return null;
+        }
+    };
+
+    const handleCreateNewProfile = async () => {
+        if (!address) {
+            toast.error(await getLocalizedString("Please connect your wallet.", language));
+            return;
+        }
+
+        // Prepopulate with the 4 questions
+        const prepopulatedText = await getLocalizedString(`Please answer the following questions to create your user profile:
+
+1. 150-word company description
+2. Unique value proposition statement
+3. Primary customer persona details
+4. Top 3 customer pain points base
+
+Please provide detailed and clear answers to each question.
+
+Your answers:
+1. Company Description: [Your answer here]
+2. Value Proposition: [Your answer here]
+3. Customer Persona: [Your answer here]
+4. Pain Points: [Your answer here]`, language);
+
+        setProfileInputData({
+            websiteUrl: '',
+            description: prepopulatedText
+        });
+
+        // Show URL/text input dialog
+        setShowUrlInputDialog(true);
+        setIsProfileDropdownOpen(false);
+    };
+
+    const handleUrlInputSubmit = async () => {
+        if (!profileInputData.websiteUrl.trim() && !profileInputData.description.trim()) {
+            toast.error(await getLocalizedString("Please provide either a website URL or description", language));
+            return;
+        }
+
+        // CHANGE 3: Don't change the role in dropdown when creating profile
+        // Keep the currently selected role unchanged
+
+        // Create standardized initial message with exact 4 questions
+        let initialMessage = '';
+        if (profileInputData.websiteUrl.trim()) {
+            initialMessage = `Please analyze the following website URL: ${profileInputData.websiteUrl} 
+
+${profileInputData.description.trim() ? `Additional context: ${profileInputData.description}\n\n` : ''}
+
+Based on the website content, please answer these 4 questions exactly with in-depth detail:
+
+1. 150-word company description
+2. Unique value proposition statement
+3. Primary customer persona details
+4. Top 3 customer pain points base
+
+Then provide your completed comprehensive result in this exact format using these placeholder names:
+
+1. Business: [your answer to question 1]
+2. USP: [your answer to question 2]
+3. persona: [your answer to question 3]
+4. Challenge: [your answer to question 4]`;
+        } else {
+            initialMessage = `Please analyze the following business information:
+
+${profileInputData.description}
+
+Based on this information, please answer these 4 questions exactly:
+
+1. 150-word company description
+2. Unique value proposition statement
+3. Primary customer persona details
+4. Top 3 customer pain points base
+
+Then provide your completed result in this exact format using these placeholder names:
+
+1. Business: [your answer to question 1]
+2. USP: [your answer to question 2]
+3. persona: [your answer to question 3]
+4. Challenge: [your answer to question 4]`;
+        }
+        // NEW: Prepend language instruction to the context message
+        const languagePrefix = `Please proceed to the task in language: ${language}. `;
+        setProfileChatInitialMessage(languagePrefix + initialMessage);
+
+        // MODIFIED: Keep the modal open and show profile creation inside modal
+        setShowUrlInputDialog(false);
+        setShowProfileCreationModal(true);
+        setIsProfileChatRunning(true);
+        setIsEditingProfile(false);
+
+        // Reset input data
+        setProfileInputData({
+            websiteUrl: '',
+            description: ''
+        });
+    };
+
+    const handleUrlInputCancel = () => {
+        setShowUrlInputDialog(false);
+        setProfileInputData({
+            websiteUrl: '',
+            description: ''
+        });
+    };
+
+    const handleEditProfile = (profile: UserProfile) => {
+        setSelectedProfile(profile);
+        setEditingProfileId(profile.id);
+        setIsEditingProfile(true);
+
+        // Pre-populate with existing profile data using exact format
+        const existingProfileMessage = `Please review and update this existing profile: ${profile.name}
+
+Current profile data:
+- Business: ${profile.business.name} - ${profile.business.product}
+- USP: ${profile.USP}
+- Persona: ${profile.persona.title}, ${profile.persona.industry}, ${profile.persona.company_size}, ${profile.persona.location}
+- Challenges: ${profile.challenges.join(', ')}
+
+${profile.websiteUrl ? `Website URL: ${profile.websiteUrl}` : ''}
+${profile.description ? `Additional Info: ${profile.description}` : ''}
+
+Please answer these 4 questions to update the profile:
+
+1. 150-word company description
+2. Unique value proposition statement
+3. Primary customer persona details
+4. Top 3 customer pain points base
+
+Then provide your updated result in this exact format:
+
+1. Business: [your answer to question 1]
+2. USP: [your answer to question 2]
+3. persona: [your answer to question 3]
+4. Challenge: [your answer to question 4]`;
+
+        setProfileChatInitialMessage(existingProfileMessage);
+
+        // MODIFIED: Show profile editing inside modal
+        setShowProfileCreationModal(true);
+        setIsProfileChatRunning(true);
+        setIsProfileDropdownOpen(false);
+    };
+
+    // CHANGE 1: Modified to handle exclusive checkbox selection
+    const handleSelectProfile = async (profile: UserProfile) => {
+        // If clicking the same profile, unselect it
+        if (selectedProfile?.id === profile.id) {
+            setSelectedProfile(null);
+            toast.info(await getLocalizedString(`Deselected profile: ${profile.name}`, language));
+        } else {
+            // Select the new profile (exclusive selection)
+            setSelectedProfile(profile);
+            toast.info(await getLocalizedString(`Selected profile: ${profile.name}`, language));
+        }
+        setIsProfileDropdownOpen(false);
+    };
+
+    const handleSaveProfile = async (profileData: any, profileName: string) => {
+        if (!address || !profileName.trim()) {
+            toast.error(await getLocalizedString("Please provide a profile name.", language));
+            return;
+        }
+
+        try {
+            // Extract data from AI response (assuming it follows the format)
+            const extractProfileData = (content: string) => {
+                const businessMatch = content.match(/Business:\s*(.*?)(?=\n\s*\d+\.|$)/is);
+                const upsMatch = content.match(/USP:\s*(.*?)(?=\n\s*\d+\.|$)/is);
+                const personaMatch = content.match(/persona:\s*(.*?)(?=\n\s*\d+\.|$)/is);
+                const challengeMatch = content.match(/Challenge:\s*(.*?)(?=\n\s*\d+\.|$)/is);
+
+                return {
+                    business: businessMatch ? businessMatch[1].trim() : '',
+                    ups: upsMatch ? upsMatch[1].trim() : '',
+                    persona: personaMatch ? personaMatch[1].trim() : '',
+                    challenge: challengeMatch ? challengeMatch[1].trim() : ''
+                };
+            };
+
+            let extractedData;
+            if (typeof profileData === 'string') {
+                extractedData = extractProfileData(profileData);
+            } else {
+                extractedData = {
+                    business: profileData.business || '',
+                    ups: profileData.ups || profileData.USP || '',
+                    persona: profileData.persona || '',
+                    challenge: profileData.challenge || profileData.challenges?.join(', ') || ''
+                };
+            }
+
+            const response = await fetch('/api/save-user-profile', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    name: profileName.trim(),
+                    business: extractedData.business,
+                    ups: extractedData.ups,
+                    persona: extractedData.persona,
+                    challenge: extractedData.challenge,
+                    websiteUrl: profileInputData.websiteUrl || '',
+                    rawContent: typeof profileData === 'string' ? profileData : JSON.stringify(profileData),
+                    userAddress: address
+                }),
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                toast.success(await getLocalizedString("Profile saved successfully!", language));
+
+                // Refresh profiles list
+                await fetchUserProfiles();
+
+                // MODIFIED: Close modal and reset states
+                setShowProfileCreationModal(false);
+                setIsProfileChatRunning(false);
+                setIsEditingProfile(false);
+                setEditingProfileId(null);
+            } else {
+                toast.error(result.message || await getLocalizedString("Failed to save profile.", language));
+            }
+        } catch (error) {
+            console.error("Error saving profile:", error);
+            toast.error(await getLocalizedString("Error saving profile. Please try again.", language));
+        }
+    };
+
+    const handleDeleteProfile = async (profileId: string) => {
+        const confirmDelete = await getLocalizedString("Are you sure you want to delete this profile?", language);
+        if (!window.confirm(confirmDelete)) return;
+
+        try {
+            const response = await fetch('/api/delete-user-profile', {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    profileId: profileId,
+                    userAddress: address
+                }),
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                setUserProfiles(prev => prev.filter(p => p.id !== profileId));
+                if (selectedProfile?.id === profileId) {
+                    setSelectedProfile(null);
+                }
+                toast.success(await getLocalizedString("Profile deleted successfully!", language));
+            } else {
+                toast.error(result.message || await getLocalizedString("Failed to delete profile.", language));
+            }
+        } catch (error) {
+            console.error("Error deleting profile:", error);
+            toast.error(await getLocalizedString("Error deleting profile. Please try again.", language));
+        }
+    };
+
+    // Fetch user profiles on component mount
+    useEffect(() => {
+        if (address) {
+            fetchUserProfiles();
+        }
+    }, [address]);
+
+    // Existing functions
+    const fetchUserPerks = useCallback(async () => {
+        if (!address) return;
+        try {
+            const response = await fetch(`/api/get-user-perks?userAddress=${encodeURIComponent(address)}`);
+            if (response.ok) {
+                const data = await response.json();
+                setFreeChatsLeft(data.freeTrades);
+                setFreeUploadsLeft(data.freeUploads);
+                setFreeWebScrapeLeft(data.freeWebScrape);
+            } else {
+                const errorData = await response.json();
+                toast.error(errorData.message || "Failed to retrieve perks.");
+            }
+        } catch (error) {
+            console.error("Error fetching user perks:", error);
+            toast.error("An unexpected error occurred while fetching perks.");
+        }
+    }, [address]);
+
+    useEffect(() => {
+        if (address) {
+            fetchUserPerks();
+        } else {
+            setFreeChatsLeft(null);
+            setFreeUploadsLeft(null);
+            setFreeWebScrapeLeft(null);
+        }
+    }, [address, fetchUserPerks]);
+
+    // Rest of existing functions...
+    const addFavorite = useCallback(
+        async (task: string) => {
+            if (!address || !selectedRole) return;
+            if (favoriteTasks.includes(task)) return;
+            try {
+                const response = await fetch("/api/add-task-favorite", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        userAddress: address,
+                        department: selectedRole.department,
+                        role: selectedRole.role,
+                        task: task,
+                    }),
+                });
+                if (!response.ok) throw new Error("Failed to add favorite task");
+                setFavoriteTasks((prev) => [...prev, task]);
+                toast.info(<LocalizedText name={`Task ${task} Favorited`} />, {
+                    style: { backgroundColor: "#4CAF50", color: "#fff" },
+                });
+            } catch (error) {
+                console.error("Error adding favorite task:", error);
+                toast.error(<LocalizedText name="Failed To Update Favorite" />);
+            }
+        },
+        [address, selectedRole, favoriteTasks]
+    );
+
+    const fetchFavoriteTasks = async () => {
+        if (!address || !selectedRole) return;
+        try {
+            const response = await fetch("/api/get-task-favorites", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    userAddress: address,
+                    department: selectedRole.department,
+                    role: selectedRole.role,
+                }),
+            });
+            if (!response.ok) throw new Error("Failed to fetch favorite tasks");
+            const data = await response.json();
+            setFavoriteTasks(data.favoriteTasks || []);
+        } catch (error) {
+            console.error("Error fetching favorite tasks:", error);
+        } finally {
+            setIsFavoriteTasksLoaded(true);
+        }
+    };
+
+    useEffect(() => {
+        fetchFavoriteTasks();
+    }, [selectedRole, address]);
+
+    const toggleFavorite = useCallback(
+        async (task: string) => {
+            if (!address || !selectedRole) return;
+            const isFavorited = favoriteTasks.includes(task);
+            const endpoint = isFavorited ? "/api/remove-task-favorite" : "/api/add-task-favorite";
+            try {
+                const response = await fetch(endpoint, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        userAddress: address,
+                        department: selectedRole.department,
+                        role: selectedRole.role,
+                        task: task,
+                    }),
+                });
+                if (!response.ok) throw new Error("Failed to update favorite task");
+                if (isFavorited) {
+                    setFavoriteTasks((prev) => prev.filter((t) => t !== t));
+                } else {
+                    setFavoriteTasks((prev) => [...prev, task]);
+                }
+                toast.info(
+                    !isFavorited ? (
+                        <LocalizedText name={`Task ${task} Favorited`} />
+                    ) : (
+                        <LocalizedText name={`Task ${task} Unfavorited`} />
+                    ),
+                    { style: { backgroundColor: !isFavorited ? "#4CAF50" : "#F44336", color: "#fff" } }
+                );
+            } catch (error) {
+                console.error("Error updating favorite task:", error);
+                toast.error(<LocalizedText name="Failed To Update Favorite" />);
+            }
+        },
+        [address, selectedRole, favoriteTasks]
+    );
+
+    const handleTaskChange = (task: string) => {
+        setSelectedTask(task);
+        setIsTaskDropdownOpen(false);
+        setIsTaskModalVisible(false);
+        setIsRoleModalVisible(false);
+        // DON'T reset isChatRunning here - let the task continue running
+        setIsChatRunning(false); // <-- Reset chat window
+        setIsRunButtonDisabled(false);
+        setProfileChatInitialMessage(""); // Optionally clear previous context
+    };
+
+    const handleDescriptionClick = async (event: React.MouseEvent<HTMLButtonElement>, task: string) => {
+        event.stopPropagation();
+        setIsRoleModalVisible(false);
+        setTaskDescription(null);
+        setActiveButton(task);
+        const targetElement = event.currentTarget;
+        if (!targetElement) {
+            console.error("event.currentTarget is null");
+            return;
+        }
+        const rect = targetElement.getBoundingClientRect();
+        setModalPosition({ top: rect.top + window.scrollY, left: rect.right + 10 + window.scrollX });
+        setIsTaskModalVisible(true);
+        if (!selectedRole) {
+            console.error("selectedRole is null");
+            return;
+        }
+        if (taskDescription && activeButton === task) return;
+        try {
+            const response = await fetch("/api/get_task_description", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    department: selectedRole.department,
+                    role: selectedRole.role,
+                    task,
+                    language: selectedLanguage,
+                }),
+            });
+            if (!response.ok) throw new Error("Failed to fetch task description");
+            const data = await response.json();
+            setTaskDescription(data.description);
+        } catch (error) {
+            console.error("Error fetching task description:", error);
+            setTaskDescription("");
+        }
+    };
+
+    const handleRoleDescriptionClick = async (event: React.MouseEvent<HTMLButtonElement>, roleData: { department: string; role: string }) => {
+        event.stopPropagation();
+        setRoleDescription(null);
+        const { department, role } = roleData;
+        const uniqueKey = `${department}:${role}`;
+        setActiveRoleButton(uniqueKey);
+        const targetElement = event.currentTarget;
+        if (!targetElement) {
+            console.error("event.currentTarget is null");
+            return;
+        }
+        const rect = targetElement.getBoundingClientRect();
+        setRoleModalPosition({ top: rect.top - 100 + window.scrollY, left: rect.left - 465 + window.scrollX });
+        setIsRoleModalVisible(true);
+        try {
+            const response = await fetch("/api/get_role_description", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ department, role, language: selectedLanguage }),
+            });
+            if (!response.ok) throw new Error("Failed to fetch role description");
+            const data = await response.json();
+            setRoleDescription(data.description);
+        } catch (error) {
+            console.error("Error fetching role description:", error);
+            setRoleDescription("");
+        }
+    };
+
+    const handleRoleChange = (role: RoleData) => {
+        setSelectedRole(role);
+        setSelectedTask(null);
+        fetchTasks(role.department, role.role);
+        fetchRoleMapping(role); // NEW: Fetch pricing for new role
+        setIsRoleDropdownOpen(false);
+        // DON'T reset isChatRunning here - let the current task continue if running
+        setIsChatRunning(false); // <-- Reset chat window
+        setIsRunButtonDisabled(false);
+        setProfileChatInitialMessage(""); // Optionally clear previous context
+
+    };
+
+    const fetchTasks = async (department: string, role: string): Promise<void> => {
+        try {
+            const response = await fetch("/api/get-tasks", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ department, role }),
+            });
+            if (!response.ok) throw new Error("Failed to fetch tasks");
+            const tasksData = await response.json();
+            setTasks(tasksData.tasks);
+        } catch (error) {
+            console.error("Error fetching tasks:", error);
+        }
+    };
+
+    useEffect(() => {
+        if (address) {
+            fetchRoles();
+        }
+    }, [address]);
+
+    // Toggle functions
+    const toggleTaskDropdown = () => {
+        if (isTaskDropdownOpen) {
+            handleCloseDropdown();
+        } else {
+            setIsTaskDropdownOpen(true);
+        }
+        setIsRoleDropdownOpen(false);
+        setIsProfileDropdownOpen(false);
+    };
+
+    const toggleRoleDropdown = () => {
+        setIsRoleDropdownOpen(!isRoleDropdownOpen);
+        setIsTaskDropdownOpen(false);
+        setIsProfileDropdownOpen(false);
+    };
+
+    const toggleProfileDropdown = () => {
+        setIsProfileDropdownOpen(!isProfileDropdownOpen);
+        setIsTaskDropdownOpen(false);
+        setIsRoleDropdownOpen(false);
+    };
+
+    const handleCloseDropdown = () => {
+        setIsTaskDropdownOpen(false);
+        setIsTaskModalVisible(false);
+        setActiveButton(null);
+        setActiveRoleButton(null);
+        setIsRoleModalVisible(false);
+        setIsRoleDropdownOpen(false);
+        setIsProfileDropdownOpen(false);
+    };
+
+    const handleClickOutside = useCallback((event: MouseEvent) => {
+        if (
+            taskButtonRef.current &&
+            !taskButtonRef.current.contains(event.target as Node) &&
+            profileButtonRef.current &&
+            !profileButtonRef.current.contains(event.target as Node) &&
+            roleButtonRef.current &&
+            !roleButtonRef.current.contains(event.target as Node) &&
+            modalRef.current &&
+            !modalRef.current.contains(event.target as Node)
+        ) {
+            handleCloseDropdown();
+        }
+    }, []);
+
+    useEffect(() => {
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, [handleClickOutside]);
+
+    // UPDATED: Execute task function with brand profile check
+    const debouncedExecuteTask = useCallback(
+        debounce((event: React.MouseEvent<HTMLButtonElement>) => {
+            const actuallyExecuteTask = async (e: React.MouseEvent<HTMLButtonElement>) => {
+                e.stopPropagation();
+                if (isProcessingPayment) {
+                    console.log("Payment already in progress, ignoring additional click");
+                    return;
+                }
+                if (isRunButtonDisabled) return;
+
+                // 1. Check if brand profile is selected
+                if (!selectedProfile) {
+                    toast.error(await getLocalizedString("Please select a brand profile first before executing the task.", language));
+                    return;
+                }
+
+                setIsRunButtonDisabled(true);
+                if (!selectedRole) {
+                    toast.error(await getLocalizedString("Please select a persona.", language));
+                    setIsRunButtonDisabled(false);
+                    return;
+                }
+
+                try {
+                    setIsProcessingPayment(true);
+
+                    // 3. Retrieve detailed profile information
+                    const profileDetails = await fetchProfileDetails(selectedProfile.id);
+                    if (!profileDetails) {
+                        toast.error(await getLocalizedString("Failed to retrieve profile details.", language));
+                        setIsRunButtonDisabled(false);
+                        return;
+                    }
+
+                    // 4. Start chat with profile context
+                    await startChatWithProfileContext(profileDetails);
+
+                } catch (error) {
+                    console.error("Error executing task with profile context:", error);
+                    toast.error(await getLocalizedString("Error processing task with profile context.", language));
+                    setIsRunButtonDisabled(false);
+                } finally {
+                    setTimeout(() => {
+                        setIsProcessingPayment(false);
+                    }, 5000);
+                }
+            };
+
+            actuallyExecuteTask(event);
+        }, 500, { leading: true, trailing: false }),
+        [isProcessingPayment, isRunButtonDisabled, selectedRole, selectedProfile, address, language, process_payment]
+    );
+
+    // NEW: Function to start chat with brand profile context
+    const startChatWithProfileContext = async (profileDetails: UserProfile) => {
+        try {
+            // CHANGE 4: Use role mapping for pricing instead of hardcoded value
+            if (!roleMapping) {
+                await fetchRoleMapping(selectedRole!);
+            }
+
+            // Create context message with brand profile information
+            const contextMessage = `Please use the following brand profile as context for this task:
+
+**Brand Profile: ${profileDetails.name}**
+
+**Business Information:**
+- Company: ${profileDetails.business.name}
+- Product/Service: ${profileDetails.business.product}
+
+**Target Customer:**
+- Title: ${profileDetails.persona.title}
+- Industry: ${profileDetails.persona.industry}
+- Company Size: ${profileDetails.persona.company_size}
+- Location: ${profileDetails.persona.location}
+- Role Description: ${profileDetails.persona.pain_points_role}
+
+**Unique Selling Proposition:**
+${profileDetails.USP}
+
+**Customer Challenges:**
+${profileDetails.challenges.map((challenge, index) => `${index + 1}. ${challenge}`).join('\n')}
+
+${profileDetails.websiteUrl ? `**Website:** ${profileDetails.websiteUrl}` : ''}
+
+${profileDetails.description ? `**Additional Context:** ${profileDetails.description}` : ''}
+
+---
+
+Based on this brand profile context, please proceed with the selected task: ${selectedTask}
+
+Please ensure your response is tailored specifically to this brand profile and target audience.`;
+
+            // NEW: Prepend language instruction to the context message
+            const languagePrefix = `Please proceed to the task in language: ${language}. `;
+            const finalMessage = languagePrefix + contextMessage;
+
+            // Set up chat with context - Keep dropdowns visible
+            setProfileChatInitialMessage(finalMessage);
+            setIsProfileChatRunning(false);
+            setIsChatRunning(true);
+
+        } catch (error) {
+            console.error("Error starting chat with profile context:", error);
+            throw error;
+        }
+    };
+
+    const handleExecuteTask = (e: React.MouseEvent<HTMLButtonElement>) => {
+        e.preventDefault();
+        debouncedExecuteTask(e);
+    };
+
+    return (
+        <>
+            <Head>
+                <title>Web3AIstore</title>
+                <link rel="icon" href="/favicon.ico" />
+            </Head>
+            <main className={styles.main}>
+                <div className={styles.container}>
+                    {!address ? (
+                        <SignIn />
+                    ) : (
+                        <>
+                            <Navbar />
+
+                            <ToastContainer
+                                position="top-right"
+                                autoClose={5000}
+                                hideProgressBar={false}
+                                newestOnTop={false}
+                                closeOnClick
+                                rtl={false}
+                                pauseOnFocusLoss
+                                draggable
+                                pauseOnHover
+                                style={{ zIndex: 10000 }}
+                            />
+
+                            {/* URL/Text Input Dialog for New Profile */}
+                            {showUrlInputDialog && (
+                                <div className={styles.modalOverlay1}>
+                                    <div
+                                        className={styles.modalContent1}
+                                        style={{
+                                            padding: "2rem",
+                                            maxWidth: "600px",
+                                            position: "relative",
+                                            backgroundColor: "white",
+                                            borderRadius: "12px",
+                                            boxShadow: "0 8px 32px rgba(0,0,0,0.3)"
+                                        }}
+                                    >
+                                        <h2 style={{ marginBottom: "1rem", textAlign: "center", color: "#333" }}>
+                                            <LocalizedText name="Create a New Brand Profile" />
+                                        </h2>
+
+                                        <p style={{ marginBottom: "2rem", color: "#666", textAlign: "center", fontSize: "16px" }}>
+                                            <LocalizedText name="To create a new brand profile, I can either analyze your website or work with information you provide. Please choose one option below:" />
+                                        </p>
+
+                                        {/* Website URL Input */}
+                                        <div style={{ marginBottom: "2rem" }}>
+                                            <label style={{
+                                                display: "block",
+                                                marginBottom: "0.5rem",
+                                                fontWeight: "bold",
+                                                color: "#333"
+                                            }}>
+                                                <LocalizedText name="🌐 Option 1: Website URL (Recommended)" />
+                                            </label>
+                                            <input
+                                                type="url"
+                                                value={profileInputData.websiteUrl}
+                                                onChange={(e) => setProfileInputData(prev => ({
+                                                    ...prev,
+                                                    websiteUrl: e.target.value,
+                                                    description: e.target.value ? '' : prev.description
+                                                }))}
+                                                placeholder="https://your-company-website.com"
+                                                style={{
+                                                    width: "100%",
+                                                    padding: "0.75rem",
+                                                    fontSize: "16px",
+                                                    border: "2px solid #ddd",
+                                                    borderRadius: "8px",
+                                                    marginBottom: "0.5rem"
+                                                }}
+                                            />
+                                            <p style={{ fontSize: "14px", color: "#666", fontStyle: "italic" }}>
+                                                <LocalizedText name="AI will analyze your website to extract brand information, target audience, and value proposition" />
+                                            </p>
+                                        </div>
+
+                                        {/* OR Divider */}
+                                        <div style={{
+                                            textAlign: "center",
+                                            margin: "1.5rem 0",
+                                            position: "relative"
+                                        }}>
+                                            <div style={{
+                                                height: "1px",
+                                                backgroundColor: "#ddd",
+                                                position: "absolute",
+                                                width: "100%",
+                                                top: "50%"
+                                            }}></div>
+                                            <span style={{
+                                                backgroundColor: "white",
+                                                padding: "0 1rem",
+                                                color: "#666",
+                                                fontWeight: "bold"
+                                            }}>
+                                                <LocalizedText name="OR" />
+                                            </span>
+                                        </div>
+
+                                        {/* Description Input */}
+                                        <div style={{ marginBottom: "2rem" }}>
+                                            <label style={{
+                                                display: "block",
+                                                marginBottom: "0.5rem",
+                                                fontWeight: "bold",
+                                                color: "#333"
+                                            }}>
+                                                <LocalizedText name="📝 Option 2: Answer Profile Questions" />
+                                            </label>
+                                            <textarea
+                                                value={profileInputData.description}
+                                                onChange={(e) => setProfileInputData(prev => ({
+                                                    ...prev,
+                                                    description: e.target.value,
+                                                    websiteUrl: e.target.value && e.target.value !== `Please answer the following questions to create your user profile:
+
+1. 150-word company description
+2. Unique value proposition statement
+3. Primary customer persona details
+4. Top 3 customer pain points base
+
+Please provide detailed and clear answers to each question.
+
+Your answers:
+1. Company Description: [Your answer here]
+2. Value Proposition: [Your answer here]
+3. Customer Persona: [Your answer here]
+4. Pain Points: [Your answer here]` ? '' : prev.websiteUrl
+                                                }))}
+                                                placeholder="The questions will be pre-filled for you..."
+                                                rows={12}
+                                                style={{
+                                                    width: "100%",
+                                                    padding: "0.75rem",
+                                                    fontSize: "14px",
+                                                    border: "2px solid #ddd",
+                                                    borderRadius: "8px",
+                                                    marginBottom: "0.5rem",
+                                                    resize: "vertical",
+                                                    fontFamily: "monospace"
+                                                }}
+                                            />
+                                            <p style={{ fontSize: "14px", color: "#666", fontStyle: "italic" }}>
+                                                <LocalizedText name="Please answer each question with detailed information about your business" />
+                                            </p>
+                                        </div>
+
+                                        {/* Action Buttons */}
+                                        <div style={{ display: "flex", gap: "1rem", justifyContent: "center" }}>
+                                            <button
+                                                onClick={handleUrlInputCancel}
+                                                style={{
+                                                    padding: "0.75rem 2rem",
+                                                    fontSize: "16px",
+                                                    backgroundColor: "#6c757d",
+                                                    color: "white",
+                                                    border: "none",
+                                                    borderRadius: "8px",
+                                                    cursor: "pointer"
+                                                }}
+                                            >
+                                                <LocalizedText name="Cancel" />
+                                            </button>
+                                            <button
+                                                onClick={handleUrlInputSubmit}
+                                                disabled={!profileInputData.websiteUrl.trim() && !profileInputData.description.trim()}
+                                                style={{
+                                                    padding: "0.75rem 2rem",
+                                                    fontSize: "16px",
+                                                    backgroundColor: (!profileInputData.websiteUrl.trim() && !profileInputData.description.trim())
+                                                        ? "#ccc" : "#007bff",
+                                                    color: "white",
+                                                    border: "none",
+                                                    borderRadius: "8px",
+                                                    cursor: (!profileInputData.websiteUrl.trim() && !profileInputData.description.trim())
+                                                        ? "not-allowed" : "pointer",
+                                                    fontWeight: "bold"
+                                                }}
+                                            >
+                                                {profileInputData.websiteUrl.trim() ? (
+                                                    <LocalizedText name="🚀 Analyze & Create Profile" />
+                                                ) : (
+                                                    <LocalizedText name="🚀 Create New Brand Profile" />
+                                                )}
+                                            </button>
+                                        </div>
+
+                                        {/* Help Text */}
+                                        <div style={{
+                                            marginTop: "1.5rem",
+                                            padding: "1rem",
+                                            backgroundColor: "#f8f9fa",
+                                            borderRadius: "6px",
+                                            fontSize: "14px",
+                                            color: "#666"
+                                        }}>
+                                            <strong><LocalizedText name="💡 Tip:" /></strong>{" "}
+                                            <LocalizedText name="The AI will ask you 4 specific questions and format the output with exact placeholders: Business, USP, persona, and Challenge." />
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* CHANGE 2: Profile Creation Modal - Expandable and Auto-scroll */}
+                            {showProfileCreationModal && isProfileChatRunning && (
+                                <div className={styles.modalOverlay1} style={{ zIndex: 10001 }}>
+                                    <div
+                                        className={styles.modalContent1}
+                                        style={{
+                                            padding: "1rem",
+                                            maxWidth: "98vw",
+                                            maxHeight: "98vh",
+                                            width: "1400px",
+                                            height: "90vh",
+                                            position: "relative",
+                                            backgroundColor: "white",
+                                            borderRadius: "12px",
+                                            boxShadow: "0 8px 32px rgba(0,0,0,0.3)",
+                                            display: "flex",
+                                            flexDirection: "column",
+                                            resize: "both", // CHANGE 2: Make modal resizable
+                                            overflow: "auto" // CHANGE 2: Enable auto-scroll
+                                        }}
+                                    >
+                                        {/* Modal Header */}
+                                        <div style={{
+                                            display: "flex",
+                                            justifyContent: "space-between",
+                                            alignItems: "center",
+                                            marginBottom: "1rem",
+                                            paddingBottom: "0.5rem",
+                                            borderBottom: "1px solid #eee",
+                                            flexShrink: 0 // Prevent header from shrinking
+                                        }}>
+                                            <h2 style={{ margin: 0, color: "#333" }}>
+                                                <LocalizedText name={isEditingProfile ? "Edit Brand Profile" : "Create New Brand Profile"} />
+                                            </h2>
+                                            <button
+                                                onClick={() => {
+                                                    setShowProfileCreationModal(false);
+                                                    setIsProfileChatRunning(false);
+                                                    setIsEditingProfile(false);
+                                                    setEditingProfileId(null);
+                                                }}
+                                                style={{
+                                                    background: "transparent",
+                                                    border: "none",
+                                                    fontSize: "24px",
+                                                    cursor: "pointer",
+                                                    color: "#666",
+                                                    padding: "0",
+                                                    width: "30px",
+                                                    height: "30px",
+                                                    display: "flex",
+                                                    alignItems: "center",
+                                                    justifyContent: "center"
+                                                }}
+                                            >
+                                                ×
+                                            </button>
+                                        </div>
+
+                                        {/* CHANGE 2: Modal Content - Expandable ChatBaseStream1 */}
+                                        <div style={{
+                                            flex: 1,
+                                            overflow: "auto", // CHANGE 2: Enable scrolling for streaming content
+                                            minHeight: 0 // Allow flex child to shrink
+                                        }}>
+                                            <ChatBaseStream1
+                                                role="User Research Collector"
+                                                task="create profile"
+                                                initialMessage={profileChatInitialMessage}
+                                                department="Vibe Marketing"
+                                                user={roleMapping?.user || PLATFORM_NAME}
+                                                price={roleMapping?.price || 1} // CHANGE 4: Use role mapping price
+                                                onSaveProfile={handleSaveProfile}
+                                                isEditingProfile={isEditingProfile}
+                                                onCancelProfile={() => {
+                                                    setShowProfileCreationModal(false);
+                                                    setIsProfileChatRunning(false);
+                                                    setIsEditingProfile(false);
+                                                    setEditingProfileId(null);
+                                                }}
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* FIXED: Always show dropdowns at top, even when chat is running */}
+                            <div
+                                style={{
+                                    display: "flex",
+                                    flexDirection: "row",
+                                    justifyContent: "space-between",
+                                    alignItems: "center",
+                                    padding: "1px",
+                                    width: "100%",
+                                    marginBottom: isChatRunning ? "1rem" : "0", // Add margin when chat is running
+                                }}
+                            >
+                                <h3
+                                    style={{ cursor: selectedRole ? "pointer" : "default", marginRight: "20px" }}
+                                    onClick={() => selectedRole && setIsRatingModalOpen(true)}
+                                >
+                                    {selectedRole ? <LocalizedText name="Review" /> : <LocalizedText name="" />}
+                                </h3>
+                                <div
+                                    style={{
+                                        display: "flex",
+                                        flexDirection: "row",
+                                        justifyContent: "space-between",
+                                        alignItems: "center",
+                                        width: "100%",
+                                    }}
+                                >
+                                    {/* Task Dropdown (Left) */}
+                                    <div
+                                        ref={taskButtonRef}
+                                        style={{
+                                            flex: 1,
+                                            position: "relative",
+                                            textAlign: "center",
+                                            display: "flex",
+                                            alignItems: "center",
+                                        }}
+                                    >
+                                        <div
+                                            style={{
+                                                border: "2px solid #444",
+                                                padding: "0.5rem 1rem",
+                                                borderRadius: "8px",
+                                                cursor: "pointer",
+                                                backgroundColor: "blue",
+                                                position: "relative",
+                                                maxWidth: "600px",
+                                                flex: 1,
+                                                display: "flex",
+                                                alignItems: "center",
+                                                justifyContent: "space-between",
+                                            }}
+                                            onClick={toggleTaskDropdown}
+                                        >
+                                            {selectedTask && (
+                                                <span
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        if (selectedTask) toggleFavorite(selectedTask);
+                                                    }}
+                                                    style={{
+                                                        cursor: "pointer",
+                                                        color: favoriteTasks.includes(selectedTask) ? "gold" : "grey",
+                                                        marginRight: "10px",
+                                                        fontSize: "24px",
+                                                    }}
+                                                >
+                                                    &#9733;
+                                                </span>
+                                            )}
+                                            <p style={{ fontSize: "18px", margin: 0, flex: 1, textAlign: "left" }}>
+                                                {selectedTask ? <LocalizedText name={selectedTask} /> : <LocalizedText name="Select a Task" />}
+                                            </p>
+                                            {selectedTask && (
+                                                <div className={styles.tooltipWrapper} style={{ position: "relative" }}>
+                                                    <button
+                                                        ref={buttonRef}
+                                                        style={{
+                                                            marginRight: "0.2px",
+                                                            padding: "0.1rem 0.5rem",
+                                                            borderRadius: "4px",
+                                                            cursor: isRunButtonDisabled ? "default" : "pointer",
+                                                            backgroundColor: isRunButtonDisabled ? "#rgba(0, 208, 255, 0.95)" : "#0070f3",
+                                                            color: "white",
+                                                            border: "none",
+                                                            fontSize: "18px",
+                                                            fontWeight: "bold",
+                                                            boxShadow: isRunButtonDisabled ? "none" : "2px 4px red",
+                                                            transform: isRunButtonDisabled ? "none" : "scale(1)",
+                                                            transition: "transform 0.2s",
+                                                        }}
+                                                        onClick={(e) => {
+                                                            if (buttonRef.current?.getAttribute('data-processing') === 'true' || isProcessingPayment) {
+                                                                return;
+                                                            }
+                                                            buttonRef.current?.setAttribute('data-processing', 'true');
+
+                                                            handleExecuteTask(e);
+
+                                                            setTimeout(() => {
+                                                                if (!isRunButtonDisabled && buttonRef.current) {
+                                                                    buttonRef.current.removeAttribute('data-processing');
+                                                                }
+                                                            }, 3000);
+                                                        }}
+                                                        onMouseEnter={(e) => {
+                                                            if (!isRunButtonDisabled) {
+                                                                e.currentTarget.style.transform = "scale(0.8)";
+                                                                e.currentTarget.style.backgroundColor = "#1e0af3";
+                                                                e.currentTarget.style.boxShadow = "1px 2px red";
+                                                            }
+                                                        }}
+                                                        onMouseLeave={(e) => {
+                                                            if (!isRunButtonDisabled) {
+                                                                e.currentTarget.style.transform = "scale(1)";
+                                                                e.currentTarget.style.backgroundColor = "#0070f3";
+                                                                e.currentTarget.style.boxShadow = "2px 4px red";
+                                                            }
+                                                        }}
+                                                        disabled={isRunButtonDisabled}
+                                                    >
+                                                        {isChatRunning ? <LocalizedText name="In Progress" /> : <LocalizedText name="Execute" />}
+                                                    </button>
+                                                    <span className={styles.tooltip}>
+                                                        <LocalizedText name="Click to execute the task" />
+                                                    </span>
+                                                </div>
+                                            )}
+                                        </div>
+                                        {isTaskDropdownOpen && (
+                                            <div
+                                                style={{
+                                                    position: "absolute",
+                                                    top: "100%",
+                                                    left: 0,
+                                                    width: "100%",
+                                                    maxWidth: "600px",
+                                                    backgroundColor: "blue",
+                                                    padding: "1rem",
+                                                    marginTop: "0px",
+                                                    borderRadius: "8px",
+                                                    boxShadow: "0 2px 10px rgba(0,0,0,0.2)",
+                                                    zIndex: 1000,
+                                                    fontSize: 18,
+                                                }}
+                                            >
+                                                {tasks.map((task) => (
+                                                    <TaskItem
+                                                        key={task}
+                                                        task={task}
+                                                        handleTaskChange={handleTaskChange}
+                                                        handleDescriptionClick={handleDescriptionClick}
+                                                        selectedTask={selectedTask}
+                                                        activeButton={activeButton}
+                                                        isFavorited={favoriteTasks.includes(task)}
+                                                        toggleFavorite={toggleFavorite}
+                                                    />
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* CHANGE 1: User Profile Dropdown with Exclusive Checkboxes */}
+                                    <div
+                                        ref={profileButtonRef}
+                                        style={{
+                                            position: "relative",
+                                            marginLeft: "1rem",
+                                            marginRight: "1rem",
+                                        }}
+                                    >
+                                        <div
+                                            style={{
+                                                border: "2px solid #444",
+                                                padding: "0.5rem 1rem",
+                                                borderRadius: "8px",
+                                                cursor: "pointer",
+                                                backgroundColor: selectedProfile ? "darkgreen" : "darkblue",
+                                                color: "white",
+                                                fontSize: "18px",
+                                                minWidth: "200px",
+                                                textAlign: "center",
+                                            }}
+                                            onClick={toggleProfileDropdown}
+                                        >
+                                            {selectedProfile ? (
+                                                <LocalizedText name={`✓ ${selectedProfile.name}`} />
+                                            ) : (
+                                                <LocalizedText name="Select Brand Profile ▼" />
+                                            )}
+                                        </div>
+
+                                        {/* CHANGE 1: Profile Dropdown with Exclusive Checkboxes */}
+                                        {isProfileDropdownOpen && (
+                                            <div
+                                                style={{
+                                                    position: "absolute",
+                                                    top: "100%",
+                                                    left: "50%",
+                                                    transform: "translateX(-50%)",
+                                                    backgroundColor: "white",
+                                                    border: "2px solid #ccc",
+                                                    borderRadius: "8px",
+                                                    boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
+                                                    zIndex: 1000,
+                                                    minWidth: "350px",
+                                                    maxHeight: "400px",
+                                                    overflowY: "auto",
+                                                    marginTop: "5px",
+                                                }}
+                                            >
+                                                {/* Create New Profile Option */}
+                                                <div
+                                                    style={{
+                                                        padding: "1rem",
+                                                        borderBottom: "1px solid #eee",
+                                                        backgroundColor: "#f8f9fa",
+                                                    }}
+                                                >
+                                                    <button
+                                                        onClick={handleCreateNewProfile}
+                                                        style={{
+                                                            width: "100%",
+                                                            padding: "0.75rem",
+                                                            backgroundColor: "#4CAF50",
+                                                            color: "white",
+                                                            border: "none",
+                                                            borderRadius: "6px",
+                                                            cursor: "pointer",
+                                                            fontSize: "16px",
+                                                            fontWeight: "bold",
+                                                        }}
+                                                    >
+                                                        <LocalizedText name="+ Create a New Brand Profile" />
+                                                    </button>
+                                                </div>
+
+                                                {/* Existing Profiles with Exclusive Checkboxes */}
+                                                <div style={{ maxHeight: "250px", overflowY: "auto" }}>
+                                                    {userProfiles.length === 0 ? (
+                                                        <div style={{ padding: "1rem", textAlign: "center", color: "#666" }}>
+                                                            <LocalizedText name="No brand profiles yet. Create your first profile!" />
+                                                        </div>
+                                                    ) : (
+                                                        userProfiles.map((profile) => (
+                                                            <div
+                                                                key={profile.id}
+                                                                style={{
+                                                                    borderBottom: "1px solid #eee",
+                                                                    padding: "0.75rem",
+                                                                    backgroundColor: selectedProfile?.id === profile.id ? "#e3f2fd" : "white",
+                                                                    display: "flex",
+                                                                    alignItems: "center",
+                                                                    gap: "0.75rem"
+                                                                }}
+                                                            >
+                                                                {/* CHANGE 1: Exclusive Checkbox */}
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={selectedProfile?.id === profile.id}
+                                                                    onChange={() => handleSelectProfile(profile)}
+                                                                    style={{
+                                                                        width: "18px",
+                                                                        height: "18px",
+                                                                        cursor: "pointer",
+                                                                        flexShrink: 0
+                                                                    }}
+                                                                />
+
+                                                                <div style={{
+                                                                    flex: 1,
+                                                                    cursor: "pointer"
+                                                                }}
+                                                                    onClick={() => handleSelectProfile(profile)}>
+                                                                    <h4 style={{
+                                                                        margin: "0 0 0.25rem 0",
+                                                                        color: "#333",
+                                                                        fontSize: "16px"
+                                                                    }}>
+                                                                        {profile.name}
+                                                                    </h4>
+                                                                    <p style={{
+                                                                        margin: "0",
+                                                                        fontSize: "12px",
+                                                                        color: "#666"
+                                                                    }}>
+                                                                        {profile.business.name} - {profile.persona.title}
+                                                                    </p>
+                                                                </div>
+
+                                                                <div style={{ display: "flex", gap: "0.25rem", flexShrink: 0 }}>
+                                                                    <button
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            handleEditProfile(profile);
+                                                                        }}
+                                                                        style={{
+                                                                            padding: "0.25rem 0.5rem",
+                                                                            backgroundColor: "#2196F3",
+                                                                            color: "white",
+                                                                            border: "none",
+                                                                            borderRadius: "3px",
+                                                                            cursor: "pointer",
+                                                                            fontSize: "12px",
+                                                                        }}
+                                                                    >
+                                                                        <LocalizedText name="Edit" />
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            handleDeleteProfile(profile.id);
+                                                                        }}
+                                                                        style={{
+                                                                            padding: "0.25rem 0.5rem",
+                                                                            backgroundColor: "#f44336",
+                                                                            color: "white",
+                                                                            border: "none",
+                                                                            borderRadius: "3px",
+                                                                            cursor: "pointer",
+                                                                            fontSize: "12px",
+                                                                        }}
+                                                                    >
+                                                                        <LocalizedText name="Del" />
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        ))
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Role Dropdown (Right) */}
+                                    <div
+                                        ref={roleButtonRef}
+                                        style={{
+                                            position: "relative",
+                                            width: "100%",
+                                            maxWidth: "400px",
+                                        }}
+                                    >
+                                        <div
+                                            style={{
+                                                marginLeft: "1rem",
+                                                border: "2px solid #444",
+                                                padding: "0.5rem 1rem",
+                                                borderRadius: "8px",
+                                                cursor: "pointer",
+                                                backgroundColor: "blue",
+                                                position: "relative",
+                                                zIndex: 1000,
+                                                width: "100%",
+                                                boxSizing: "border-box",
+                                            }}
+                                            onClick={toggleRoleDropdown}
+                                        >
+                                            <p style={{ fontSize: "17px", margin: 0 }}>
+                                                {selectedRole ? <LocalizedText name={selectedRole.role} /> : <LocalizedText name="Select a Persona" />}
+                                            </p>
+                                        </div>
+                                        {isRoleDropdownOpen && (
+                                            <div
+                                                style={{
+                                                    position: "absolute",
+                                                    top: "100%",
+                                                    left: 0,
+                                                    width: "100%",
+                                                    backgroundColor: "blue",
+                                                    padding: "1rem",
+                                                    marginTop: "0px",
+                                                    borderRadius: "8px",
+                                                    boxShadow: "0 2px 10px rgba(0,0,0,0.2)",
+                                                    zIndex: 1000,
+                                                    fontSize: "18px",
+                                                }}
+                                            >
+                                                {roles.map((role) => (
+                                                    <RoleItem
+                                                        key={role.role}
+                                                        role={role.role}
+                                                        department={role.department}
+                                                        handleRoleChange={handleRoleChange}
+                                                        handleRoleDescriptionClick={handleRoleDescriptionClick}
+                                                        selectedRole={selectedRole?.role ?? null}
+                                                        activeRoleButton={activeRoleButton}
+                                                    />
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Render ChatBaseStream when regular task is running - ALWAYS SHOW BELOW DROPDOWNS */}
+                            {isChatRunning && (
+                                <div style={{ marginTop: "1rem" }}>
+                                    <ChatBaseStream
+                                        initialMessage={profileChatInitialMessage}
+                                        role={selectedRole!.role}
+                                        task={selectedTask!}
+                                        department={selectedRole!.department}
+                                        user={roleMapping?.user || PLATFORM_NAME}
+                                        price={roleMapping?.price || 1}
+                                    />
+                                </div>
+                            )}
+
+                            {/* Rating Modal */}
+                            {isRatingModalOpen && selectedRole && (
+                                <RatingComponent
+                                    tokenId=""
+                                    isOpen={isRatingModalOpen}
+                                    onClose={() => setIsRatingModalOpen(false)}
+                                    department={selectedRole.department}
+                                    role={selectedRole.role}
+                                    userAddress={address}
+                                />
+                            )}
+                        </>
+                    )}
+                </div>
+                {/* Task Modal */}
+                {isTaskModalVisible && (
+                    <div
+                        ref={modalRef}
+                        style={{
+                            position: "absolute",
+                            top: modalPosition.top,
+                            left: modalPosition.left,
+                            backgroundColor: "blue",
+                            color: "white",
+                            padding: "15px",
+                            border: "1px solid #ccc",
+                            borderRadius: "8px",
+                            boxShadow: "2px 2px 5px darkred",
+                            width: "400px",
+                            zIndex: 1000,
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <button
+                            style={{
+                                position: "absolute",
+                                top: "5px",
+                                right: "5px",
+                                background: "transparent",
+                                border: "none",
+                                fontSize: "16px",
+                                cursor: "pointer",
+                            }}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setIsTaskModalVisible(false);
+                            }}
+                        >
+                            &times;
+                        </button>
+                        <h4 style={{ textAlign: "center", marginTop: "6px", marginBottom: "10px" }}>
+                            <LocalizedText name="Task Description" />
+                        </h4>
+                        <p style={{ marginTop: "6px" }}>
+                            {taskDescription ? (
+                                taskDescription
+                            ) : (
+                                <LocalizedText name="Please wait, Still loading ...." />
+                            )}
+                        </p>
+                    </div>
+                )}
+                {/* Role Modal */}
+                {isRoleModalVisible && (
+                    <div
+                        ref={modalRef}
+                        style={{
+                            position: "absolute",
+                            top: roleModalPosition.top,
+                            left: roleModalPosition.left,
+                            backgroundColor: "blue",
+                            color: "white",
+                            padding: "15px",
+                            border: "1px solid #ccc",
+                            borderRadius: "8px",
+                            boxShadow: "2px 2px 5px darkred",
+                            width: "450px",
+                            zIndex: 1000,
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <button
+                            style={{
+                                position: "absolute",
+                                top: "5px",
+                                right: "5px",
+                                background: "transparent",
+                                border: "none",
+                                fontSize: "16px",
+                                cursor: "pointer",
+                            }}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setIsRoleModalVisible(false);
+                            }}
+                        >
+                            &times;
+                        </button>
+                        <h4 style={{ textAlign: "center", marginTop: "6px", marginBottom: "10px" }}>
+                            <LocalizedText name={`Persona Description `} />
+                        </h4>
+                        <p style={{ marginTop: "20px" }}>
+                            {roleDescription ? (
+                                roleDescription
+                            ) : (
+                                <LocalizedText name="Please wait, Still loading ...." />
+                            )}
+                        </p>
+                    </div>
+                )}
+            </main>
+        </>
+    );
+};
+
+export default ChatHome;

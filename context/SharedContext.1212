@@ -1,0 +1,50 @@
+// context/SharedContext.tsx
+
+import { createContext, useContext, useState, Dispatch, SetStateAction, ReactNode } from "react";
+
+interface SharedContextType {
+    freeChatsLeft: number | null;
+    setFreeChatsLeft: Dispatch<SetStateAction<number | null>>;
+    balanceData: string | null;
+    setBalanceData: Dispatch<SetStateAction<string | null>>;
+    freeUploadsLeft: number | null;
+    setFreeUploadsLeft: Dispatch<SetStateAction<number | null>>;
+    freeCustomGPTLeft: number | null;
+    setFreeCustomGPTLeft: Dispatch<SetStateAction<number | null>>;
+}
+
+const SharedContext = createContext<SharedContextType | undefined>(undefined);
+
+const useSharedContext = () => {
+    const context = useContext(SharedContext);
+    if (!context) {
+        throw new Error("useSharedContext must be used within a SharedProvider");
+    }
+    return context;
+};
+
+const SharedProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+    const [freeChatsLeft, setFreeChatsLeft] = useState<number | null>(null);
+    const [balanceData, setBalanceData] = useState<string | null>(null); // Existing state for balance
+    const [freeUploadsLeft, setFreeUploadsLeft] = useState<number | null>(null); // New state for Free Uploads
+    const [freeCustomGPTLeft, setFreeCustomGPTLeft] = useState<number | null>(null); // New state for Free CustomGPTs
+
+    return (
+        <SharedContext.Provider
+            value={{
+                freeChatsLeft,
+                setFreeChatsLeft,
+                balanceData,
+                setBalanceData,
+                freeUploadsLeft,
+                setFreeUploadsLeft,
+                freeCustomGPTLeft,
+                setFreeCustomGPTLeft,
+            }}
+        >
+            {children}
+        </SharedContext.Provider>
+    );
+};
+
+export { SharedProvider, useSharedContext };

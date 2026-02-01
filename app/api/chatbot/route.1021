@@ -1,0 +1,66 @@
+// app/api/chatbot/route.ts
+
+import { NextRequest } from 'next/server';
+import { Pinecone } from '@pinecone-database/pinecone';
+import { OpenAI } from 'openai';
+import { StreamingTextResponse, OpenAIStream } from 'ai';
+
+// Initialize OpenAI and Pinecone clients
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
+const index = pinecone.index('gpt-descriptions'); // Ensure this index exists in Pinecone
+
+// Specify that this route should use the Edge Runtime
+export const runtime = 'edge';
+
+export default async function handler(req: NextRequest) {
+    if (req.method !== 'POST') {
+        return new Response('Method not allowed', { status: 405 });
+    }
+
+    try {
+        // Extract the message from the request body
+        const { messages } = await req.json();
+
+        // Get the latest user message
+        const userMessage = messages[messages.length - 1].content;
+
+        // Step 1: Embed the user's question
+        const questionEmbeddingResponse = await openai.embeddings.create({
+            model: 'text-embedding-ada-002',
+            input: userMessage,
+        });
+
+        const questionEmbedding = questionEmbeddingResponse.data[0].embedding;
+
+        // Step 2: Query Pinecone for relevant GPT descriptions
+        const queryResponse = await index.query({
+            vector: questionEmbedding,
+            topK: 5,
+            includeMetadata: true,
+        });
+
+        // Extract the relevant descriptions
+        const contexts = queryResponse.matches
+            ?.map((match) => (match.metadata as any).description)
+            .join('\n');
+
+        // Step 3: Generate an answer using OpenAI's Chat API
+        const prompt = `Based on the following descriptions, help the user find the most suitable role and task:\n${contexts}\n\nUser: ${userMessage}\nAssistant:`;
+
+        const completion = await openai.chat.completions.create({
+            model: process.env.GPT_MODEL || 'gpt-4o-mini',
+            messages: [{ role: 'user', content: prompt }],
+            stream: true,
+        });
+
+        // Convert the OpenAI completion into a readable stream
+        const stream = OpenAIStream(completion);
+
+        // Return the streaming response directly
+        return new StreamingTextResponse(stream);
+    } catch (error) {
+        console.error('Error in chatbot handler:', error);
+        return new Response('Internal server error', { status: 500 });
+    }
+}

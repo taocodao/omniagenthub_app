@@ -1,0 +1,324 @@
+'use client';
+
+import React, { useState, useEffect, useRef, useContext } from 'react';
+import ReactMarkdown from 'react-markdown';
+import rehypeRaw from 'rehype-raw';
+import remarkGfm from 'remark-gfm';
+import styles from "../styles/Home5.module.css";
+import HashUtil from '../util/hashToFixedDigits';
+import { useActiveAccount } from 'thirdweb/react';
+import { LocalizedText, useLocalizedString, getLocalizedString } from '../util/LocalizedText';
+import { LocalizationContext } from '../util/LocalizationContext';
+import { usePayment } from '../hook/Payment_Process';
+import { useAssistant, Message } from 'ai/react';
+import { createRoot } from 'react-dom/client'; // New import
+import ReactDOM from 'react-dom/client';
+
+export const runtime = "edge";
+
+interface ChatBaseStreamProps {
+    role: string;
+    task: string;
+    initialMessage: string;
+    department: string;
+    user: string | null;
+    price: number | null;
+}
+
+const options = [
+    'Enhance Based on Previous Feedback or Additional Input',
+    'Conduct a More Rigorous Assessment',
+    'Gather Detail for Customization by Answering More Questions',
+    'Simulate Comprehensive Focus Group Insights For Better Work',
+    'Replicate Diverse Expert Opinions to Improve',
+    'Explore Innovative Approaches to be Creative',
+    'Adjust Presentation Style, Tone, or Scope',
+    'Optimize for Peak Performance',
+];
+
+const optionShortNames: { [key: string]: string } = {
+    'Enhance Based on Previous Feedback or Additional Input': 'Refine',
+    'Conduct a More Rigorous Assessment': 'Evaluate',
+    'Gather Detail for Customization by Answering More Questions': 'Personalize',
+    'Simulate Comprehensive Focus Group Insights For Better Work': 'Focus Group',
+    'Replicate Diverse Expert Opinions to Improve': 'Expert Feedback',
+    'Explore Innovative Approaches to be Creative': 'Creative',
+    'Adjust Presentation Style, Tone, or Scope': 'Modify',
+    'Optimize for Peak Performance': 'Auto Improve',
+};
+
+const CustomTable: React.FC<React.TableHTMLAttributes<HTMLTableElement>> = ({ children, ...props }) => (
+    <table className={styles.customTable} {...props}>
+        {children}
+    </table>
+);
+
+
+export function ChatBaseStream({ role, task, initialMessage, department, user, price }: ChatBaseStreamProps) {
+    const { process_payment, isPaymentProcessing } = usePayment();
+    const [isLoading, setIsLoading] = useState(false);
+    const [isRefining, setIsRefining] = useState(false);
+    const account = useActiveAccount();
+    const userAddress = account?.address;
+    const assistantId = HashUtil.hashTo(role + task);
+    const { language } = useContext(LocalizationContext);
+    const inputRef = useRef<HTMLTextAreaElement>(null);
+    const [renderKey, setRenderKey] = useState(0);
+    const initialMessageSentRef = useRef(false); // Fix: Define initialMessageSentRef
+    const [optionLongNames, setOptionLongNames] = useState<{ [key: string]: string }>({});
+    const { messages, input, handleInputChange, append, submitMessage, status } = useAssistant({
+        api: '/api/assistant1',
+        body: {
+            assistantId,
+            threadId: null,
+        },
+    });
+
+    const updateOptionLongNames = async (language: string) => {
+        const newOptionLongNames: { [key: string]: string } = {};
+        const longNames = Object.keys(optionShortNames);
+        for (let longName of longNames) {
+            newOptionLongNames[optionShortNames[longName]] = await getLocalizedString(longName, language);
+        }
+        setOptionLongNames(newOptionLongNames); // Set the state to trigger re-render
+    };
+
+    useEffect(() => {
+        console.log('Updating optionLongNames for language:', language);
+        updateOptionLongNames(language); // Update when language changes
+    }, [language]);
+
+    useEffect(() => {
+        if (Object.keys(optionLongNames).length > 0) {
+            setRenderKey(prev => prev + 1); // Force re-render once options are loaded
+        }
+    }, [optionLongNames]);
+
+    useEffect(() => {
+        if (initialMessage && !initialMessageSentRef.current) {
+            submitQuestion(initialMessage);
+            initialMessageSentRef.current = true;
+        }
+    }, [initialMessage]);
+
+    const submitQuestion = async (message: string) => {
+        setIsLoading(true);
+        if (price && user) {
+            const isPaymentValid = await process_payment(String(userAddress), price, user);
+            if (!isPaymentValid) {
+                alert(await getLocalizedString('Insufficient balance', language));
+                setIsLoading(false);
+                return;
+            }
+        }
+        append({ role: 'user', content: message });
+        await submitMessage();
+        setIsLoading(false);
+        setIsRefining(false); // Reset refine mode after submission
+    };
+
+    // Handle the form submit
+    const handleFormSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (isRefining) {
+            await handleRefineSubmit();
+        } else {
+            await submitQuestion(input);
+        }
+    };
+
+
+    const handleInputChange1 = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+        handleInputChange(e);
+        if (inputRef.current) {
+            inputRef.current.style.height = 'auto';
+            inputRef.current.style.height = `${inputRef.current.scrollHeight}px`;
+        }
+    };
+
+    const handleButtonClick = async (action: string) => {
+        let translatedActionMessage;
+        try {
+            // Get the translated full name (displayed to the user)
+            translatedActionMessage = await getLocalizedString(action, language);
+        } catch (error) {
+            console.error('Error translating action message:', error);
+            translatedActionMessage = action; // Fallback to original if translation fails
+        }
+
+        const shortName = optionShortNames[action]; // Use exact short name
+        if (shortName === 'Refine') {
+            setIsRefining(true);
+            inputRef.current?.focus();
+        } else {
+            await submitQuestion(shortName || action);
+        }
+    };
+
+
+    const handleRefineSubmit = async () => {
+        setIsLoading(true);
+        await submitQuestion('Refine ' + input);
+        setIsRefining(false); // Reset isRefining after submitting
+        setIsLoading(false);  // Unlock buttons after submission
+    };
+
+    const copyToClipboard = async (content: string) => {
+        try {
+            const tempElement = document.createElement('div');
+            tempElement.innerHTML = await renderMarkdownToHTML(content);
+            await navigator.clipboard.write([
+                new ClipboardItem({
+                    'text/html': new Blob([tempElement.innerHTML], { type: 'text/html' }),
+                    'text/plain': new Blob([content], { type: 'text/plain' })
+                })
+            ]);
+            alert(await getLocalizedString('Copied to clipboard with formatting', language));
+        } catch (err) {
+            console.error("Failed to copy: ", err);
+            await navigator.clipboard.writeText(content);
+            alert(await getLocalizedString('Copied plain text to clipboard', language));
+        }
+    };
+
+    const feedbackPlaceholder = useLocalizedString("Please type feedback or leave blank");
+    const messagePlaceholder = useLocalizedString("Type your message");
+
+    const renderMarkdownToHTML = async (markdown: string): Promise<string> => {
+        return new Promise((resolve) => {
+            const tempElement = document.createElement('div');
+
+            // Create a root for React rendering
+            const root = ReactDOM.createRoot(tempElement);
+
+            const markdownElement = (
+                <ReactMarkdown
+                    rehypePlugins={[rehypeRaw]}
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                        table: ({ children, ...props }) => (
+                            <table style={{ borderCollapse: 'collapse', width: '100%' }} {...props}>
+                                {children}
+                            </table>
+                        ),
+                        th: ({ children, ...props }) => (
+                            <th style={{ border: '1px solid black', padding: '8px', backgroundColor: '#f2f2f2' }} {...props}>
+                                {typeof children === 'string' ? children : 'Fallback Text'}
+                            </th>
+                        ),
+                        td: ({ children, ...props }) => (
+                            <td style={{ border: '1px solid black', padding: '8px' }} {...props}>
+                                {children}
+                            </td>
+                        ),
+
+                    }}
+                >
+                    {markdown}
+                </ReactMarkdown>
+            );
+
+            // Render the element and then resolve the innerHTML
+            root.render(markdownElement);
+            resolve(tempElement.innerHTML);
+        });
+    };
+    // A function to clean up message content by stripping markdown and extra spaces
+    const cleanMessageContent = (content: string) => {
+        //return content.replace(/[#\s]/g, '').trim(); // Remove markdown headers, spaces
+        return content.trim();
+    };
+
+    return (
+        <div key={renderKey}>
+            <div className={styles.container}>
+                <div className={styles.chatContainer}>
+                    {messages.map((message, index) => (
+                        <div key={index} className={`${styles.message} ${message.role === 'user' ? styles.userMessage : styles.aiMessage}`}>
+                            <div className={message.role === 'user' ? styles.userMessageRole : styles.aiMessageRole}>
+                                {message.role === 'user' ? <LocalizedText name={`User: ${task}`} /> : <LocalizedText name={role} />}
+                            </div>
+                            <ReactMarkdown
+                                rehypePlugins={[rehypeRaw]}
+                                remarkPlugins={[remarkGfm]}
+                                components={{
+                                    table: ({ children, ...props }) => (
+                                        <table className={styles.customTable} {...props}>
+                                            {children}
+                                        </table>
+                                    ),
+                                    thead: ({ children, ...props }) => (
+                                        <thead {...props}>{children}</thead>
+                                    ),
+                                    tbody: ({ children, ...props }) => (
+                                        <tbody {...props}>{children}</tbody>
+                                    ),
+                                    tr: ({ children, ...props }) => (
+                                        <tr {...props}>{children}</tr>
+                                    ),
+                                    th: ({ children, ...props }) => (
+                                        <th {...props}>{children}</th>
+                                    ),
+                                    td: ({ children, ...props }) => (
+                                        <td {...props}>{children}</td>
+                                    ),
+                                    code: ({ node, className, children, ...props }) => {
+                                        const match = /language-(\w+)/.exec(className || '');
+                                        if (match && match[1] === 'html') {
+                                            return <div dangerouslySetInnerHTML={{ __html: String(children).replace(/\n$/, '') }} />;
+                                        }
+                                        return <code className={className} {...props}>{children}</code>;
+                                    },
+                                }}
+                            >
+                                {(() => {
+                                    console.log("Full optionLongNames map:", optionLongNames); // Log the entire map
+                                    console.log("Message content:", message.content);
+                                    console.log("Long name from optionLongNames:", optionLongNames[message.content]);
+
+                                    // Check if the optionLongNames map contains the long name for the current message content
+                                    return message.role === 'user' && optionLongNames[message.content]
+                                        ? optionLongNames[cleanMessageContent(message.content)] // Use the long name from the mapping
+                                        : message.content; // Fallback to original content
+                                })()}
+                            </ReactMarkdown>
+                            {message.role === 'assistant' && (
+                                <button onClick={() => copyToClipboard(message.content)} className={styles.copyButton}>
+                                    <LocalizedText name="Copy" />
+                                </button>
+                            )}
+                        </div>
+                    ))}
+                    {isLoading && <div className={styles.loadingIndicator}><LocalizedText name="AI is thinking..." /></div>}
+                </div>
+
+                <div className={styles.buttonContainer}>
+                    {options.map((option) => (
+                        <div key={option} className={styles.buttonWrapper}>
+                            <button onClick={() => handleButtonClick(option)} className={styles.cardButton} disabled={isLoading || isRefining}>
+                                <LocalizedText name={optionShortNames[option]} />
+                            </button>
+                            <div className={styles.buttonTooltip}>
+                                <LocalizedText name={option} />
+                            </div>
+                        </div>
+                    ))}
+                </div>
+
+                <form onSubmit={handleFormSubmit} className={styles.inputForm}>
+                    <textarea
+                        ref={inputRef}
+                        className={`${styles.input} ${isRefining ? styles.refineInput : ''}`}
+                        value={input}
+                        onChange={handleInputChange1}
+                        placeholder={isRefining ? feedbackPlaceholder : messagePlaceholder}
+                        rows={1}
+                    />
+                    <button type="submit" className={styles.cardButton}>
+                        <LocalizedText name={isRefining ? 'refine' : 'send'} />
+                    </button>
+                </form>
+            </div>
+        </div>
+    );
+}

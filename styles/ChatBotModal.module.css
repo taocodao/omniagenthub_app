@@ -1,0 +1,176 @@
+/* styles/ChatBot.module.css */
+.chatContainer {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    width: 100%;
+    background-color: #f7f7f7;
+}
+
+.chatWindow {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem;
+    background-color: #ffffff;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+}
+
+.inputContainer {
+    display: flex;
+    align-items: center;
+    padding: 0.5rem;
+    background-color: #ffffff;
+    border-top: 1px solid #ccc;
+}
+
+.inputBox {
+    flex: 1;
+    padding: 0.5rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+
+.sendButton {
+    padding: 0.5rem 1rem;
+    margin-left: 0.5rem;
+    background-color: #0070f3;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+/* styles/ChatBotModal.module.css */
+.modalOverlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modalContent {
+    background-color: white;
+    width: 90%;
+    max-width: 1200px;
+    border-radius: 8px;
+    overflow: hidden;
+    /* Fixed height so modal stays at 90% of the viewport */
+    height: 90vh;
+}
+
+.container {
+    display: flex;
+    flex-direction: row;
+    /* Ensure container fills entire modal content */
+    height: 100%;
+}
+
+/* Left Panel */
+.leftPanel {
+    flex: 2.5;
+    padding: 1rem;
+    border-right: 1px solid #ccc;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+.faqTitle {
+    margin-bottom: 1rem;
+    font-size: 1.25rem;
+    font-weight: bold;
+    color: black;
+}
+
+.faqList {
+    flex: 1;
+    overflow-y: auto;
+    margin-bottom: 1rem;
+}
+
+.faqItem {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem;
+    border-bottom: 1px solid #faf6f6;
+    /* (Optional) Adjust background if needed */
+    background-color: black;
+}
+
+.askButton {
+    background-color: #0070f3;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+}
+
+.inputArea {
+    margin-top: 1rem;
+}
+
+.inputBox {
+    width: 100%;
+    min-height: 80px;
+    resize: vertical;
+    padding: 0.5rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+
+.sendButton {
+    margin-top: 0.5rem;
+    padding: 0.5rem 1rem;
+    background-color: #28a745;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+/* Right Panel */
+.rightPanel {
+    flex: 4;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    /* Prevent the overall right panel from scrolling */
+    overflow: hidden;
+    height: 100%;
+}
+
+.chatWindow {
+    flex: 1;
+    /* Enable internal scrolling for chat messages */
+    overflow-y: auto;
+    padding: 1rem;
+    background-color: #f7f7f7;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+}
+
+.userMessage {
+    text-align: right;
+    margin-bottom: 0.5rem;
+    padding: 0.5rem;
+    background-color: #0a0a0a;
+    border-radius: 8px;
+}
+
+.botMessage {
+    text-align: left;
+    margin-bottom: 0.5rem;
+    padding: 0.5rem;
+    background-color: #0e0d0d;
+    border-radius: 8px;
+}

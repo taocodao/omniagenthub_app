@@ -1,0 +1,60 @@
+// pages/api/cleanup-namespace.ts
+import { NextApiRequest, NextApiResponse } from 'next';
+import { Pinecone } from '@pinecone-database/pinecone';
+import { createClient } from '@vercel/kv';
+
+const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
+const index = pc.index("user-documents"); // Replace with your actual index name
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'POST') {
+        return res.status(405).json({ message: 'Method not allowed' });
+    }
+
+    const { namespace } = req.body;
+
+    if (!namespace) {
+        return res.status(400).json({ message: 'Namespace is required' });
+    }
+
+    try {
+        // Delete all vectors in the given namespace from Pinecone.
+        await index.namespace(namespace).deleteAll();
+        console.log(`Deleted all vectors for namespace ${namespace}.`);
+
+        // Remove scraped website status info from KV.
+        // These keys are stored with the prefix `lastScrapeVersion:${namespace}:`
+        let deletedStatusKeys: string[] = [];
+        try {
+            // Using kv.keys() to list keys.
+            const keys = await kv.keys(`lastScrapeVersion:${namespace}:`);
+            for (const key of keys) {
+                try {
+                    // Cast kv as any to bypass the TypeScript error.
+                    await (kv as any).delete(key);
+                    deletedStatusKeys.push(key);
+                } catch (delError) {
+                    console.error(`Error deleting key ${key}:`, delError);
+                }
+            }
+            console.log(`Deleted ${deletedStatusKeys.length} scraped status keys for namespace ${namespace}.`);
+        } catch (kvError) {
+            console.error("Error listing KV keys:", kvError);
+        }
+
+        return res.status(200).json({
+            message: `All vectors in namespace ${namespace} have been deleted. ${deletedStatusKeys.length} scraped status keys were removed.`
+        });
+    } catch (error) {
+        console.error('Error deleting vectors:', error);
+        return res.status(500).json({
+            message: 'Error deleting vectors. The embedding might have been deleted already.',
+            error: (error as Error).message
+        });
+    }
+}

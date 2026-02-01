@@ -1,0 +1,448 @@
+import React, { useState, useEffect, ChangeEvent } from 'react';
+import SignIn from '../components/SignIn';
+import Navbar from '../components/Navbar';
+import styles from '../styles/Home.module.css';
+import { useActiveAccount } from 'thirdweb/react';
+import { useRouter } from 'next/router';
+import { LocalizedText } from '../util/LocalizedText';
+import { toast } from 'react-toastify';
+
+
+interface RoleMapping {
+    department: string;
+    role: string;
+    apiKey: string;
+    user: string;
+    price: string;
+    image: string;
+}
+
+interface RoleData {
+    department: string;
+    role: string;
+}
+
+const Shop = () => {
+    const [categories, setCategories] = useState<string[]>([]);
+    const [selectedCategory, setSelectedCategory] = useState<string>('Favorited');
+    const [roles, setRoles] = useState<RoleData[]>([]);
+    const [roleMappings, setRoleMappings] = useState<Record<string, RoleMapping[]>>({});
+    const [favoritedRoleMappings, setFavoritedRoleMappings] = useState<RoleMapping[]>([]);
+    const [imageMapping, setImageMapping] = useState<Record<string, string>>({});
+    const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
+    const [ratings, setRatings] = useState<Record<string, number>>({});
+    const [hoveredImage, setHoveredImage] = useState<string | null>(null); // For image tooltip
+    const [hoveredRole, setHoveredRole] = useState<string | null>(null); // For role name tooltip
+    const address = useActiveAccount()?.address;
+    const router = useRouter();
+
+    useEffect(() => {
+        const fetchCategories = async () => {
+            try {
+                const response = await fetch('/api/get-departments');
+                if (!response.ok) {
+                    throw new Error('Failed to fetch categories');
+                }
+                const categoryData = await response.json();
+                setCategories(categoryData);
+            } catch (error) {
+                console.error('Error fetching categories:', error);
+            }
+        };
+        fetchCategories();
+    }, []);
+
+    useEffect(() => {
+        if (selectedCategory === 'Favorited') {
+            fetchFavoritedRoleMappings();
+        } else {
+            fetchSelectedRoles();
+        }
+    }, [address, selectedCategory]);
+
+    const fetchSelectedRoles = async () => {
+        if (!address || !selectedCategory) return;
+
+        try {
+            const response = await fetch('/api/get-role-mapping', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userAddress: address, department: selectedCategory }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch selected roles');
+            }
+
+            const data: string[] = await response.json();
+            setSelectedRoles(data.map(role => `${selectedCategory}:${role}`));
+        } catch (error) {
+            console.error('Error fetching selected roles:', error);
+        }
+    };
+
+    const fetchRoles = async (category: string): Promise<RoleData[]> => {
+        try {
+            const response = await fetch('/api/get-roles', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ department: category }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch roles');
+            }
+
+            const data = await response.json();
+            return Array.isArray(data.roles) ? data.roles.map((role: string) => ({ department: category, role })) : [];
+        } catch (error) {
+            console.error('Error fetching roles:', error);
+            return [];
+        }
+    };
+
+    const fetchRoleMapping = async (department: string, role: string): Promise<RoleMapping> => {
+        try {
+            const response = await fetch('/api/get-role-mappings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ department, role }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch role mapping');
+            }
+
+            const data = await response.json();
+            return { ...data, department, role };
+        } catch (error) {
+            console.error('Error fetching role mapping:', error);
+            return { department, role, apiKey: '', user: '', price: '', image: '' };
+        }
+    };
+
+    const fetchFavoritedRoleMappings = async () => {
+        if (!address) return;
+
+        try {
+            const response = await fetch('/api/get-role-by-address', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ address }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch favorited roles');
+            }
+
+            const roleData: RoleData[] = await response.json();
+            setRoles(roleData);
+
+            const allMappings: RoleMapping[] = [];
+            for (const { department, role } of roleData) {
+                const mapping = await fetchRoleMapping(department, role);
+                allMappings.push(mapping);
+            }
+
+            setFavoritedRoleMappings(allMappings);
+
+            const imageMap: Record<string, string> = {};
+            allMappings.forEach((mapping) => {
+                imageMap[`${mapping.department}:${mapping.role}`] = mapping.image;
+            });
+            setImageMapping(imageMap);
+
+            await fetchRatings(roleData);
+
+            // Automatically check favorited roles
+            setSelectedRoles(allMappings.map(mapping => `${mapping.department}:${mapping.role}`));
+        } catch (error) {
+            console.error('Error fetching favorited roles:', error);
+        }
+    };
+
+    const fetchRatings = async (roles: RoleData[]) => {
+        const ratingsMap: Record<string, number> = {};
+        for (const { department, role } of roles) {
+            try {
+                const response = await fetch('/api/getAvgRating', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ department, role }),
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch rating for role: ${role}`);
+                }
+
+                const data = await response.json();
+                ratingsMap[`${department}:${role}`] = data.averageRating;
+            } catch (error) {
+                console.error(`Error fetching rating for role ${role}:`, error);
+            }
+        }
+        setRatings(ratingsMap);
+    };
+
+    const handleCategoryChange = async (event: ChangeEvent<HTMLSelectElement>) => {
+        const category = event.target.value;
+        setSelectedCategory(category);
+        setRoles([]);
+        setImageMapping({});
+
+        if (category === 'Favorited') {
+            await fetchFavoritedRoleMappings();
+        } else {
+            const roles = await fetchRoles(category);
+            setRoles(roles);
+
+            const mappings = await Promise.all(roles.map(({ department, role }) => fetchRoleMapping(department, role)));
+            setRoleMappings((prev) => ({ ...prev, [category]: mappings }));
+
+            const imageMap: Record<string, string> = {};
+            mappings.forEach((mapping) => {
+                imageMap[`${mapping.department}:${mapping.role}`] = mapping.image;
+            });
+            setImageMapping(imageMap);
+
+            await fetchRatings(roles);
+        }
+    };
+
+    const handleRoleSelect = async (role: string, department: string, isImageClick: boolean = false) => {
+        if (!address) {
+            toast.info('Please connect your wallet.');
+            return;
+        }
+
+        const roleKey = `${department}:${role}`;
+        const isSelected = selectedRoles.includes(roleKey);
+
+        // For role name click (non-image click), prevent removing roles in "Favorited" category
+        if (!isImageClick && isSelected && selectedCategory === 'Favorited') {
+            return;
+        }
+
+        const newSelectedRoles = isSelected
+            ? selectedRoles.filter((r) => r !== roleKey)
+            : [...selectedRoles, roleKey];
+
+        setSelectedRoles(newSelectedRoles);
+
+        const endpoint = isSelected ? '/api/remove-role-mapping' : '/api/add-role-mapping';
+        try {
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userAddress: address, department, role }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to update role mapping');
+            }
+
+            if (isSelected && selectedCategory === 'Favorited') {
+                await fetchFavoritedRoleMappings(); // Refresh favorited roles
+            }
+        } catch (error) {
+            console.error(`Error ${isSelected ? 'removing' : 'adding'} role mapping:`, error);
+        }
+    };
+
+
+    const handleRoleNameClick = async (role: string, department: string) => {
+        await handleRoleSelect(role, department);
+        router.push({
+            pathname: '/ChatHome',
+            query: { selectedRole: role, selectedCategory: department }
+        });
+    };
+
+    return (
+        <main className={styles.main}>
+            <div className={styles.container}>
+                {!address ? <SignIn /> : (
+                    <>
+                        <Navbar />
+
+                        <div style={{
+                            display: "flex",
+                            flexDirection: "row",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            padding: "1rem",
+                            width: "100%",
+                            color: "white",
+                        }}>
+                            <div style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                flexGrow: 20,
+                            }}>
+                                <label htmlFor="categorySelect" style={{
+                                    marginRight: "1rem",
+                                    fontSize: "21px",
+                                    fontWeight: "bold",
+                                    color: "white",
+                                }}>
+                                    <LocalizedText name="Category" />:
+                                </label>
+                                <select
+                                    id="categorySelect"
+                                    style={{
+                                        padding: "0.5rem 1rem",
+                                        border: "2px solid #444",
+                                        borderRadius: "8px",
+                                        cursor: "pointer",
+                                        backgroundColor: "blue",
+                                        color: "white",
+                                        width: "250px",
+                                        boxShadow: "0 2px 10px rgba(0,0,0,0.1)",
+                                        fontSize: "18px",
+                                    }}
+                                    value={selectedCategory}
+                                    onChange={handleCategoryChange}
+                                >
+                                    {['Favorited', ...categories.filter(c => c !== "Favorited")].map(category => (
+                                        <option key={category} value={category} style={{
+                                            backgroundColor: "blue",
+                                            color: "white",
+                                            padding: "10px 20px",
+                                        }}>
+                                            <LocalizedText name={category} />
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div className={styles.grid}>
+                            {roles.length > 0 ? (
+                                roles.map(({ department, role }) => {
+                                    const roleKey = `${department}:${role}`;
+                                    const imageSrc = imageMapping[roleKey];
+                                    const altText = role;
+                                    const price = roleMappings[department]?.find(mapping => mapping.role === role)?.price || favoritedRoleMappings.find(mapping => mapping.role === role)?.price || "";
+                                    const rating = ratings[roleKey] || 0;
+                                    const isSelected = selectedRoles.includes(roleKey);
+
+                                    return (
+                                        <div
+                                            key={roleKey}
+                                            className={styles.nftContainer}
+                                        >
+                                            <div
+                                                className={`${styles.nftImageWrapper} ${isSelected ? styles.selected : ''}`}
+                                                onMouseEnter={() => setHoveredImage(roleKey)}
+                                                onMouseLeave={() => setHoveredImage(null)}
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    className={styles.selectCheckbox}
+                                                    checked={isSelected}
+                                                    onChange={() => handleRoleSelect(role, department)}
+                                                />
+                                                <img
+                                                    src={imageSrc}
+                                                    onClick={() => handleRoleSelect(role, department, true)} // Handle selection on image click
+                                                    alt={altText}
+                                                    className={`${styles.nftImage}`}
+                                                />
+                                                {hoveredImage === roleKey && (
+                                                    <div style={{
+                                                        position: 'absolute',
+                                                        bottom: '-20px',
+                                                        left: '50%',
+                                                        transform: 'translateX(-50%)',
+                                                        width: 'auto',
+                                                        backgroundColor: 'black',
+                                                        color: 'white',
+                                                        padding: '5px 10px',
+                                                        borderRadius: '5px',
+                                                        whiteSpace: 'nowrap',
+                                                        textAlign: 'center'
+                                                    }}>
+                                                        <LocalizedText name="Click the image to select or deselect this role." />
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <div className={styles.nftInfo}>
+                                                <div style={{ position: 'relative' }}>
+                                                    <p
+                                                        className={styles.nftName}
+                                                        onMouseEnter={() => setHoveredRole(roleKey)}
+                                                        onMouseLeave={() => setHoveredRole(null)}
+                                                        onClick={() => handleRoleNameClick(role, department)}
+                                                        style={{ cursor: 'pointer' }}
+                                                    >
+                                                        <LocalizedText name={role} />
+                                                    </p>
+                                                    {hoveredRole === roleKey && (
+                                                        <div style={{
+                                                            position: 'absolute',
+                                                            bottom: '-20px',
+                                                            left: '50%',
+                                                            transform: 'translateX(-50%)',
+                                                            width: 'auto',
+                                                            backgroundColor: 'black',
+                                                            color: 'white',
+                                                            padding: '5px 10px',
+                                                            borderRadius: '5px',
+                                                            whiteSpace: 'nowrap',
+                                                            textAlign: 'center'
+                                                        }}>
+                                                            <LocalizedText name="Click to open chat and favorite this role." />
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                <div className={styles.ratingAndAmount}>
+                                                    {rating ? (
+                                                        <>
+                                                            <span className={styles.ratingValue}> <LocalizedText name="Rating" />: {rating.toFixed(1)}</span>
+                                                            <Rating value={Math.round(rating)} />
+                                                            {price && (
+                                                                <span className={styles.sendAmount}>{price} Matic/chat</span>
+                                                            )}
+                                                        </>
+                                                    ) : (
+                                                        price && (
+                                                            <div className={styles.centeredSendAmount}>{price} Matic/chat</div>
+                                                        )
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })
+                            ) : (
+                                <p>No roles available</p>
+                            )}
+                        </div>
+                    </>
+                )}
+            </div>
+        </main>
+    );
+};
+
+export default Shop;
+
+interface RatingProps {
+    value: number;
+}
+
+const Rating = ({ value }: RatingProps) => {
+    const totalStars = 5;
+    return (
+        <div>
+            {[...Array(totalStars)].map((_, i) => (
+                <span key={i} style={{ color: i < value ? 'gold' : 'grey' }}>
+                    ★
+                </span>
+            ))}
+        </div>
+    );
+};

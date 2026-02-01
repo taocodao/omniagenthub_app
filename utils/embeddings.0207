@@ -1,0 +1,145 @@
+// utils/embeddings.ts
+import { OpenAI } from 'openai';
+import { Pinecone } from '@pinecone-database/pinecone';
+import crypto from 'crypto';
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
+
+export const INDEX_NAME = 'user-documents';
+
+// --- Configuration Constants ---
+export const CHUNK_SIZE = 1000; // approximate character limit per chunk
+export const MAX_RETRIES = 3;
+export const INITIAL_RETRY_DELAY = 1000; // in ms
+export const BATCH_SIZE = 100;
+export const DIMENSION = 1536; // for text-embedding-ada-002
+
+// Clean text by removing HTML tags and trimming whitespace
+export function cleanText(text: string): string {
+    return text.replace(/<[^>]+>/g, '').trim();
+}
+
+// Normalize a URL (remove trailing slash, lowercase)
+export function normalizeUrl(url: string): string {
+    return url.replace(/\/$/, '').toLowerCase();
+}
+
+// Generate a hash for a long string (e.g. URL)
+export function generateHash(str: string): string {
+    return crypto.createHash('sha256').update(str).digest('hex');
+}
+
+// Truncate text to a max word count (approximation)
+export function truncateText(text: string, maxWords: number): string {
+    const words = text.split(' ');
+    if (words.length > maxWords) {
+        return words.slice(0, maxWords).join(' ') + '...';
+    }
+    return text;
+}
+
+// Split text into chunks by character count
+export function splitTextIntoChunks(text: string, chunkSize: number = CHUNK_SIZE): string[] {
+    const words = text.split(/\s+/);
+    const chunks: string[] = [];
+    let currentChunk: string[] = [];
+    for (const word of words) {
+        // +1 for space between words
+        if (currentChunk.join(' ').length + word.length + 1 > chunkSize) {
+            chunks.push(currentChunk.join(' '));
+            currentChunk = [];
+        }
+        currentChunk.push(word);
+    }
+    if (currentChunk.length > 0) {
+        chunks.push(currentChunk.join(' '));
+    }
+    return chunks;
+}
+
+// Retry wrapper for async operations
+export async function retryOperation<T>(operation: () => Promise<T>, maxRetries = MAX_RETRIES): Promise<T> {
+    let lastError: any;
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            return await operation();
+        } catch (error) {
+            lastError = error;
+            const delay = INITIAL_RETRY_DELAY * Math.pow(2, i);
+            console.warn(`Operation failed. Retrying in ${delay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+        }
+    }
+    throw lastError;
+}
+
+// Create an embedding for text with retry logic
+export async function embedTextWithRetry(text: string, retries = MAX_RETRIES): Promise<number[]> {
+    try {
+        const response = await openai.embeddings.create({
+            model: "text-embedding-ada-002",
+            input: text,
+        });
+        return response.data[0].embedding;
+    } catch (error: any) {
+        if (error.status === 429 && retries > 0) {
+            const delay = INITIAL_RETRY_DELAY * (MAX_RETRIES - retries + 1);
+            console.log(`Rate limit reached. Retrying in ${delay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            return embedTextWithRetry(text, retries - 1);
+        }
+        throw error;
+    }
+}
+
+/**
+ * Create and store embeddings for a given text.
+ *
+ * @param userId - The user namespace.
+ * @param sourceId - A unique identifier for the content source (e.g. website URL or "textInput").
+ * @param textContent - The content to embed.
+ * @param version - An optional version (e.g. timestamp) for scraped content.
+ *                For file uploads, you can pass 0 (or leave undefined) so that new uploads accumulate.
+ * @param deletePrevious - For website scraping, if true, would ideally delete previous vectors.
+ *                         Since Pinecone doesn't support deletion, we rely solely on versioning.
+ */
+export async function createAndStoreEmbeddings(
+    userId: string,
+    sourceId: string,
+    textContent: string,
+    version?: number,
+    deletePrevious: boolean = false
+): Promise<void> {
+    const idx = pinecone.Index(INDEX_NAME);
+
+    // Since deletion is not supported, we simply log if deletePrevious is requested.
+    if (deletePrevious) {
+        console.log(`Deletion requested for source "${sourceId}", but Pinecone does not support deletion. Relying on versioning.`);
+    }
+
+    const chunks = splitTextIntoChunks(textContent);
+    for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+        const batch = chunks.slice(i, i + BATCH_SIZE);
+        const embeddingPromises = batch.map(async (chunk, idx2) => {
+            const embedding = await embedTextWithRetry(chunk);
+            const vectorId = version !== undefined
+                ? `${sourceId}-${version}-${i + idx2}`
+                : `${sourceId}-${i + idx2}`;
+            return {
+                id: vectorId,
+                values: embedding,
+                metadata: {
+                    content: chunk,
+                    source: sourceId,
+                    chunkIndex: i + idx2,
+                    timestamp: Date.now(),
+                    ...(version !== undefined && { version }),
+                },
+            };
+        });
+        const vectors = await Promise.all(embeddingPromises);
+        await retryOperation(() => idx.namespace(userId).upsert(vectors));
+        console.log(`[${new Date().toISOString()}] Upserted ${vectors.length} vectors for source "${sourceId}" in namespace "${userId}".`);
+    }
+}

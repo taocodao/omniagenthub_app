@@ -1,0 +1,42 @@
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+import HashUtil from '../../util/hashToFixedDigits';
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    const { referrerAddress, refereeAddress } = req.body;
+
+    if (!referrerAddress || !refereeAddress) {
+        return res.status(400).json({ message: 'Referrer and referee addresses are required' });
+    }
+
+    try {
+        //const referrerKey = HashUtil.hashTo(referrerAddress);
+        //const refereeKey = HashUtil.hashTo(refereeAddress);
+        const referrerKey = referrerAddress;
+        const refereeKey = refereeAddress;
+
+        //if referee already has the free chats
+        if (await kv.get(`${refereeKey}:freeTrades`))
+            return res.status(500).json({ message: 'Referee already has the free chats' });
+
+        // Update free trades for the referrer
+        let referrerFreeTrades = await kv.get(`${referrerKey}:freeTrades`) as number;
+        referrerFreeTrades = referrerFreeTrades ? Number(referrerFreeTrades) : 0;
+        await kv.set(`${referrerKey}:freeTrades`, referrerFreeTrades + Number(process.env.NEXT_PUBLIC_REFERRAL_BONUS));
+
+
+
+        // Set initial free chats for the referee
+        await kv.set(`${refereeKey}:freeTrades`, Number(process.env.NEXT_PUBLIC_INITIAL_FREE_CHATS));
+
+        return res.status(200).json({ message: 'Referral processed successfully' });
+    } catch (error) {
+        console.error('Error processing referral:', error);
+        return res.status(500).json({ message: 'Internal server error' });
+    }
+}

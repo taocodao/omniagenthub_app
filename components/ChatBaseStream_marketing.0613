@@ -1,0 +1,693 @@
+'use client';
+
+import React, { useState, useEffect, useRef, useContext } from 'react';
+import ReactMarkdown from 'react-markdown';
+import rehypeRaw from 'rehype-raw';
+import remarkGfm from 'remark-gfm';
+import styles from "../styles/Home5.module.css";
+import HashUtil from '../util/hashToFixedDigits';
+import { useActiveAccount } from 'thirdweb/react';
+import { LocalizedText, useLocalizedString, getLocalizedString } from '../util/LocalizedText';
+import { LocalizationContext } from '../util/LocalizationContext';
+import { usePayment } from '../hook/Payment_Process';
+import { useAssistant } from 'ai/react';
+import ReactDOM from 'react-dom/client';
+import { toast } from 'react-toastify';
+
+export const maxDuration = 300;
+export const dynamic = 'force-dynamic';
+export const runtime = "edge";
+
+interface ChatBaseStreamProps {
+    role: string;
+    task: string;
+    initialMessage: string;
+    department: string;
+    user: string | null;
+    price: number | null;
+    onSaveProfile?: (profileData: any, profileName: string) => Promise<void>;
+    isEditingProfile?: boolean;
+    onCancelProfile?: () => void;
+}
+
+interface Message {
+    role: 'user' | 'assistant';
+    content: string;
+    id?: string;
+}
+
+interface ExtractedProfileData {
+    business: string;
+    USP: string;
+    persona: string;
+    challenges: string;
+}
+
+const options = [
+    'Enhance Based on Previous Feedback or Additional Input',
+    'Conduct a More Rigorous Assessment',
+    'Gather Detail for Customization by Answering More Questions',
+    'Simulate Comprehensive Focus Group Insights For Better Work',
+    'Replicate Diverse Expert Opinions to Improve',
+    'Explore Innovative Approaches to be Creative',
+    'Adjust Presentation Style, Tone, or Scope',
+    'Optimize for Peak Performance',
+];
+
+const optionShortNames: { [key: string]: string } = {
+    'Enhance Based on Previous Feedback or Additional Input': 'Refine',
+    'Conduct a More Rigorous Assessment': 'Evaluate',
+    'Gather Detail for Customization by Answering More Questions': 'Personalize',
+    'Simulate Comprehensive Focus Group Insights For Better Work': 'Focus Group',
+    'Replicate Diverse Expert Opinions to Improve': 'Expert Feedback',
+    'Explore Innovative Approaches to be Creative': 'Creative',
+    'Adjust Presentation Style, Tone, or Scope': 'Modify',
+    'Optimize for Peak Performance': 'Auto Improve',
+};
+
+const CustomTable: React.FC<React.TableHTMLAttributes<HTMLTableElement>> = ({ children, ...props }) => (
+    <table className={styles.customTable} {...props}>
+        {children}
+    </table>
+);
+
+export function ChatBaseStream1({
+    role,
+    task,
+    initialMessage,
+    department,
+    user,
+    price,
+    onSaveProfile,
+    isEditingProfile,
+    onCancelProfile
+}: ChatBaseStreamProps) {
+
+    const [profileData, setProfileData] = useState<ExtractedProfileData | null>(null);
+    const [showSaveDialog, setShowSaveDialog] = useState(false);
+    const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+    const [profileName, setProfileName] = useState('');
+    const { process_payment } = usePayment();
+    const [isRefining, setIsRefining] = useState(false);
+    const account = useActiveAccount();
+    const userAddress = account?.address;
+    const assistantId = HashUtil.hashTo(role + task);
+    const { language } = useContext(LocalizationContext);
+    const inputRef = useRef<HTMLTextAreaElement>(null);
+    const messageRefs = useRef<(HTMLDivElement | null)[]>([]);
+    const [renderKey, setRenderKey] = useState(0);
+    const initialMessageSentRef = useRef(false);
+    const [optionLongNames, setOptionLongNames] = useState<{ [key: string]: string }>({});
+
+    const { messages, append, submitMessage, status } = useAssistant({
+        api: '/api/assistant1',
+        body: {
+            assistantId: assistantId,
+            threadId: null,
+            userAddress,
+        },
+    });
+    const [userInput, setUserInput] = useState<string>('');
+    const isLoading = status === 'in_progress';
+
+    // FIXED: Enhanced function to extract LAST occurrence of the four keywords
+    const extractProfileDataFromContent = (content: string): ExtractedProfileData => {
+        console.log('Extracting profile data from content:', content);
+
+        const placeholders = [
+            {
+                key: 'business',
+                pattern: /(?:\d+\.\s*)?business:\s*([\s\S]*?)(?=\n\s*(?:\d+\.\s*)?(?:USP:|persona:|challenges?:|<table>|$))/gis
+            },
+            {
+                key: 'USP',
+                pattern: /(?:\d+\.\s*)?USP:\s*([\s\S]*?)(?=\n\s*(?:\d+\.\s*)?(?:business:|persona:|challenges?:|<table>|$))/gis
+            },
+            {
+                key: 'persona',
+                pattern: /(?:\d+\.\s*)?persona:\s*([\s\S]*?)(?=\n\s*(?:\d+\.\s*)?(?:business:|USP:|challenges?:|<table>|$))/gis
+            },
+            {
+                key: 'challenges',
+                pattern: /(?:\d+\.\s*)?challenges?:\s*([\s\S]*?)(?=\n\s*(?:\d+\.\s*)?(?:business:|USP:|persona:|<table>|$))/gis
+            }
+        ];
+
+        const result: { [key: string]: string } = {};
+
+        for (const { key, pattern } of placeholders) {
+            const matches = [];
+            let match;
+
+            pattern.lastIndex = 0;
+
+            while ((match = pattern.exec(content)) !== null) {
+                const cleanedContent = match[1]
+                    .trim()
+                    .replace(/^\s*\n+/g, '')
+                    .replace(/\n+\s*$/g, '')
+                    .replace(/\n{3,}/g, '\n\n')
+                    .replace(/<table>[\s\S]*?<\/table>/gi, '')
+                    .replace(/\s*<table>[\s\S]*$/gi, '')
+                    .trim();
+
+                if (cleanedContent.length > 0) {
+                    matches.push(cleanedContent);
+                }
+            }
+
+            if (matches.length > 0) {
+                result[key] = matches[matches.length - 1];
+                console.log(`Found ${matches.length} occurrences of ${key}, using last one`);
+            } else {
+                result[key] = '';
+                console.log(`No matches found for ${key}`);
+            }
+        }
+
+        return {
+            business: result.business || '',
+            USP: result.USP || '',
+            persona: result.persona || '',
+            challenges: result.challenges || ''
+        };
+    };
+
+    // Function to check profile name uniqueness
+    const checkProfileNameUniqueness = async (name: string): Promise<boolean> => {
+        try {
+            const response = await fetch(`/api/check-profile-name?userAddress=${userAddress}&name=${encodeURIComponent(name)}`);
+            const result = await response.json();
+            return !result.exists; // Return true if name is unique (doesn't exist)
+        } catch (error) {
+            console.error('Error checking profile name:', error);
+            return false;
+        }
+    };
+
+    const updateOptionLongNames = async (language: string) => {
+        const newOptionLongNames: { [key: string]: string } = {};
+        const longNames = Object.keys(optionShortNames);
+        for (let longName of longNames) {
+            newOptionLongNames[optionShortNames[longName]] = await getLocalizedString(longName, language);
+        }
+        setOptionLongNames(newOptionLongNames);
+    };
+
+    const resetTextareaHeight = () => {
+        if (inputRef.current) {
+            inputRef.current.style.height = '';
+        }
+    };
+
+    useEffect(() => {
+        updateOptionLongNames(language);
+    }, [language]);
+
+    useEffect(() => {
+        if (Object.keys(optionLongNames).length > 0) {
+            setRenderKey(prev => prev + 1);
+        }
+    }, [optionLongNames]);
+
+    useEffect(() => {
+        if (initialMessage && !initialMessageSentRef.current) {
+            submitQuestion(initialMessage);
+            initialMessageSentRef.current = true;
+        }
+    }, [initialMessage]);
+
+    const submitQuestion = async (message: string) => {
+        if (isLoading) return;
+
+        if (price && user) {
+            const isPaymentValid = await process_payment(String(userAddress), price, user);
+            if (!isPaymentValid) {
+                toast.info(await getLocalizedString('Insufficient balance', language));
+                return;
+            }
+
+            try {
+                const updateResponse = await fetch('/api/updateUsage', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        department,
+                        role,
+                        increment: 1,
+                    }),
+                });
+
+                if (!updateResponse.ok) {
+                    const errorData = await updateResponse.json();
+                    console.error('Failed to update usage:', errorData.message || updateResponse.statusText);
+                } else {
+                    const data = await updateResponse.json();
+                    console.log(`Usage count updated successfully. New usage: ${data.usage}`);
+                }
+            } catch (error) {
+                console.error('Error updating usage:', error);
+                toast.error('An error occurred while updating usage count.');
+            }
+        }
+
+        append({ role: 'user', content: message });
+        await submitMessage();
+        resetTextareaHeight();
+
+        if (inputRef.current) {
+            inputRef.current.value = '';
+        }
+
+        setIsRefining(false);
+        setUserInput('');
+    };
+
+    const handleInputChange1 = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+        setUserInput(e.target.value);
+        if (inputRef.current) {
+            inputRef.current.style.height = 'auto';
+            inputRef.current.style.height = `${inputRef.current.scrollHeight}px`;
+        }
+    };
+
+    const handleButtonClick = async (action: string) => {
+        const shortName = optionShortNames[action];
+        if (shortName === 'Refine') {
+            await submitQuestion('Refine: ' + userInput);
+            setUserInput('');
+        } else {
+            setUserInput(shortName || action);
+            await submitQuestion(shortName || action);
+        }
+    };
+
+    const copyToClipboard = async (index: number) => {
+        try {
+            const messageElement = messageRefs.current[index];
+            if (!messageElement) throw new Error('Message element not found');
+
+            const html = messageElement.innerHTML;
+            const text = messageElement.innerText;
+
+            await navigator.clipboard.write([
+                new ClipboardItem({
+                    'text/html': new Blob([html], { type: 'text/html' }),
+                    'text/plain': new Blob([text], { type: 'text/plain' }),
+                }),
+            ]);
+            toast.info(await getLocalizedString('Copied to clipboard with formatting', language));
+        } catch (err) {
+            console.error("Failed to copy: ", err);
+            const messageElement = messageRefs.current[index];
+            if (messageElement) {
+                const text = messageElement.innerText;
+                await navigator.clipboard.writeText(text);
+                toast.info(await getLocalizedString('Copied plain text to clipboard', language));
+            }
+        }
+    };
+
+    const feedbackPlaceholder = useLocalizedString("Please type feedback or leave blank");
+    const messagePlaceholder = useLocalizedString("Type your message");
+
+    const extractAction = (content: string) => {
+        const colonIndex = content.indexOf(':');
+        if (colonIndex !== -1) {
+            return content.substring(0, colonIndex).trim();
+        }
+        return content.trim();
+    };
+
+    // MODIFIED: Enhanced profile save handler with confirmation modal
+    const handleSaveProfile = async () => {
+        try {
+            const assistantMessages = messages.filter(m => m.role === 'assistant');
+
+            if (assistantMessages.length === 0) {
+                toast.error(await getLocalizedString('No assistant response found to save', language));
+                return;
+            }
+
+            // Get the LAST assistant message only
+            const lastMessage = assistantMessages[assistantMessages.length - 1];
+            console.log('Processing last assistant message:', lastMessage.content);
+
+            // Extract the four keywords from the last message
+            const extractedData = extractProfileDataFromContent(lastMessage.content);
+
+            // Validate that we have all required fields
+            if (!extractedData.business || !extractedData.USP || !extractedData.persona || !extractedData.challenges) {
+                console.warn('Some profile fields are missing from last message:', extractedData);
+                toast.error(await getLocalizedString('Profile data incomplete. Please ensure all fields (Business, USP, Persona, Challenges) are present in the latest response.', language));
+                return;
+            }
+
+            console.log('Extracted profile data:', extractedData);
+
+            // Set the extracted data and show confirmation dialog
+            setProfileData(extractedData);
+            setShowConfirmDialog(true);
+        } catch (error) {
+            console.error('Error processing profile data:', error);
+            toast.error(await getLocalizedString('Error processing profile data', language));
+        }
+    };
+
+    // Handle profile confirmation and name input
+    const handleConfirmProfile = () => {
+        setShowConfirmDialog(false);
+        setShowSaveDialog(true);
+    };
+
+    // Handle final save with name validation
+    const handleFinalSave = async () => {
+        if (!profileName.trim()) {
+            toast.error(await getLocalizedString('Please enter a profile name', language));
+            return;
+        }
+
+        // Check name uniqueness
+        const isUnique = await checkProfileNameUniqueness(profileName.trim());
+        if (!isUnique) {
+            toast.error(await getLocalizedString(`Profile name "${profileName}" already exists. Please choose a different name.`, language));
+            return;
+        }
+
+        if (onSaveProfile && profileData) {
+            await onSaveProfile(profileData, profileName.trim());
+            setShowSaveDialog(false);
+            setProfileName('');
+            setProfileData(null);
+            if (onCancelProfile) onCancelProfile();
+        }
+    };
+
+    return (
+        <div key={renderKey}>
+            <div className={styles.container}>
+                <div className={styles.chatContainer}>
+                    {messages.map((message, index) => (
+                        <div key={index} className={`${styles.message} ${message.role === 'user' ? styles.userMessage : styles.aiMessage}`}>
+                            <div className={message.role === 'user' ? styles.userMessageRole : styles.aiMessageRole}>
+                                {message.role === 'user' ? <LocalizedText name={`User: ${task}`} /> : <LocalizedText name={role} />}
+                            </div>
+                            <div ref={(el) => { messageRefs.current[index] = el; }}>
+                                <ReactMarkdown
+                                    rehypePlugins={[rehypeRaw]}
+                                    remarkPlugins={[remarkGfm]}
+                                    components={{
+                                        table: ({ children, ...props }) => (
+                                            <table className={styles.customTable} {...props}>
+                                                {children}
+                                            </table>
+                                        ),
+                                        thead: ({ children, ...props }) => (
+                                            <thead {...props}>{children}</thead>
+                                        ),
+                                        tbody: ({ children, ...props }) => (
+                                            <tbody {...props}>{children}</tbody>
+                                        ),
+                                        tr: ({ children, ...props }) => (
+                                            <tr {...props}>{children}</tr>
+                                        ),
+                                        th: ({ children, ...props }) => (
+                                            <th {...props}>{children}</th>
+                                        ),
+                                        td: ({ children, ...props }) => (
+                                            <td {...props}>{children}</td>
+                                        ),
+                                        code: ({ node, className, children, ...props }) => {
+                                            const match = /language-(\w+)/.exec(className || '');
+                                            if (match && match[1] === 'html') {
+                                                return <div dangerouslySetInnerHTML={{ __html: String(children).replace(/\n$/, '') }} />;
+                                            }
+                                            return <code className={className} {...props}>{children}</code>;
+                                        },
+                                    }}
+                                >
+                                    {message.role === 'user' && optionLongNames[extractAction(message.content)]
+                                        ? optionLongNames[extractAction(message.content)]
+                                        : message.content}
+                                </ReactMarkdown>
+                            </div>
+                            {message.role === 'assistant' && (
+                                <button onClick={() => copyToClipboard(index)} className={styles.copyButton} disabled={isLoading}>
+                                    <LocalizedText name="Copy" />
+                                </button>
+                            )}
+                        </div>
+                    ))}
+                    {isLoading && <div className={styles.loadingIndicator}><LocalizedText name="AI is thinking..." /></div>}
+                </div>
+
+                <div className={styles.buttonContainer}>
+                    {options.map((option) => (
+                        <div key={option} className={styles.buttonWrapper}>
+                            <button onClick={() => handleButtonClick(option)} className={styles.cardButton} disabled={isLoading || isRefining}>
+                                <LocalizedText name={optionShortNames[option]} />
+                            </button>
+                            <div className={styles.buttonTooltip}>
+                                <LocalizedText name={option} />
+                            </div>
+                        </div>
+                    ))}
+                </div>
+
+                <form className={styles.inputForm}>
+                    <textarea
+                        ref={inputRef}
+                        className={`${styles.input} ${isRefining ? styles.refineInput : ''}`}
+                        value={userInput}
+                        onChange={handleInputChange1}
+                        placeholder={isRefining ? feedbackPlaceholder : messagePlaceholder}
+                        rows={1}
+                        disabled={isLoading}
+                    />
+                    <button type="button" className={styles.cardButton} onClick={() => submitQuestion(userInput)} disabled={isLoading}>
+                        <LocalizedText name='Send' />
+                    </button>
+                </form>
+
+                {/* Profile Confirmation Dialog */}
+                {showConfirmDialog && profileData && (
+                    <div className={styles.modalOverlay}>
+                        <div className={styles.modalContent} style={{
+                            padding: '2rem',
+                            maxWidth: '800px',
+                            maxHeight: '80vh',
+                            backgroundColor: 'white',
+                            borderRadius: '8px',
+                            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                            overflow: 'auto'
+                        }}>
+                            <h3 style={{ marginBottom: '1rem', color: '#333', textAlign: 'center' }}>
+                                <LocalizedText name="Confirm Profile Data" />
+                            </h3>
+
+                            <div style={{ marginBottom: '1.5rem' }}>
+                                <h4 style={{ color: '#555', marginBottom: '0.5rem' }}>Business:</h4>
+                                <div style={{
+                                    padding: '1rem',
+                                    backgroundColor: '#f8f9fa',
+                                    borderRadius: '4px',
+                                    marginBottom: '1rem',
+                                    maxHeight: '150px',
+                                    overflow: 'auto',
+                                    color: 'black'
+                                }}>
+                                    {profileData.business}
+                                </div>
+
+                                <h4 style={{ color: '#555', marginBottom: '0.5rem' }}>USP:</h4>
+                                <div style={{
+                                    padding: '1rem',
+                                    backgroundColor: '#f8f9fa',
+                                    borderRadius: '4px',
+                                    marginBottom: '1rem',
+                                    maxHeight: '150px',
+                                    overflow: 'auto',
+                                    color: 'black'
+                                }}>
+                                    {profileData.USP}
+                                </div>
+
+                                <h4 style={{ color: '#555', marginBottom: '0.5rem' }}>Persona:</h4>
+                                <div style={{
+                                    padding: '1rem',
+                                    backgroundColor: '#f8f9fa',
+                                    borderRadius: '4px',
+                                    marginBottom: '1rem',
+                                    maxHeight: '150px',
+                                    overflow: 'auto',
+                                    color: 'black'
+                                }}>
+                                    {profileData.persona}
+                                </div>
+
+                                <h4 style={{ color: '#555', marginBottom: '0.5rem' }}>Challenges:</h4>
+                                <div style={{
+                                    padding: '1rem',
+                                    backgroundColor: '#f8f9fa',
+                                    borderRadius: '4px',
+                                    marginBottom: '1rem',
+                                    maxHeight: '150px',
+                                    overflow: 'auto',
+                                    color: 'black'
+                                }}>
+                                    {profileData.challenges}
+                                </div>
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+                                <button
+                                    onClick={() => {
+                                        setShowConfirmDialog(false);
+                                        setProfileData(null);
+                                    }}
+                                    style={{
+                                        padding: '0.5rem 1rem',
+                                        backgroundColor: '#666',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    <LocalizedText name="Cancel" />
+                                </button>
+                                <button
+                                    onClick={handleConfirmProfile}
+                                    style={{
+                                        padding: '0.5rem 1rem',
+                                        backgroundColor: '#4CAF50',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    <LocalizedText name="Confirm & Continue" />
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Profile Name Input Dialog */}
+                {showSaveDialog && profileData && (
+                    <div className={styles.modalOverlay}>
+                        <div className={styles.modalContent} style={{
+                            padding: '2rem',
+                            maxWidth: '400px',
+                            backgroundColor: 'white',
+                            borderRadius: '8px',
+                            boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
+                        }}>
+                            <h3 style={{ marginBottom: '1rem', color: '#333', textAlign: 'center' }}>
+                                <LocalizedText name={isEditingProfile ? "Update Profile" : "Save Profile"} />
+                            </h3>
+                            <input
+                                type="text"
+                                value={profileName}
+                                onChange={(e) => setProfileName(e.target.value)}
+                                placeholder="Enter profile name..."
+                                style={{
+                                    width: '100%',
+                                    padding: '0.75rem',
+                                    marginBottom: '1rem',
+                                    border: '1px solid #ccc',
+                                    borderRadius: '4px',
+                                    fontSize: '16px',
+                                    outline: 'none',
+                                    boxSizing: 'border-box'
+                                }}
+                                autoFocus
+                            />
+                            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+                                <button
+                                    onClick={() => {
+                                        setShowSaveDialog(false);
+                                        setProfileName('');
+                                        setProfileData(null);
+                                    }}
+                                    style={{
+                                        padding: '0.5rem 1rem',
+                                        backgroundColor: '#666',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    <LocalizedText name="Cancel" />
+                                </button>
+                                <button
+                                    onClick={handleFinalSave}
+                                    disabled={!profileName.trim()}
+                                    style={{
+                                        padding: '0.5rem 1rem',
+                                        backgroundColor: !profileName.trim() ? '#ccc' : '#4CAF50',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: !profileName.trim() ? 'not-allowed' : 'pointer'
+                                    }}
+                                >
+                                    <LocalizedText name={isEditingProfile ? "Update" : "Save"} />
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Profile action buttons for User Research Collector */}
+                {role === "User Research Collector" && onSaveProfile && messages.length > 0 && (
+                    <div style={{
+                        display: 'flex',
+                        gap: '1rem',
+                        padding: '1rem',
+                        borderTop: '1px solid #ccc',
+                        justifyContent: 'center',
+                        backgroundColor: '#f8f9fa'
+                    }}>
+                        <button
+                            onClick={handleSaveProfile}
+                            style={{
+                                padding: '0.75rem 1.5rem',
+                                backgroundColor: '#4CAF50',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '8px',
+                                fontSize: '16px',
+                                cursor: 'pointer',
+                                fontWeight: 'bold'
+                            }}
+                            disabled={messages.filter(m => m.role === 'assistant').length === 0}
+                        >
+                            <LocalizedText name={isEditingProfile ? "Update Profile" : "Save Profile"} />
+                        </button>
+                        {onCancelProfile && (
+                            <button
+                                onClick={onCancelProfile}
+                                style={{
+                                    padding: '0.75rem 1.5rem',
+                                    backgroundColor: '#f44336',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    fontSize: '16px',
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                <LocalizedText name="Cancel" />
+                            </button>
+                        )}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}

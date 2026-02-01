@@ -1,0 +1,22 @@
+[
+  {
+    "department": "Education",
+    "role": "Adult Education Instructor"
+  },
+  {
+    "department": "Small Business",
+    "role": "Business Intelligence Analyst"
+  },
+  {
+    "department": "Small Business",
+    "role": "Supply Chain Manager"
+  },
+  {
+    "department": "Writing",
+    "role": "Children's Book Author"
+  },
+  {
+    "department": "Writing",
+    "role": "Resume Writer"
+  }
+]

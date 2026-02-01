@@ -1,0 +1,121 @@
+// pages/api/scrape-webhook.ts
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+import { cleanText, truncateText, createAndStoreEmbeddings } from '../../utils/embeddings';
+
+// Define an interface for job details
+interface ScrapeJobDetails {
+    normalizedUrl: string;
+    userId: string;
+    url: string;
+    status: string;
+    startedAt: string;
+    completedAt?: string;
+    datasetId?: string;
+    apifyRunId?: string;
+}
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'POST') {
+        return res.status(405).json({ success: false, message: 'Method not allowed' });
+    }
+
+    try {
+        const { jobId, status, datasetId } = req.body;
+
+        if (!jobId) {
+            return res.status(400).json({ success: false, message: 'Job ID is required' });
+        }
+
+        // Get job details from KV store with proper typing
+        const jobDetails = await kv.get(`scrape-job:${jobId}`) as ScrapeJobDetails | null;
+
+        if (!jobDetails) {
+            return res.status(404).json({ success: false, message: 'Job not found' });
+        }
+
+        // Update job status
+        await kv.set(`scrape-job:${jobId}`, {
+            ...jobDetails,
+            status: status === 'ACTOR.RUN.SUCCEEDED' ? 'SUCCEEDED' : 'FAILED',
+            completedAt: new Date().toISOString(),
+            datasetId
+        });
+
+        // If job succeeded, process the data
+        if (status === 'ACTOR.RUN.SUCCEEDED' && datasetId) {
+            // Fetch the scraped data from Apify
+            const apifyDataUrl = `https://api.apify.com/v2/datasets/${datasetId}/items?token=${process.env.APIFY_API_TOKEN}`;
+            const response = await fetch(apifyDataUrl);
+
+            if (!response.ok) {
+                throw new Error('Failed to retrieve scraped data from Apify');
+            }
+
+            const items = await response.json();
+
+            // Process the scraped data
+            const version = Date.now();
+            const sourceKey = `scrape:${jobDetails.normalizedUrl}`;
+            const userId = jobDetails.userId;
+
+            // Get user's shared IDs if any
+            const embeddingMapping = await kv.get(`embeddingMapping:${sourceKey}`) as string[] | null;
+            const initialShared = embeddingMapping
+                ? Array.from(new Set([userId, ...embeddingMapping]))
+                : [userId];
+
+            // Process each scraped page
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i];
+                const itemUrl = item.url;
+
+                if (!itemUrl || !item.text) continue;
+
+                const cleanedText = cleanText(item.text);
+                const finalText = cleanedText.split(' ').length > 3000
+                    ? truncateText(cleanedText, 3000)
+                    : cleanedText;
+
+                // Store embeddings for each user
+                for (const uid of initialShared) {
+                    await createAndStoreEmbeddings(uid, sourceKey, finalText, version + i, true);
+                }
+            }
+
+            // Update metadata
+            await kv.set(`website:${jobDetails.normalizedUrl}`, {
+                scrapedAt: new Date().toISOString(),
+                pageCount: items.length,
+            });
+
+            await kv.set(`lastScrapeVersion:${userId}:${jobDetails.normalizedUrl}`, version);
+            await kv.set(`embeddingMapping:${sourceKey}`, initialShared);
+            await kv.set(`embeddingOwner:${sourceKey}`, userId);
+
+            // Update global embedding index
+            const indexKey = 'embeddingIndex1';
+            const indexData = await kv.get(indexKey);
+            let currentIndex: string[] = Array.isArray(indexData) ? indexData : [];
+
+            if (!currentIndex.includes(sourceKey)) {
+                currentIndex.push(sourceKey);
+                await kv.set(indexKey, currentIndex);
+            }
+        }
+
+        return res.status(200).json({ success: true });
+
+    } catch (error) {
+        console.error('Error processing webhook:', error);
+        return res.status(500).json({
+            success: false,
+            message: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+}

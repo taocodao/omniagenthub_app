@@ -1,0 +1,70 @@
+// pages/api/auth/callback.ts
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { OAuth2Client } from 'google-auth-library';
+import axios from 'axios';
+
+const oauth2Client = new OAuth2Client(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI || `${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/auth/callback`
+);
+
+export default async function handler(
+    req: NextApiRequest,
+    res: NextApiResponse
+) {
+    if (req.method !== 'GET') {
+        return res.status(405).json({ success: false, error: 'Method not allowed' });
+    }
+
+    const { code, error } = req.query;
+
+    if (error) {
+        console.error('OAuth error:', error);
+        return res.redirect('/auth/error?error=' + encodeURIComponent(error as string));
+    }
+
+    if (!code) {
+        return res.redirect('/auth/error?error=missing_code');
+    }
+
+    try {
+        // Exchange code for tokens
+        const { tokens } = await oauth2Client.getToken(code as string);
+        oauth2Client.setCredentials(tokens);
+
+        // Get user info
+        const userInfoResponse = await axios.get(
+            'https://www.googleapis.com/oauth2/v2/userinfo',
+            {
+                headers: {
+                    Authorization: `Bearer ${tokens.access_token}`,
+                },
+            }
+        );
+
+        const user = userInfoResponse.data;
+
+        // Create session data
+        const sessionData = {
+            access_token: tokens.access_token,
+            refresh_token: tokens.refresh_token,
+            expiry_date: tokens.expiry_date,
+            user_info: user,
+            created_at: Date.now()
+        };
+
+        // Set secure httpOnly cookie
+        const cookieValue = Buffer.from(JSON.stringify(sessionData)).toString('base64');
+
+        res.setHeader('Set-Cookie', [
+            `notebooklm_auth=${cookieValue}; HttpOnly; Path=/; Max-Age=3600; SameSite=Strict; Secure=${process.env.NODE_ENV === 'production'}`,
+        ]);
+
+        // Redirect to success page
+        res.redirect('/auth/success');
+    } catch (error) {
+        console.error('OAuth callback error:', error);
+        res.redirect('/auth/error?error=callback_failed');
+    }
+}

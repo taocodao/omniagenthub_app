@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Link Sender</title>
+    <style>
+        .form-container {
+            max-width: 500px;
+            margin: 0 auto;
+            padding: 20px;
+            border-radius: 5px;
+        }
+
+        .form-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            /* Add spacing between input and button */
+        }
+
+        input[type="email"] {
+            flex: 1;
+            /* Make input take up available space */
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+
+        button {
+            background-color: #0073aa;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+
+        button:hover {
+            background-color: #005177;
+        }
+
+        .error {
+            color: red;
+            font-size: 14px;
+            margin-top: 5px;
+            display: none;
+        }
+
+        .success {
+            color: green;
+            font-size: 14px;
+            margin-top: 5px;
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="form-container">
+        <div class="form-group">
+            <input type="email" id="email" name="email" placeholder="Enter your email address" required>
+            <button type="button" id="send-link">Send Me The Link</button>
+        </div>
+        <div id="error-message" class="error"></div>
+        <div id="success-message" class="success"></div>
+    </div>
+
+    <script>
+        // Hash utility - similar implementation to what's referenced in SignIn.tsx
+        const HashUtil = {
+            // Simple string hashing function
+            hash: function (str) {
+                let hash = 0;
+                if (str.length === 0) return hash;
+
+                for (let i = 0; i < str.length; i++) {
+                    const char = str.charCodeAt(i);
+                    hash = ((hash << 5) - hash) + char;
+                    hash = hash & hash; // Convert to 32bit integer
+                }
+
+                return Math.abs(hash);
+            },
+
+            // Hash to fixed digits (simulating the same functionality as in the original code)
+            hashTo: function (input) {
+                const hashedValue = this.hash(input);
+                // Convert to string and take first 8 characters to ensure consistent length
+                return hashedValue.toString().padStart(10, '0').slice(0, 8);
+            }
+        };
+
+        document.addEventListener('DOMContentLoaded', function () {
+            // Get elements
+            const emailInput = document.getElementById('email');
+            const sendButton = document.getElementById('send-link');
+            const errorMessage = document.getElementById('error-message');
+
+            // Add event listener to the button
+            sendButton.addEventListener('click', async function () {
+                // Reset messages
+                errorMessage.style.display = 'none';
+
+                // Get the email value
+                const email = emailInput.value.trim();
+
+                // Validate email
+                if (!validateEmail(email)) {
+                    errorMessage.textContent = 'Please enter a valid email address.';
+                    errorMessage.style.display = 'block';
+                    return;
+                }
+
+                try {
+                    // Hash the email address to create a unique promotion code
+                    const hashedEmail = HashUtil.hashTo(email);
+
+                    // Prepare the promotional link - matching the format in SignIn.tsx
+                    const baseUrl = `https://gpts-web3aistore.vercel.app/?promoteCode=${hashedEmail}:prom40`;
+
+                    // Shared message content
+                    const sharedMessage = `
+AI Won't Replace You—It Will Unlock Your Full Potential!<br><br>
+We invite you to experience the power of AI to boost productivity and enhance self-development.<br><br>
+Click the link below to get:<br><br>
+✅ 3,000 Free Chats<br><br>
+✅ 5 Free Knowledge Uploads<br><br>
+✅ 2 Free Web Scrapes<br><br>
+👉 <a href="${baseUrl}">${baseUrl}</a> <br><br>
+Getting started is easy! Simply log in with social login, enter your name and company, and click Ask AI.<br><br>
+Input any task—like 'write me a business plan'—then choose the best AI tool for your needs.<br><br>
+Use the Knowledge Base to upload relevant content or web scrape your website to enrich AI results.<br><br>
+AI will ask 5 key questions, guiding you with insights from your selected knowledge sources to generate an instant first draft, which you can refine for the best final result.<br><br>
+Plus, you can share free perks, transfer knowledge sources, and collaborate across your organization.<br><br>
+Start now and unlock the future of AI-powered efficiency! 🚀
+`;
+
+                    // Use a proxy server to bypass CORS restrictions (for testing purposes)
+                    //const proxyUrl = "https://cors-anywhere.herokuapp.com/";
+                    const apiUrl = "https://gpts-web3aistore.vercel.app/api/sendEmail_cors";
+
+                    // Call the sendEmail API endpoint through the proxy
+                    const response = await fetch("https://gpts-web3aistore.vercel.app/api/sendEmail_cors", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            recipient: email,
+                            subject: "Your Exclusive AI Offer",
+                            message: sharedMessage,
+                            sender: "eric@web3aistore.com",
+                            html: sharedMessage,
+                            fromDisplay: "Eric from Web3AIStore",
+                            replyTo: "eric@web3aistore.com",
+                        }),
+                    });
+
+                    if (response.ok) {
+                        alert("Email sent successfully! Please check your inbox.");
+                        emailInput.value = ""; // Clear the input field after successful submission
+                    } else {
+                        alert("Failed to send email. Please try again later.");
+                    }
+                } catch (error) {
+                    console.error("Error submitting email:", error);
+                    alert("An error occurred while sending the email.");
+                }
+            });
+
+            // Email validation function
+            function validateEmail(email) {
+                const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                return emailPattern.test(email);
+            }
+        });
+    </script>
+</body>
+
+</html>

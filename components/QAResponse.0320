@@ -1,0 +1,99 @@
+// components/QAResponse.tsx
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import ReactMarkdown from 'react-markdown';
+import { QuestionAnswer } from '../types';
+import styles from "../styles/Home5.module.css";
+
+interface QAResponseProps {
+    qaResponse: string;
+    isEditing: boolean;
+    toggleEdit: () => void;
+    editableQA: QuestionAnswer[];
+    editableQAForEmbed: QuestionAnswer[];
+    handleAnswerChange: (index: number, newAnswer: string) => void;
+    handleAnswerSubmit: () => void;
+    numQuestions: number;
+    isLoading: boolean;
+}
+
+const QAResponse: React.FC<QAResponseProps> = ({
+    qaResponse,
+    isEditing,
+    toggleEdit,
+    editableQA,
+    handleAnswerChange,
+    handleAnswerSubmit,
+    numQuestions,
+    isLoading,
+}) => {
+    const textareaRefs = useRef<(HTMLTextAreaElement | null)[]>([]);
+
+    const setTextAreaRef = useCallback((el: HTMLTextAreaElement | null, index: number) => {
+        textareaRefs.current[index] = el;
+    }, []);
+
+    useEffect(() => {
+        if (isEditing) {
+            textareaRefs.current.forEach((textarea) => {
+                if (textarea) {
+                    textarea.style.height = 'auto';
+                    textarea.style.height = `${textarea.scrollHeight}px`;
+                }
+            });
+        }
+    }, [isEditing, editableQA]);
+
+    const handleTextareaResize = (index: number) => {
+        const textarea = textareaRefs.current[index];
+        if (textarea) {
+            textarea.style.height = 'auto';
+            textarea.style.height = `${textarea.scrollHeight}px`;
+        }
+    };
+
+    return (
+        <div className="mb-4">
+            <div className="w-full overflow-x-auto">
+                {isEditing ? (
+                    <form onSubmit={(e) => { e.preventDefault(); handleAnswerSubmit(); }}>
+                        {editableQA.map((qa, index) => (
+                            <div key={index} className="mb-4">
+                                <p className="font-bold text-lg">Q: {qa.question}</p>
+                                <label htmlFor={`answer-${index}`} className="block mt-2 font-bold text-lg">A:</label>
+                                <textarea
+                                    id={`answer-${index}`}
+                                    ref={(el) => setTextAreaRef(el, index)}
+                                    value={qa.answer.replace(/\*\*/g, '')}
+                                    onChange={(e) => {
+                                        handleAnswerChange(index, e.target.value);
+                                        handleTextareaResize(index);
+                                    }}
+                                    className={`w-full p-2 border rounded ${styles.textarea}`}
+                                    style={{
+                                        minHeight: '100px',
+                                        whiteSpace: 'pre-wrap',
+                                        minWidth: '90%',
+                                        maxHeight: '700px',
+                                        overflowX: 'hidden',
+                                        fontSize: '18px',
+                                        fontWeight: 'bold',
+                                    }}
+                                />
+                            </div>
+                        ))}
+
+                    </form>
+                ) : (
+                    <div
+                        className="w-[150%] p-2 border rounded resize-both overflow-auto"
+                        style={{ minHeight: '300px', minWidth: '100%' }}
+                    >
+                        <ReactMarkdown>{editableQA.map(qa => `**Q: ${qa.question}**\n\nA: ${qa.answer}`).join('\n\n')}</ReactMarkdown>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+export default QAResponse;

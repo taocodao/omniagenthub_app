@@ -1,0 +1,75 @@
+{
+    "crons": [
+        {
+            "path": "/api/sch_updateUsage",
+            "schedule": "0 * * * *"
+        }
+    ],
+    "env": {
+        "CRON_SECRET": "jK8#2LmP7r$5Tq*6Vw%E3uQ2f@9Zx!8Bn#4LmP7r$5Tq*6Vw%E3u",
+        "KV_REST_API_URL": "https://credible-walleye-47876.upstash.io",
+        "KV_REST_API_TOKEN": "AbsEAAIncDEyZGQ0MmZhODg2YmE0OTEyYTlhNzdjNzg1YWMwN2NhN3AxNDc4NzY",
+        "MAX_INCREASE": "20",
+        "BASE_URL": "https://omniagenthub.vercel.app",
+        "UPDATER_SECRET_TOKEN": "jK8#2LmP7r$5Tq*6Vw%E3uQ2f@9Zx!8Bn#4LmP7r$5Tq*6Vw%E3u"
+    },
+    "functions": {
+        "pages/api/inngest/**": {
+            "memory": 3008,
+            "maxDuration": 300
+        },
+        "pages/api/scrape-webhook.ts": {
+            "maxDuration": 300
+        },
+        "pages/api/initiate-scrape.ts": {
+            "maxDuration": 300
+        }
+    },
+    "github": {
+        "enabled": true
+    },
+    "headers": [
+        {
+            "source": "/api/(.*)",
+            "headers": [
+                {
+                    "key": "Access-Control-Allow-Origin",
+                    "value": "https://omniagenthub.ai"
+                },
+                {
+                    "key": "Access-Control-Allow-Methods",
+                    "value": "GET,OPTIONS,PATCH,DELETE,POST,PUT"
+                },
+                {
+                    "key": "Access-Control-Allow-Headers",
+                    "value": "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version"
+                },
+                {
+                    "key": "Access-Control-Allow-Credentials",
+                    "value": "true"
+                }
+            ]
+        },
+        {
+            "source": "/api/sendEmail_cors",
+            "headers": [
+                {
+                    "key": "Access-Control-Allow-Origin",
+                    "value": "*"
+                },
+                {
+                    "key": "Access-Control-Allow-Methods",
+                    "value": "POST, OPTIONS"
+                },
+                {
+                    "key": "Access-Control-Allow-Headers",
+                    "value": "Content-Type, Authorization"
+                },
+                {
+                    "key": "Access-Control-Max-Age",
+                    "value": "86400"
+                }
+            ]
+        }
+    ]
+}

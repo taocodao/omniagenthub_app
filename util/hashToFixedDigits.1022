@@ -1,0 +1,19 @@
+import crypto from 'crypto';
+
+class HashUtil {
+    /**
+     * Hash a long string into a fixed-length numeric representation.
+     * @param {string} input - The input string to hash.
+     * @returns {string} - The hashed numeric representation.
+     */
+    static hashTo(input: string): string {
+        const length = 10;
+        const hash = crypto.createHash('sha256').update(input.trim()).digest('hex');
+        // Convert hex to a big integer and then to a string
+        const numericHash = BigInt('0x' + hash).toString();
+        // Trim or pad to the desired length
+        return numericHash.slice(0, length).padEnd(length, '0');
+    }
+}
+
+export default HashUtil;

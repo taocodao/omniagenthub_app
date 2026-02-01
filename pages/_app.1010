@@ -1,0 +1,58 @@
+// pages/_app.tsx
+
+import React from 'react';
+import { AppProps } from "next/app";
+import { ACTIVE_CHAIN, CLIENT_ID } from "../constants/constants";
+import "../styles/globals.css";
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { SharedProvider } from "../context/SharedContext";
+import { LocalizationProvider } from '../util/LocalizationContext';
+import { ThirdwebProvider as ThirdwebProvider1 } from "thirdweb/react"; // From thirdweb/react
+import { inAppWallet } from "thirdweb/wallets";
+import { polygonAmoy, polygon, Chain } from "thirdweb/chains";
+import { NextComponentType } from 'next';
+import { ThirdwebSDK } from "@thirdweb-dev/react";
+import { ToastContainer } from 'react-toastify'; // Import ToastContainer
+import 'react-toastify/dist/ReactToastify.css'; // Import react-toastify CSS
+
+// Extend NextComponentType to include requiresSDK
+type MyAppProps = AppProps & {
+    Component: NextComponentType & { requiresSDK?: boolean };
+};
+
+const wallets = [inAppWallet()];
+const thirdwebQueryClient = new QueryClient();
+
+const chainMap: { [key: string]: Chain } = {
+    "polygon-amoy-testnet": polygonAmoy,
+    "polygon": polygon, // Add Polygon mainnet
+};
+
+// Ensure `activeChain` is of type `Chain`
+const activeChain: Chain = chainMap[ACTIVE_CHAIN] || polygon; // Fallback to Polygon mainnet if ACTIVE_CHAIN is undefined
+
+// Global variables to hold the initialized SDK and contract
+let sdk: ThirdwebSDK | null = null;
+let accountFactory: any | null = null;
+
+// Utility to access the SDK and contract
+//export const getSdkAndContract = () => ({ sdk, accountFactory });
+
+const MyApp = ({ Component, pageProps }: MyAppProps) => {
+
+
+    return (
+        <QueryClientProvider client={thirdwebQueryClient}>
+            <ThirdwebProvider1>
+                <SharedProvider>
+                    <LocalizationProvider>
+                        <Component {...pageProps} />
+                        <ToastContainer /> {/* Add ToastContainer here */}
+                    </LocalizationProvider>
+                </SharedProvider>
+            </ThirdwebProvider1>
+        </QueryClientProvider>
+    );
+};
+
+export default MyApp;

@@ -1,0 +1,114 @@
+// pages/api/initiate-scrape.ts
+
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { ApifyClient } from 'apify-client';
+import { createClient } from '@vercel/kv';
+import { normalizeUrl } from '../../utils/embeddings';
+
+// Initialize KV client
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+// Define job details interface
+interface ScrapeJobDetails {
+    normalizedUrl: string;
+    userId: string;
+    url: string;
+    status: string;
+    startedAt: string;
+    apifyRunId?: string;
+    completedAt?: string;
+    datasetId?: string;
+    sharedUserIds?: string[];
+}
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed' });
+    }
+
+    const userId = (req.headers['accountid'] as string) || 'anonymous';
+    const { url, sharedUserIds } = req.body as { url: string; sharedUserIds?: string[] };
+
+    if (!url) {
+        return res.status(400).json({ error: 'Missing "url" in request body' });
+    }
+
+    try {
+        // Generate unique job ID
+        const jobId = `scrape-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const normalizedUrl = normalizeUrl(url);
+
+        // Determine base URL for webhook
+        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ||
+            (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
+
+        // Create job record
+        const jobDetails: ScrapeJobDetails = {
+            normalizedUrl,
+            userId,
+            url,
+            status: 'STARTED',
+            startedAt: new Date().toISOString(),
+            sharedUserIds
+        };
+
+        await kv.set(`scrape-job:${jobId}`, jobDetails);
+
+        // Initialize Apify client
+        const apifyClient = new ApifyClient({
+            token: process.env.APIFY_API_TOKEN!,
+        });
+
+        // Construct webhook URL with explicit jobId parameter
+        const webhookUrl = `${baseUrl}/api/scrape-webhook?jobId=${jobId}`;
+
+        // Call Apify Website Content Crawler
+        const run = await apifyClient.actor('apify/website-content-crawler').call({
+            startUrls: [{ url: normalizedUrl }],
+            maxCrawlPages: 50,
+            maxRequestsPerCrawl: 50,
+            maxCrawlDepth: 2,
+            crawlerType: "playwright:adaptive", // Use adaptive crawler for best performance
+            removeElementsCssSelector: "nav, footer, script, style, noscript, svg", // Remove non-content elements
+            customData: {
+                jobId: jobId // Pass jobId in customData for webhook reference
+            },
+            webhooks: [{
+                eventTypes: ['ACTOR.RUN.SUCCEEDED', 'ACTOR.RUN.FAILED', 'ACTOR.RUN.TIMED_OUT'],
+                requestUrl: webhookUrl,
+                payloadTemplate: JSON.stringify({
+                    jobId: jobId, // Use direct jobId instead of template variable
+                    runId: '{{resource.id}}',
+                    datasetId: '{{resource.defaultDatasetId}}',
+                    status: '{{resource.status}}'
+                })
+            }]
+        });
+
+        // Update job with Apify run ID
+        await kv.set(`scrape-job:${jobId}`, {
+            ...jobDetails,
+            apifyRunId: run.id
+        });
+
+        // Create mapping for run ID lookup
+        await kv.set(`apify-run-map:${run.id}`, jobId);
+
+        // Return immediate response to client
+        res.status(200).json({
+            jobId,
+            status: 'STARTED',
+            statusUrl: `${baseUrl}/api/scrape-status?jobId=${jobId}`
+        });
+
+    } catch (error) {
+        console.error('Scrape initiation error:', error);
+        return res.status(500).json({
+            error: 'Failed to initiate scrape',
+            details: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+}

@@ -1,0 +1,112 @@
+// File: pages/api/sendEmail.ts
+import type { NextApiRequest, NextApiResponse } from "next";
+import sgMail from "@sendgrid/mail";
+
+// Configure CORS settings
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "https://web3aistore.com", // Replace with actual domain
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Max-Age": "86400" // 24 hours
+};
+
+if (!process.env.SENDGRID_API_KEY) {
+  throw new Error("SENDGRID_API_KEY environment variable not configured");
+}
+
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // Set CORS headers for all responses
+  Object.entries(CORS_HEADERS).forEach(([key, value]) => {
+    res.setHeader(key, value);
+  });
+
+  // Handle CORS preflight request
+  if (req.method === "OPTIONS") {
+    return res.status(204).end();
+  }
+
+  // Validate HTTP method
+  if (req.method !== "POST") {
+    return res.status(405).json({
+      error: "Method Not Allowed",
+      message: "Only POST requests are accepted"
+    });
+  }
+
+  // Validate content type
+  const contentType = req.headers["content-type"];
+  if (!contentType?.includes("application/json")) {
+    return res.status(415).json({
+      error: "Unsupported Media Type",
+      message: "Server requires application/json content type"
+    });
+  }
+
+  // Validate request body
+  const { recipient, subject, message, sender, html, fromDisplay, replyTo } = req.body;
+  const requiredFields = ["recipient", "subject", "sender"];
+  const missingFields = requiredFields.filter(field => !req.body[field]);
+
+  if (missingFields.length > 0) {
+    return res.status(400).json({
+      error: "Bad Request",
+      message: `Missing required fields: ${missingFields.join(", ")}`
+    });
+  }
+
+  // Validate email formats
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(recipient) || !emailRegex.test(sender)) {
+    return res.status(422).json({
+      error: "Validation Error",
+      message: "Invalid email address format"
+    });
+  }
+
+  // Construct email payload
+  try {
+    const emailPayload: sgMail.MailDataRequired = {
+      to: recipient,
+      from: {
+        email: sender,
+        name: fromDisplay?.slice(0, 50) || "" // Truncate long display names
+      },
+      replyTo: replyTo || sender,
+      subject: subject.substring(0, 100), // Prevent long subjects
+      text: message?.substring(0, 1000), // Limit plain text length
+      html: html?.substring(0, 5000) // Limit HTML content length
+    };
+
+    // Send email through SendGrid
+    await sgMail.send(emailPayload);
+
+    return res.status(200).json({
+      success: true,
+      message: `Email successfully sent to ${recipient}`
+    });
+
+  } catch (error) {
+    console.error("Email send error:", error);
+
+    const errorMessage = error instanceof Error
+      ? error.message
+      : "Unknown error occurred";
+
+    return res.status(500).json({
+      error: "Email Delivery Failed",
+      message: errorMessage
+    });
+  }
+}
+
+// Configure API route
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: "500kb" // Prevent large payloads
+    },
+    responseLimit: "1mb" // Control response size
+  }
+};

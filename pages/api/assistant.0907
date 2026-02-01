@@ -1,0 +1,112 @@
+import { RunAssistantRSC } from '../../components/RunAssistantRSC';
+import { createAssistant, re_createAssistant } from '../../components/createAssistant1';
+import { AssistantResponse } from 'ai';
+import OpenAI from 'openai';
+
+export const config = {
+    runtime: 'edge'
+};
+
+// Create an OpenAI API client (edge friendly)
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY || '',
+});
+
+// Allow streaming responses up to 30 seconds
+export const maxDuration = 30;
+
+export default async function POST(req: Request) {
+    // Parse the request body
+    const input: {
+        threadId: string | null;
+        message: string;
+        assistantId: string;
+    } = await req.json();
+
+    // Create a thread if needed
+    const threadId = input.threadId ?? (await openai.beta.threads.create({})).id;
+
+    try {
+        // Step 1: Try to get the assistant_id using createAssistant
+        const createAssistantId = await createAssistant(input.assistantId);
+
+        // Step 2: Add a message to the thread
+        const createdMessage = await openai.beta.threads.messages.create(
+            threadId,
+            {
+                role: 'user',
+                content: input.message,
+            },
+            { signal: req.signal },
+        );
+
+        // Step 3: Stream the assistant's response using the assistant_id from createAssistant
+        return AssistantResponse(
+            { threadId, messageId: createdMessage.id },
+            async ({ forwardStream, sendDataMessage }) => {
+                const runStream = openai.beta.threads.runs.stream(
+                    threadId,
+                    {
+                        assistant_id: createAssistantId,  // Use the assistant ID from createAssistant
+                    },
+                    { signal: req.signal }
+                );
+
+                // Stream the response
+                let runResult = await forwardStream(runStream);
+
+                // Handle additional logic like required actions (if needed)
+                while (
+                    runResult?.status === 'requires_action' &&
+                    runResult.required_action?.type === 'submit_tool_outputs'
+                ) {
+                    // Handle required actions (if any)
+                }
+            }
+        );
+
+    } catch (error) {
+        console.error('Error running assistant with createAssistant:', error);
+
+        // Step 4: If an error occurs, retry using re_createAssistant
+        try {
+            const recreateAssistantId = await re_createAssistant(input.assistantId);
+
+            // Step 5: Run the assistant again using the recreated assistant_id
+            const createdMessage = await openai.beta.threads.messages.create(
+                threadId,
+                {
+                    role: 'user',
+                    content: input.message,
+                },
+                { signal: req.signal },
+            );
+
+            return AssistantResponse(
+                { threadId, messageId: createdMessage.id },
+                async ({ forwardStream, sendDataMessage }) => {
+                    const runStream = openai.beta.threads.runs.stream(
+                        threadId,
+                        {
+                            assistant_id: recreateAssistantId,  // Use the assistant ID from re_createAssistant
+                        },
+                        { signal: req.signal }
+                    );
+
+                    let runResult = await forwardStream(runStream);
+
+                    // Handle additional logic like required actions (if needed)
+                    while (
+                        runResult?.status === 'requires_action' &&
+                        runResult.required_action?.type === 'submit_tool_outputs'
+                    ) {
+                        // Handle required actions (if any)
+                    }
+                }
+            );
+        } catch (recreateError) {
+            console.error('Error running assistant with re_createAssistant:', recreateError);
+            return new Response('Error running assistant', { status: 500 });
+        }
+    }
+}

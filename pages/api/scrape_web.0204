@@ -1,0 +1,101 @@
+// pages/api/scrape_web.ts
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { ApifyClient } from 'apify-client';
+import { createClient } from '@vercel/kv';
+import { normalizeUrl, cleanText, truncateText, createAndStoreEmbeddings } from '../../utils/embeddings';
+
+const apifyClient = new ApifyClient({
+    token: process.env.APIFY_API_TOKEN!,
+});
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed' });
+    }
+
+    // Get the user ID from the "accountID" header (default to 'anonymous')
+    const userId = (req.headers['accountid'] as string) || 'anonymous';
+    const { url } = req.body;
+    if (!url) {
+        return res.status(400).json({ error: 'Missing "url" in request body.' });
+    }
+
+    const sitemapUrls = [
+        `${url}/sitemap.xml`,
+        `${url}/page-sitemap.xml`,
+        `${url}/sitemap_index.xml`,
+    ];
+
+    try {
+        const normalizedUrl = normalizeUrl(url);
+        let items: any[] = [];
+        let sitemapCrawlSuccess = false;
+
+        // Try crawling the sitemaps
+        for (const sitemapUrl of sitemapUrls) {
+            try {
+                console.log(`Attempting to crawl: ${sitemapUrl}`);
+                const sitemapRun = await apifyClient.actor('apify/website-content-crawler').call({
+                    startUrls: [{ url: sitemapUrl }],
+                    maxCrawlPages: 20,
+                    maxRequestsPerCrawl: 20,
+                    maxCrawlDepth: 2,
+                });
+                const sitemapData = await apifyClient.dataset(sitemapRun.defaultDatasetId).listItems();
+                items = sitemapData.items;
+                sitemapCrawlSuccess = true;
+                break;
+            } catch (error) {
+                console.warn(`Failed to crawl sitemap: ${sitemapUrl}`);
+            }
+        }
+
+        // If no sitemap found, use a fallback list of URLs
+        if (!sitemapCrawlSuccess) {
+            console.warn('No valid sitemap found. Falling back to predefined pages.');
+            const fallbackRun = await apifyClient.actor('apify/website-content-crawler').call({
+                startUrls: [
+                    { url },
+                    { url: `${url}/about` },
+                    { url: `${url}/services` },
+                    { url: `${url}/products` },
+                    { url: `${url}/solutions` },
+                ],
+                maxCrawlPages: 10,
+                maxCrawlDepth: 1,
+            });
+            const fallbackData = await apifyClient.dataset(fallbackRun.defaultDatasetId).listItems();
+            items = fallbackData.items;
+        }
+
+        // Process each scraped item
+        for (const item of items) {
+            const rawText = item.text || '';
+            const cleaned = cleanText(rawText);
+            // Optionally truncate if the text is very long
+            const finalText = cleaned.split(' ').length > 3000 ? truncateText(cleaned, 3000) : cleaned;
+            try {
+                // Use the page URL as the source identifier
+                await createAndStoreEmbeddings(userId, item.url, finalText);
+            } catch (error) {
+                console.error(`Error storing embeddings for URL "${item.url}":`, error);
+            }
+        }
+
+        // Optionally, store website metadata in KV
+        await kv.set(`website:${normalizedUrl}`, {
+            scrapedAt: new Date().toISOString(),
+            pageCount: items.length,
+        });
+
+        res.status(200).json({ message: `Scraped and stored embeddings for ${items.length} pages.` });
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ error: 'An error occurred while scraping and storing the website content.' });
+    }
+}

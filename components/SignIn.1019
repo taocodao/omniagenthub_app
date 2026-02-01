@@ -1,0 +1,404 @@
+import React, { useState, useEffect, useContext, ChangeEvent } from "react";
+import { useRouter } from 'next/router';
+import Image from "next/image";
+import { ConnectEmbed, darkTheme } from "thirdweb/react";
+import { client } from "../util/client";
+import { inAppWallet } from "thirdweb/wallets";
+import { polygonAmoy, polygon, Chain } from "thirdweb/chains";
+import { ACTIVE_CHAIN, ACCOUNT_FACTORY_ADDRESS } from "../constants/constants";
+import { LocalizedText, LocalizedText1 } from '../util/LocalizedText';
+import { LocalizationContext } from '../util/LocalizationContext';
+import styles from "../styles/Signin.module.css";
+import HashUtil from "../util/hashToFixedDigits"; // Added import for HashUtil
+
+import { toast } from 'react-toastify';
+import OpenWebsiteToast from '../components/OpenWebsiteToast';
+
+// Custom dark theme configuration
+const customTheme = darkTheme({
+    colors: {
+        modalBg: "Blue",
+    },
+});
+
+// Mapping of chain identifiers to Chain objects
+const chainMap: { [key: string]: Chain } = {
+    "polygon-amoy-testnet": polygonAmoy,
+    "polygon": polygon, // Polygon mainnet
+};
+
+// Select the active chain based on the ACTIVE_CHAIN constant
+const activeChain: Chain = chainMap[ACTIVE_CHAIN];
+
+const SignIn = () => {
+    const router = useRouter();
+    const { query } = router;
+
+    const [languages, setLanguages] = useState<string[]>([]);
+    const [selectedLanguage, setSelectedLanguage] = useState<string>("English");
+    const [isHovered, setIsHovered] = useState(false);
+    const { setLanguage } = useContext(LocalizationContext);
+    const [email, setEmail] = useState<string>(""); // Added missing state
+    const [isSubmitting, setIsSubmitting] = useState(false); // Added missing state
+
+    useEffect(() => {
+        const fetchLanguages = async () => {
+            try {
+                const response = await fetch('/api/get_all_languages');
+                if (response.ok) {
+                    const langs: string[] = await response.json();
+                    setLanguages(Array.from(new Set(langs))); // Ensure unique languages
+                } else {
+                    console.error("Failed to fetch languages");
+                    setLanguages(["English"]); // Fallback to English if fetch fails
+                }
+            } catch (error) {
+                console.error("Error fetching languages:", error);
+                setLanguages(["English"]); // Fallback to English on error
+            }
+        };
+
+        const initialize = async () => {
+            await fetchLanguages();
+            const lang = typeof query.lang === 'string' ? query.lang : "English";
+            setSelectedLanguage(lang);
+            setLanguage(lang);
+        };
+        initialize();
+    }, [query.lang, setLanguage]);
+
+    // Handle language change: update 'lang' query parameter
+    const handleLanguageChange = (event: ChangeEvent<HTMLSelectElement>) => {
+        const newLanguage = event.target.value;
+        setSelectedLanguage(newLanguage);
+        setLanguage(newLanguage);
+        // Update the URL with the new language, causing a page refresh
+        router.push({
+            pathname: router.pathname,
+            query: { ...router.query, lang: newLanguage },
+        }, undefined, { shallow: false });
+    };
+
+    useEffect(() => {
+        let toastTimer: NodeJS.Timeout;
+
+        // Trigger the toast after 3 seconds upon component mount
+        toastTimer = setTimeout(() => {
+            // Function to handle the "OK" button click
+            const handleOpen = () => {
+                // window.open("https://www.youtube.com/watch?v=hOvMC7IY8CQ", "_blank", "noopener,noreferrer");
+                window.open("https://web3aistore.com/home");
+                toast.dismiss('open-website-toast'); // Dismiss the toast after opening the website
+            };
+
+            // Display the custom toast with the message and "OK" button
+            toast(
+                <OpenWebsiteToast onOpen={handleOpen} />,
+                {
+                    toastId: 'open-website-toast', // Unique ID to prevent duplicates
+                    position: "top-center",
+                    autoClose: 10000, // Auto close after 10 seconds
+                    hideProgressBar: false,
+                    closeOnClick: true, // Prevent closing on click to ensure user interacts with the button
+                    pauseOnHover: false,
+                    draggable: true,
+                    theme: "dark",
+                }
+            );
+        }, 300000); // 300-second delay
+
+        // Cleanup function to clear the timer if the component unmounts
+        return () => {
+            if (toastTimer) {
+                clearTimeout(toastTimer);
+            }
+        };
+    }, []); // Empty dependency array ensures this runs once on mount
+
+    // Handle email submission
+    const handleEmailSubmit = async () => {
+        if (!email) {
+            alert("Please enter your email address.");
+            return;
+        }
+
+        try {
+            setIsSubmitting(true);
+
+            // Hash the email address to create a unique promotion code
+            const hashedEmail = HashUtil.hashTo(email);
+
+            // Prepare the promotional link
+            const baseUrl = `${window.location.origin}/?promoteCode=${hashedEmail}:prom40`;
+
+            // Prepare the email content
+            //const sharedMessage = `AI Won’t Replace You—It Will Unlock Your Full Potential!\n\nWe invite you to experience the power of AI to boost productivity and enhance self-development.\n\nClick the link below to get:\n\n✅ 3,000 Free Chats\n\n✅ 5 Free Knowledge Uploads\n\n✅ 2 Free Web Scrapes\n\n👉  <a href="${baseUrl}">${baseUrl}</a> \n\nGetting started is easy! Simply log in with social login, enter your name and company, and click Ask AI.\n\nInput any task—like 'write me a business plan'—then choose the best AI tool for your needs.\n\nUse the Knowledge Base to upload relevant content or web scrape your website to enrich AI results.\n\nAI will ask 5 key questions, guiding you with insights from your selected knowledge sources to generate an instant first draft, which you can refine for the best final result.\n\nPlus, you can share free perks, transfer knowledge sources, and collaborate across your organization.\n\nStart now and unlock the future of AI-powered efficiency! 🚀`
+            const sharedMesaage = `AI Won't Replace You—It Will Unlock Your Full Potential!<br><br>We invite you to experience the power of AI to boost productivity and enhance self-development.<br><br>Click the link below to get:<br><br>✅ 1,000 Free Chats<br><br>✅ 5 Free Knowledge Uploads<br><br>✅ 2 Free Web Scrapes<br><br>👉  <a clicktracking=off href="${baseUrl}">${baseUrl}</a> <br><br>Getting started is easy! Simply log in with social login, enter your name and company, and click Ask AI.<br><br>Input any task—like 'write me a business plan'—then choose the best AI tool for your needs.<br><br>Use the Knowledge Base to upload relevant content or web scrape your website to enrich AI results.<br><br>AI will ask 5 key questions, guiding you with insights from your selected knowledge sources to generate an instant first draft, which you can refine for the best final result.<br><br>Plus, you can share free perks, transfer knowledge sources, and collaborate across your organization.<br><br>Start now and unlock the future of AI-powered efficiency! 🚀
+`
+
+            // Call the sendEmail API endpoint
+            const response = await fetch("/api/sendEmail", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    recipient: email,
+                    subject: "Your Exclusive AI Offer",
+                    message: sharedMesaage,
+                    sender: "eric@web3aistore.com",
+                    html: sharedMesaage,
+                    fromDisplay: "Eric From Web3AIstore",
+                    replyTo: "eric@web3aistore.com",
+                }),
+            });
+
+            if (response.ok) {
+                alert("Email sent successfully! Please check your inbox.");
+                setEmail(""); // Clear the input field after successful submission
+            } else {
+                alert("Failed to send email. Please try again later.");
+            }
+        } catch (error) {
+            console.error("Error submitting email:", error);
+            alert("An error occurred while sending the email.");
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    return (
+        <div className={styles.signInContainer}>
+            {/* Header Container with Flexbox */}
+            <div className={styles.header}>
+                {/* Logo Container */}
+                <div className={styles.logoContainer}>
+                    <div
+                        onMouseEnter={() => setIsHovered(true)}
+                        onMouseLeave={() => setIsHovered(false)}
+                        onClick={() =>
+                            window.open(
+                                "https://www.scam-detector.com/validator/web3aistore-com-review/",
+                                "_blank",
+                                "noopener,noreferrer"
+                            )
+                        }
+                        className={styles.logoWrapper} // Added a new class for better styling
+                    >
+                        <Image
+                            src="/images/trust.jpg"
+                            alt="Trust Logo"
+                            fill // Replaces 'layout="responsive"'
+                            className={styles.hoverLogo}
+                            priority // Optional: Preloads the image for better performance
+                        />
+                        {isHovered && (
+                            <div className={styles.hoverTooltip}>
+                                <LocalizedText name="Click to see the Trust Score" />
+                            </div>
+                        )}
+                    </div>
+                    <a
+                        href="https://www.scamadviser.com/check-website/web3aistore.com" // Updated URL
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={styles.visitWebsiteLink}
+                    >
+                        <LocalizedText name="Website You Trust" />
+                    </a>
+                </div>
+
+                {/* Language Dropdown */}
+                <div className={styles.languageContainer}>
+                    <select
+                        className={styles.languageSelect}
+                        value={selectedLanguage}
+                        onChange={handleLanguageChange}
+                    >
+                        {languages.map(language => (
+                            <option key={language} value={language}>
+                                {language}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+            </div>
+
+            {/* Welcome Message */}
+            <h1 className={styles.welcomeMessage}>
+                <a
+                    href="https://web3aistore.com/home"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={styles.welcomeLink} // Optional: Add this class to style the link
+                >
+                    <LocalizedText name="Unlock the Power of AI with Web3AIstore" />
+                </a>
+            </h1>
+
+            {/* Tagline */}
+            <p className={styles.tagline}>
+                <LocalizedText name="Effortless AI Solutions to Boost Productivity and Gain an Edge in Work and Life" />
+            </p>
+
+            {/* Container for both components using flexbox */}
+            <div className={styles.authContainer}>
+                {/* ConnectEmbed Component for Wallet Connection */}
+                <ConnectEmbed
+                    client={client}
+                    accountAbstraction={{
+                        chain: activeChain,
+                        sponsorGas: true,
+                        factoryAddress: ACCOUNT_FACTORY_ADDRESS,
+                    }}
+                    theme={customTheme}
+                    className={styles.connectEmbed}
+                    wallets={[
+                        inAppWallet({
+                            auth: {
+                                options: ["email", "google", "apple", "facebook", "phone"],
+                            },
+                        }),
+                    ]}
+                    showThirdwebBranding={false}
+                />
+
+                {/* Award Logo (with proper sizing) */}
+                <div className={styles.awardLogoWrapper}>
+                    <a
+                        href="https://web3aistore.com/home#award"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label="View Innovation Award"
+                    >
+                        <Image
+                            src="/images/award-logo.png"
+                            alt="Award Recognition"
+                            width={300}
+                            height={300}
+                            className={styles.awardLogo}
+                            priority
+                        />
+                    </a>
+                </div>
+
+            </div>
+            {/*  <p className={styles.instructionText}>
+                <LocalizedText name="Web3AIstore is proud to have achieved a 100/100 trust score on both " />
+                <a
+                    href="https://www.scam-detector.com/validator/web3aistore-com-review/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={styles.trustLink}
+                >
+                    Scam Detector
+                </a>
+                <LocalizedText name=" and " />
+                <a
+                    href="https://www.scamadviser.com/check-website/web3aistore.com"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={styles.trustLink}
+                >
+                    Scam Adviser
+                </a>
+            </p>
+           */}
+            {/* Quick Demo Buttons */}
+            <div className={styles.quickDemoContainer}>
+                {/* About Us Button */}
+                <a
+                    href="https://www.youtube.com/watch?v=hOvMC7IY8CQ"
+
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={styles.quickDemoLink}
+                >
+                    <button className={styles.quickDemoButton}>
+                        About Us
+                    </button>
+                </a>
+                {/* Quick Demo */}
+                <a
+                    // href="https://youtu.be/-AXFSRNhpU4"
+                    href="https://youtu.be/wQs8p3skt8I"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={styles.quickDemoLink}
+                >
+                    <button className={styles.quickDemoButton} >
+                        Quick Demo
+                    </button>
+                </a>
+
+                {/* Demostración Rápida */}
+                <a
+                    href="https://youtu.be/31bPyrbhl9A"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={styles.quickDemoLink}
+                >
+                    <button className={styles.quickDemoButton}>
+                        Demostración Rápida
+                    </button>
+                </a>
+
+                {/* 快速演示 */}
+                <a
+                    href="https://youtu.be/TehYrtk1-Kw"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={styles.quickDemoLink}
+                >
+                    <button className={styles.quickDemoButton}>
+                        快速演示
+                    </button>
+                </a>
+            </div>
+
+            {/* Input Box and Submit Button */}
+            <div style={{ marginTop: "20px", textAlign: "center" }}>
+                <label htmlFor="email" style={{ marginBottom: "20px", marginRight: "20px" }}>
+                    <LocalizedText name="Enter Your Email Address:" />
+                </label>
+                <input
+                    type="email"
+                    id="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="Enter your email"
+                    style={{
+                        padding: "10px",
+                        width: "300px",
+                        borderRadius: "5px",
+                        border: "1px solid #ccc",
+                        marginBottom: "20px",
+                        marginRight: "20px"
+                    }}
+                />
+                <button
+                    onClick={handleEmailSubmit}
+                    disabled={isSubmitting}
+                    style={{
+                        padding: "10px 20px",
+                        backgroundColor: "#007bff",
+                        color: "#fff",
+                        borderRadius: "5px",
+                        border: "none",
+                        cursor: isSubmitting ? "not-allowed" : "pointer",
+                    }}
+                >
+                    {isSubmitting ? <LocalizedText1 name="Submitting..." /> : <LocalizedText1 name="Send Me The Link" />}
+                </button>
+            </div>
+
+            {/* Instructional Text */}
+            <p className={styles.instructionText1}>
+                {/*  <LocalizedText name="We sincerely invite you to experience our unique solution for applying AI to your daily work. Enter your email above, and we'll send you a special link that grants 3,000 free chats, 40% off your purchase and 5 free knowledge uploads, and 2 free web scrapes , turn your documents or websites into a personalized AI knowledge base. Enjoy global access to 5,500+ AI solutions for real-world work scenarios, supporting the seven most spoken languages. Just share your goal, and our AI will match you with the best tools—or create one tailored to your needs. Our self-improving agents learn from user feedback, expert input, and emulated focus groups to deliver a smarter, more customized experience every time." />*/}
+                <LocalizedText name="Experience a smarter way to use AI in your daily work. Enter your email to receive 1,000 free chats, 5 free knowledge uploads, and 2 free web scrapes—totally free, no credit card required. Turn your documents or website into a personalized AI knowledge base. Web3AIstore offers 5,500+ AI tools for real-world business tasks, supporting the seven most spoken languages. Powered by GPT-4o, one of the most advanced AI APIs available, our platform delivers fast, reliable performance. Our self-learning agents improve with user feedback, expert input, and focus group simulation to provide increasingly accurate, customized results." />
+
+
+            </p>
+        </div>
+    );
+};
+
+export default SignIn;

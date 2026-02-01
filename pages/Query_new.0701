@@ -1,0 +1,295 @@
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/router';
+import ReactMarkdown from 'react-markdown';
+import rehypeRaw from 'rehype-raw';
+
+interface Message {
+    role: string;
+    content: string;
+    references?: Record<number, string>;
+}
+
+export default function QueryPage() {
+    const router = useRouter();
+    const [commonQuestions, setCommonQuestions] = useState<string[]>([]);
+    const [userQuery, setUserQuery] = useState('');
+    const [messages, setMessages] = useState<Message[]>([{
+        role: 'system',
+        content: 'You are an AI assistant.'
+    }]);
+    const [loading, setLoading] = useState(false);
+    const website = router.query.url as string;
+    const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+    const [isFocused, setIsFocused] = useState(false);
+
+    const fetchCommonQuestions = async (url: string) => {
+        try {
+            const response = await fetch(
+                `/api/common-questions?website=${encodeURIComponent(url)}`
+            );
+            if (!response.ok) throw new Error('Failed to fetch questions');
+            const data = await response.json();
+            setCommonQuestions(data.questions || []);
+        } catch (error) {
+            console.error('Error fetching questions:', error);
+        }
+    };
+
+    useEffect(() => {
+        if (website) {
+            fetchCommonQuestions(website);
+            setMessages([{ role: 'system', content: 'You are an AI assistant.' }]);
+        }
+    }, [website]);
+
+    const handleSubmit = async (question?: string, e?: React.FormEvent) => {
+        if (e) e.preventDefault();
+        const query = question || userQuery;
+        if (!website || !query) return;
+
+        setMessages((prev) => [...prev, { role: 'user', content: query }]);
+        setUserQuery('');
+        setLoading(true);
+
+        try {
+            const response = await fetch('/api/query', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    website,
+                    query,
+                    chatHistory: messages
+                }),
+            });
+
+            if (!response.ok) throw new Error('Failed to fetch response');
+            const data = await response.json();
+
+            setMessages((prev) => [
+                ...prev,
+                {
+                    role: 'assistant',
+                    content: data.answer,
+                    references: data.references
+                },
+            ]);
+        } catch (error) {
+            console.error('Error:', error);
+            setMessages((prev) => [
+                ...prev,
+                { role: 'assistant', content: 'An error occurred.' }
+            ]);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleQuestionClick = (question: string) => {
+        setUserQuery(question);
+        handleSubmit(question);
+    };
+
+    const formatMarkdownContent = (
+        content: string,
+        references?: Record<number, string>
+    ): string => {
+        let result = content.replace(/\n/g, ' ');
+        if (references) {
+            result = result.replace(/\[(\d+)\]/g, (_, refNumber) => {
+                const link = references[Number(refNumber)];
+                return link ? `[${refNumber}](${link})` : `[${refNumber}]`;
+            });
+        }
+        return result;
+    };
+
+    return (
+        <div style={{ display: 'flex', height: '100vh', backgroundColor: 'black', color: 'white' }}>
+            {/* Left Section - Common Questions */}
+            <div style={{
+                width: '30%',
+                padding: '20px',
+                borderRight: '1px solid #333',
+                overflowY: 'auto',
+                backgroundColor: '#111'
+            }}>
+                <h2 style={{ color: '#007bff', marginBottom: '20px', textAlign: 'center' }}>Common Questions</h2>
+                {commonQuestions.map((question, index) => (
+                    <div key={index} style={{ marginBottom: '15px' }}>
+                        <button
+                            onClick={() => handleQuestionClick(question)}
+                            onMouseEnter={() => setHoveredIndex(index)}
+                            onMouseLeave={() => setHoveredIndex(null)}
+                            style={{
+                                background: 'none',
+                                border: 'none',
+                                padding: '10px',
+                                color: hoveredIndex === index
+                                    ? '#ffffff'  // White text on hover
+                                    : '#007bff', // Original blue text,
+                                cursor: 'pointer',
+                                textAlign: 'left',
+                                width: '100%',
+                                borderRadius: '8px',
+                                fontSize: 'medium',
+                                transition: 'background-color 0.2s',
+                                backgroundColor: hoveredIndex === index
+                                    ? 'rgba(255, 119, 0, 0.85)'
+                                    : 'transparent'
+                            }}
+                        >
+                            {question}
+                        </button>
+                    </div>
+                ))}
+            </div>
+
+            {/* Right Section - Chat Interface */}
+            <div style={{
+                flex: 1,
+                padding: '20px',
+                display: 'flex',
+                flexDirection: 'column',
+                backgroundColor: 'black'
+            }}>
+                <h2 style={{
+                    textAlign: 'center',
+                    marginBottom: '30px',
+                    color: '#007bff'
+                }}>
+                    Chat with Website{' '}
+                    {website && (
+                        <a
+                            href={website}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ color: 'white', textDecoration: 'none' }}
+                        >
+                            {website
+                                .replace(/^https?:\/\/(www\.)?/, '')
+                                .replace(/\.com\/?$/, '')
+                            }
+                        </a>
+                    )}
+                </h2>
+
+                <div style={{
+                    flex: 1,
+                    overflowY: 'auto',
+                    marginBottom: '20px',
+
+                    paddingRight: '10px'
+                }}>
+                    {messages.map((msg, index) => (
+                        msg.role !== 'system' && (
+                            <div
+                                key={index}
+                                style={{
+                                    marginBottom: '15px',
+                                    padding: '15px',
+                                    borderRadius: '12px',
+                                    backgroundColor: msg.role === 'assistant' ? '#222' : '#007bff',
+                                    color: 'white',
+                                    alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                                    maxWidth: '80%',
+                                    border: '1px solid #333'
+                                }}
+                            >
+                                <strong style={{
+                                    display: 'block',
+                                    marginBottom: '8px',
+                                    fontSize: '0.9em'
+                                }}>
+                                    {msg.role === 'user' ? 'You' : 'Bot'}
+                                </strong>
+                                {msg.role === 'assistant' ? (
+                                    <ReactMarkdown
+                                        rehypePlugins={[rehypeRaw]}
+                                        components={{
+                                            ol: ({ node, ...props }) => <ol style={{
+                                                margin: '4px 0',
+                                                paddingLeft: '20px',
+                                                lineHeight: '1.4'
+                                            }} {...props} />,
+                                            li: ({ node, ...props }) => <li style={{
+                                                marginBottom: '4px',
+                                                paddingLeft: '8px'
+                                            }} {...props} />,
+                                            p: ({ node, ...props }) => <p style={{
+                                                margin: '4px 0'
+                                            }} {...props} />
+                                        }}
+                                    >
+                                        {msg.content}
+                                    </ReactMarkdown>
+
+
+                                ) : (
+                                    <div>{msg.content}</div>
+                                )}
+                            </div>
+                        )
+                    ))}
+                    {loading && (
+                        <div style={{
+                            color: '#666',
+                            fontStyle: 'italic',
+                            textAlign: 'center',
+                            padding: '15px'
+                        }}>
+                            Generating response...
+                        </div>
+                    )}
+                </div>
+
+                <form
+                    onSubmit={(e) => handleSubmit(undefined, e)}
+                    style={{
+                        display: 'flex',
+                        gap: '10px',
+                        paddingTop: '20px',
+                        borderTop: '1px solid #333'
+                    }}
+                >
+                    <input
+                        type="text"
+                        value={userQuery}
+                        onChange={(e) => setUserQuery(e.target.value)}
+                        onFocus={() => setIsFocused(true)}
+                        onBlur={() => setIsFocused(false)}
+                        placeholder="Type your question..."
+                        style={{
+                            flex: 1,
+                            padding: '12px',
+                            border: '1px solid #333',
+                            borderRadius: '8px',
+                            fontSize: '16px',
+                            outline: 'none',
+                            backgroundColor: '#111',
+                            color: 'white',
+                            borderColor: isFocused ? '#007bff' : '#333',
+                            boxShadow: isFocused ? '0 0 0 2px rgba(0,123,255,0.25)' : 'none'
+                        }}
+                    />
+                    <button
+                        type="submit"
+                        disabled={loading}
+                        style={{
+                            padding: '12px 24px',
+                            backgroundColor: loading ? '#333' : '#007bff',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '8px',
+                            cursor: loading ? 'not-allowed' : 'pointer',
+                            fontSize: '16px',
+                            transition: 'background-color 0.3s'
+                        }}
+                    >
+                        {loading ? 'Processing...' : 'Ask'}
+                    </button>
+                </form>
+            </div>
+        </div>
+    );
+
+}

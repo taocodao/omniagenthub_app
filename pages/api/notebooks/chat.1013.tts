@@ -1,0 +1,292 @@
+// pages/api/notebooks/chat.ts - FIXED FOR v2.3 HIERARCHY
+
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+import axios, { AxiosError } from 'axios';
+
+const kv = createClient({
+  url: process.env.KV_REST_API_URL!,
+  token: process.env.KV_REST_API_TOKEN!,
+});
+
+// ✅ v2.3 API Configuration with User/Notebook Hierarchy
+const QUIVR_API_URL = process.env.QUIVR_API_URL || 'http://34.29.195.158';
+const QUIVR_API_KEY = process.env.QUIVR_API_KEY || '8f3e9d2a7b6c1e4f5a8d9c2b3e6f7a1b4c5d8e9f2a3b6c7d8e9f1a2b3c4d5e6f';
+
+interface NotebookSource {
+  id: string;
+  title: string;
+  type: 'file' | 'website' | 'text';
+  status: 'uploading' | 'processing' | 'completed' | 'error';
+  progress: number;
+  dateCreated: string;
+  selected: boolean;
+  quivrDocId?: string;
+  fileName?: string;
+  fileType?: string;
+  content?: string;
+}
+
+interface ConversationMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
+  sourcesUsed?: string[];
+  rewrittenQuery?: string;
+}
+
+interface ChatRequest {
+  userKey: string;
+  notebookId: string;
+  query: string;
+  selectedSources?: string[];
+  sources?: NotebookSource[];
+  userAddress: string;
+  conversationHistory?: ConversationMessage[];
+}
+
+interface ChatResponse {
+  success: boolean;
+  response?: string;
+  sourcesUsed?: string[];
+  messageId?: string;
+  timestamp?: string;
+  message?: string;
+  rewrittenQuery?: string;
+  sessionId?: string;
+}
+
+// ✅ v2.3 API Response format
+interface QuivrV23ChatResponse {
+  response: string;
+  rewritten_query?: string;
+  sources: string[];
+  chunks_found?: number;
+}
+
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse<ChatResponse>
+): Promise<void> {
+  if (req.method !== 'POST') {
+    res.status(405).json({ success: false, message: 'Method Not Allowed' });
+    return;
+  }
+
+  try {
+    const {
+      userKey,
+      notebookId,
+      query,
+      selectedSources = [],
+      sources: sourcesFromRequest = [],
+      conversationHistory = [],
+      userAddress,
+    } = req.body as ChatRequest;
+
+    if (!userKey || !query?.trim() || !notebookId || !userAddress) {
+      res.status(400).json({
+        success: false,
+        message: 'Missing required parameters: userKey, query, notebookId, userAddress',
+      });
+      return;
+    }
+
+    console.log('💬 v2.3 chat query:', query);
+    console.log('📋 Selected sources:', selectedSources);
+    console.log('👤 User address:', userAddress);
+    console.log('📖 Notebook ID:', notebookId);
+    console.log('📜 Conversation history length:', conversationHistory.length);
+
+    // Get notebook from KV
+    const notebookKey = `${userKey}:notebook:${notebookId}`;
+    const notebookData = await kv.get(notebookKey);
+
+    if (!notebookData) {
+      res.status(404).json({
+        success: false,
+        message: 'Notebook not found',
+      });
+      return;
+    }
+
+    // ✅ Extract source IDs (not doc IDs) for v2.3 hierarchy
+    const selectedSourceIds: string[] = [];
+    const selectedDocNames: string[] = [];
+    
+    if (selectedSources.length > 0) {
+      console.log('🔍 Processing selected sources for v2.3 hierarchy...');
+      
+      for (const source of sourcesFromRequest) {
+        if (selectedSources.includes(source.id)) {
+          selectedDocNames.push(source.title);
+          selectedSourceIds.push(source.id); // ✅ Use source.id, not quivrDocId
+          console.log(`✅ Selected source: ${source.title} -> ${source.id}`);
+        }
+      }
+    }
+
+    if (selectedSourceIds.length === 0) {
+      res.status(400).json({
+        success: false,
+        message: 'No sources selected. Please select at least one source to chat with.',
+      });
+      return;
+    }
+
+    console.log('📊 Chat summary (v2.3 hierarchy):');
+    console.log(`   User Address: ${userAddress}`);
+    console.log(`   Notebook ID: ${notebookId}`);
+    console.log(`   Selected Source IDs: ${selectedSourceIds.join(', ')}`);
+    console.log(`   Source Names: ${selectedDocNames.join(', ')}`);
+
+    let responseText = '';
+    let sourcesUsed: string[] = [];
+    let rewrittenQuery: string | undefined;
+
+    // ✅ Create unique session ID for conversation tracking
+    const sessionId = `${userAddress}_${notebookId}`;
+
+    // ✅ Query Quivr v2.3 RAG API with hierarchy filtering
+    try {
+      console.log('🚀 Calling Quivr v2.3 /chat endpoint...');
+      
+      // ✅ v2.3 requires: user_address, notebook_id, source_ids (JSON array)
+      const chatParams = new URLSearchParams();
+      chatParams.append('query', query);
+      chatParams.append('user_address', userAddress);           // ✅ REQUIRED
+      chatParams.append('notebook_id', notebookId);             // ✅ REQUIRED
+      chatParams.append('source_ids', JSON.stringify(selectedSourceIds)); // ✅ REQUIRED
+      chatParams.append('top_k', '5');
+
+      console.log(`   Chat URL: ${QUIVR_API_URL}/chat`);
+      console.log(`   Query: ${query}`);
+      console.log(`   User Address: ${userAddress}`);
+      console.log(`   Notebook ID: ${notebookId}`);
+      console.log(`   Source IDs: ${JSON.stringify(selectedSourceIds)}`);
+
+      const chatResponse = await axios.post<QuivrV23ChatResponse>(
+        `${QUIVR_API_URL}/chat`,
+        chatParams,
+        {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-API-Key': QUIVR_API_KEY,
+          },
+          timeout: 60000, // 60 seconds
+        }
+      );
+
+      console.log('✅ v2.3 chat response received');
+      console.log('   Response length:', chatResponse.data.response?.length || 0);
+      console.log('   Rewritten query:', chatResponse.data.rewritten_query);
+      console.log('   Sources returned:', chatResponse.data.sources);
+      console.log('   Chunks found:', chatResponse.data.chunks_found);
+
+      // ✅ v2.3 returns: { response, rewritten_query?, sources: [string], chunks_found? }
+      if (chatResponse.data && chatResponse.data.response) {
+        responseText = chatResponse.data.response;
+        rewrittenQuery = chatResponse.data.rewritten_query;
+        
+        // Sources are already filtered by hierarchy (user → notebook → sources)
+        sourcesUsed = chatResponse.data.sources || selectedDocNames;
+        
+        console.log('✅ Generated response from v2.3 RAG');
+        console.log(`   Query rewriting: ${rewrittenQuery ? 'Yes' : 'No'}`);
+        console.log(`   Sources used: ${sourcesUsed.join(', ')}`);
+        console.log(`   Chunks found: ${chatResponse.data.chunks_found || 0}`);
+        
+      } else {
+        responseText = "I couldn't find relevant information in your selected documents for this query.";
+        sourcesUsed = selectedDocNames;
+        console.log('⚠️ No response in v2.3 API response');
+      }
+
+    } catch (quivrError) {
+      const error = quivrError as AxiosError<{ detail?: any }>;
+      console.error('❌ Quivr v2.3 API error:', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        message: error.message,
+        code: error.code
+      });
+      
+      if (error.response?.status === 422) {
+        console.error('❌ Validation error (422). Missing required fields:');
+        console.error('   Expected: user_address, notebook_id, source_ids');
+        console.error('   Provided:', {
+          user_address: userAddress,
+          notebook_id: notebookId,
+          source_ids: selectedSourceIds
+        });
+        if (error.response?.data?.detail) {
+          console.error('   Backend validation errors:', JSON.stringify(error.response.data.detail, null, 2));
+        }
+        responseText = "Configuration error: Unable to query documents. Please try reloading the page.";
+      } else if (error.response?.status === 401) {
+        responseText = "Authentication failed. Please check API key configuration.";
+      } else if (error.response?.status === 404) {
+        responseText = "No documents found. Please upload some files first.";
+      } else if (error.response?.status === 503) {
+        responseText = "Service unavailable. The RAG service may be starting up.";
+      } else if (error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED') {
+        responseText = "Request timed out. Please try a simpler query.";
+      } else if (error.code === 'ECONNREFUSED') {
+        responseText = "Cannot connect to RAG service. Please check if the service is running.";
+      } else {
+        responseText = "Sorry, I encountered an error. Please try again.";
+      }
+    }
+
+    // ✅ Store conversation history in KV
+    try {
+      const conversationKey = `chat:${userKey}:${notebookId}`;
+      const messageId = `msg_${Date.now()}`;
+      
+      const updatedHistory: ConversationMessage[] = [
+        ...conversationHistory.slice(-10), // Keep last 10 messages
+        {
+          id: `${messageId}_user`,
+          role: 'user',
+          content: query,
+          timestamp: new Date().toISOString(),
+          rewrittenQuery: rewrittenQuery,
+        },
+        {
+          id: `${messageId}_assistant`,
+          role: 'assistant',
+          content: responseText,
+          timestamp: new Date().toISOString(),
+          sourcesUsed: sourcesUsed.length > 0 ? sourcesUsed : selectedDocNames,
+        },
+      ];
+
+      await kv.set(conversationKey, JSON.stringify(updatedHistory), { ex: 86400 }); // Expire in 24 hours
+      console.log('✅ Conversation history saved to KV');
+      console.log(`   Session ID: ${sessionId}`);
+      console.log(`   Messages in history: ${updatedHistory.length}`);
+    } catch (kvError) {
+      console.error('⚠️ Failed to store conversation:', kvError);
+      // Don't fail the request if KV storage fails
+    }
+
+    res.status(200).json({
+      success: true,
+      response: responseText,
+      sourcesUsed: sourcesUsed.length > 0 ? sourcesUsed : selectedDocNames,
+      messageId: `msg_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      rewrittenQuery: rewrittenQuery,
+      sessionId: sessionId,
+    });
+
+  } catch (error) {
+    console.error('❌ Chat handler error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Chat failed: ' + (error instanceof Error ? error.message : 'Unknown error'),
+    });
+  }
+}

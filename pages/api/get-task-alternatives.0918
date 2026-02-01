@@ -1,0 +1,70 @@
+// /pages/api/get-task-alternatives.ts
+
+import { NextApiRequest, NextApiResponse } from 'next';
+import OpenAI from 'openai'; // Import the default export
+
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY!,
+});
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    const { task } = req.body;
+    const model = process.env.GPT_MODEL || 'gpt4o-mini'; // Use 'gpt-3.5-turbo' as default
+
+    if (!task) {
+        return res.status(400).json({ error: 'Task is required.' });
+    }
+
+    try {
+        let alternatives: string[] = [];
+
+        if (model.startsWith('gpt-')) {
+            // For chat models like 'gpt-3.5-turbo' or 'gpt-4'
+            const response = await openai.chat.completions.create({
+                model,
+                messages: [
+                    {
+                        role: 'system',
+                        content: 'You are an assistant that provides concise alternative phrases for tasks.',
+                    },
+                    {
+                        role: 'user',
+                        content: `Please provide six alternative phrases for the task: "${task}".`,
+                    },
+                ],
+                temperature: 0.7,
+                max_tokens: 150,
+            });
+
+            const assistantMessage = response.choices[0]?.message?.content || '';
+
+            // Split and process the assistant's response
+            alternatives = assistantMessage
+                .split('\n')
+                .map((line) => line.replace(/^\d+\.\s*/, '').trim())
+                .filter(Boolean);
+        } else {
+            // For completion models like 'text-davinci-003'
+            const response = await openai.completions.create({
+                model,
+                prompt: `Generate six alternative phrases for the task: "${task}".`,
+                max_tokens: 150,
+                n: 1,
+                temperature: 0.7,
+            });
+
+            const completionText = response.choices[0]?.text || '';
+
+            // Split and process the completion text
+            alternatives = completionText
+                .split('\n')
+                .map((line) => line.replace(/^\d+\.\s*/, '').trim())
+                .filter(Boolean);
+        }
+
+        res.status(200).json({ alternatives });
+    } catch (error) {
+        console.error('Error with OpenAI API:', error);
+        res.status(500).json({ error: 'Failed to generate task alternatives.' });
+    }
+}

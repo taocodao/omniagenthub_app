@@ -1,0 +1,223 @@
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { ApifyClient } from 'apify-client';
+import { Pinecone } from '@pinecone-database/pinecone';
+import { OpenAI } from 'openai';
+import { createClient } from '@vercel/kv';
+import crypto from 'crypto';
+
+// =============================
+//  1. Setup & Constants
+// =============================
+const apifyClient = new ApifyClient({
+    token: process.env.APIFY_API_TOKEN!,
+});
+
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY!,
+});
+
+const pinecone = new Pinecone({
+    apiKey: process.env.PINECONE_API_KEY!,
+});
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+// Index name changed to "user-documents"
+const indexName = 'user-documents';
+
+// =============================
+//  2. Utility Functions
+// =============================
+
+function cleanText(text: string): string {
+    return text.replace(/<[^>]+>/g, '').trim();
+}
+
+function normalizeUrl(url: string): string {
+    return url.replace(/\/$/, '').toLowerCase();
+}
+
+function generateHash(url: string): string {
+    return crypto.createHash('sha256').update(url).digest('hex');
+}
+
+function truncateText(text: string, maxTokens: number): string {
+    const words = text.split(' ');
+    if (words.length > maxTokens) {
+        return words.slice(0, maxTokens).join(' ') + '...';
+    }
+    return text;
+}
+
+async function calculateTokenCount(text: string): Promise<number> {
+    const response = await openai.embeddings.create({
+        model: 'text-embedding-ada-002',
+        input: text,
+    });
+    return response.data[0].embedding.length;
+}
+
+async function getEmbedding(text: string): Promise<number[]> {
+    const response = await openai.embeddings.create({
+        model: 'text-embedding-ada-002',
+        input: text,
+    });
+    return response.data[0].embedding;
+}
+
+/**
+ * Store embedding in Pinecone, using user-based namespaces.
+ *
+ * @param embedding The 1536-dim vector from `getEmbedding`.
+ * @param metadata  The metadata object, including `id`.
+ * @param userId    The user address used as the Pinecone namespace.
+ */
+async function storeEmbedding(embedding: number[], metadata: any, userId: string) {
+    const index = pinecone.Index(indexName);
+    try {
+        // Hash the ID if it's too long
+        const id = metadata.id.length > 512 ? generateHash(metadata.id) : metadata.id;
+
+        const vectors = [
+            {
+                id,
+                values: embedding,
+                metadata,
+            },
+        ];
+
+        // Use the userId as the Pinecone namespace
+        await index.namespace(userId).upsert(vectors);
+
+        console.log(
+            `[${new Date().toISOString()}] Successfully upserted vector with ID "${id}" in user namespace "${userId}".`
+        );
+    } catch (error) {
+        console.error(
+            `[${new Date().toISOString()}] Error in storeEmbedding for ID "${metadata.id}":`,
+            error
+        );
+        throw error;
+    }
+}
+
+// =============================
+//  3. Main Handler
+// =============================
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    // Only POST is allowed
+    if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed' });
+    }
+
+    // We get the user address from the "accountID" header, falling back to 'anonymous'
+    const userId = (req.headers['accountid'] as string) || 'anonymous';
+
+    const { url } = req.body;
+    if (!url) {
+        return res.status(400).json({ error: 'Missing "url" in request body.' });
+    }
+
+    const sitemapUrls = [
+        `${url}/sitemap.xml`,
+        `${url}/page-sitemap.xml`,
+        `${url}/sitemap_index.xml`,
+    ];
+
+    try {
+        const normalizedUrl = normalizeUrl(url);
+        let items: any[] = [];
+        let sitemapCrawlSuccess = false;
+
+        // Attempt to crawl sitemaps
+        for (const sitemapUrl of sitemapUrls) {
+            try {
+                console.log(`Attempting to crawl: ${sitemapUrl}`);
+                const sitemapRun = await apifyClient.actor('apify/website-content-crawler').call({
+                    startUrls: [{ url: sitemapUrl }],
+                    maxCrawlPages: 20,
+                    maxRequestsPerCrawl: 20,
+                    maxCrawlDepth: 1,
+                });
+                const sitemapData = await apifyClient
+                    .dataset(sitemapRun.defaultDatasetId)
+                    .listItems();
+                items = sitemapData.items;
+                sitemapCrawlSuccess = true;
+                break;
+            } catch (error) {
+                console.warn(`Failed to crawl sitemap: ${sitemapUrl}`);
+            }
+        }
+
+        // Fallback if no valid sitemap
+        if (!sitemapCrawlSuccess) {
+            console.warn('No valid sitemap found. Falling back to predefined pages.');
+            const fallbackRun = await apifyClient.actor('apify/website-content-crawler').call({
+                startUrls: [
+                    { url },
+                    { url: `${url}/about` },
+                    { url: `${url}/services` },
+                    { url: `${url}/products` },
+                    { url: `${url}/solutions` },
+                ],
+                maxCrawlPages: 10,
+                maxCrawlDepth: 2,
+            });
+            const fallbackData = await apifyClient.dataset(fallbackRun.defaultDatasetId).listItems();
+            items = fallbackData.items;
+        }
+
+        // Process each scraped page
+        for (const item of items) {
+            // Clean text
+            const cleanedText = cleanText(item.text || '');
+
+            // Possibly truncate if it exceeds ~8192 tokens
+            let truncatedText = cleanedText;
+            try {
+                const tokenCount = await calculateTokenCount(cleanedText);
+                if (tokenCount > 8192) {
+                    truncatedText = truncateText(cleanedText, Math.floor(8192 * 0.9));
+                }
+            } catch (error) {
+                console.error(`Error calculating token count for URL "${item.url}":`, error);
+                continue;
+            }
+
+            // Generate embedding
+            let embedding;
+            try {
+                embedding = await getEmbedding(truncatedText);
+            } catch (error) {
+                console.error(`Error generating embedding for URL "${item.url}":`, error);
+                continue;
+            }
+
+            // Finally, store using the user-based namespace
+            await storeEmbedding(embedding, {
+                id: item.url,
+                text: truncatedText,
+                url: normalizedUrl,
+            }, userId);
+        }
+
+        // Optionally record in KV
+        await kv.set(`website:${normalizedUrl}`, {
+            scrapedAt: new Date().toISOString(),
+            pageCount: items.length,
+        });
+
+        return res
+            .status(200)
+            .json({ message: `Scraped and stored ${items.length} pages for user: ${userId}.` });
+    } catch (error) {
+        console.error('Error:', error);
+        return res
+            .status(500)
+            .json({ error: 'An error occurred while scraping and storing the website content.' });
+    }
+}

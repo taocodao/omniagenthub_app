@@ -1,0 +1,62 @@
+// pages/_app.tsx
+
+import React from 'react';
+import { AppProps } from "next/app";
+import "../styles/globals.css";
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { SharedProvider } from "../context/SharedContext";
+import { LocalizationProvider } from '../util/LocalizationContext';
+import { ThirdwebProvider as ThirdwebProvider1 } from "thirdweb/react"; // From thirdweb/react
+import { inAppWallet } from "thirdweb/wallets";
+import { polygonAmoy, polygon, Chain } from "thirdweb/chains";
+import { ACTIVE_CHAIN, ACCOUNT_FACTORY_ADDRESS } from "../constants/constants";
+import { ToastContainer } from 'react-toastify'; // Import ToastContainer
+import 'react-toastify/dist/ReactToastify.css'; // Import react-toastify CSS
+import { ChatModalProvider } from "../context/ChatModalContext"; // Import ChatModalProvider
+
+// Initialize React Query Client
+const queryClient = new QueryClient();
+
+// Mapping of chain identifiers to Chain objects
+const chainMap: { [key: string]: Chain } = {
+    "polygon-amoy-testnet": polygonAmoy,
+    "polygon": polygon, // Polygon mainnet
+};
+
+// Select the active chain based on the ACTIVE_CHAIN constant
+const activeChain: Chain = chainMap[ACTIVE_CHAIN] || polygon; // Fallback to Polygon mainnet if ACTIVE_CHAIN is undefined
+
+const wallets = [inAppWallet()]; // Define available wallets
+
+const MyApp = ({ Component, pageProps }: AppProps) => {
+    return (
+        <QueryClientProvider client={queryClient}>
+            {/* ThirdwebProvider1 is configured with activeChain and wallets */}
+            <ThirdwebProvider1 >
+                <SharedProvider>
+                    <LocalizationProvider>
+                        {/* Wrap the application with ChatModalProvider */}
+                        <ChatModalProvider>
+                            <Component {...pageProps} />
+                            {/* ToastContainer is placed once here with global configurations */}
+                            <ToastContainer
+                                position="top-right"
+                                autoClose={10000} // 10 seconds
+                                hideProgressBar={false}
+                                newestOnTop={false}
+                                closeOnClick={false} // Prevent closing on click to ensure user interacts with the button
+                                rtl={false}
+                                pauseOnFocusLoss={false}
+                                draggable={false}
+                                pauseOnHover={false}
+                                theme="colored" // Optional: Set theme to match your application
+                            />
+                        </ChatModalProvider>
+                    </LocalizationProvider>
+                </SharedProvider>
+            </ThirdwebProvider1>
+        </QueryClientProvider>
+    );
+};
+
+export default MyApp;

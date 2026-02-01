@@ -1,0 +1,29 @@
+import type { NextApiRequest, NextApiResponse } from "next";
+import { createClient } from "@vercel/kv";
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+export default async function handler(
+    req: NextApiRequest,
+    res: NextApiResponse
+) {
+    if (req.method !== "POST") {
+        return res.status(405).json({ error: "Method not allowed" });
+    }
+
+    const { userAddress, companyName } = req.body as { userAddress: string; companyName: string };
+    if (!userAddress || !companyName) {
+        return res.status(400).json({ error: "userAddress and companyName are required" });
+    }
+
+    try {
+        await kv.set(`companyName:${userAddress.toLowerCase()}`, companyName);
+        return res.status(200).json({ companyName });
+    } catch (error) {
+        console.error("Error setting company name:", error);
+        return res.status(500).json({ error: "Error setting company name" });
+    }
+}

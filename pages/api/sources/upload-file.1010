@@ -1,0 +1,252 @@
+// pages/api/sources/upload-file.ts - FIXED QUIVR INTEGRATION
+
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { IncomingForm, File as FormidableFile } from 'formidable';
+import fs from 'fs';
+import path from 'path';
+import { createClient } from '@vercel/kv';
+import axios, { AxiosError } from 'axios';
+import FormData from 'form-data';
+
+const kv = createClient({
+  url: process.env.KV_REST_API_URL!,
+  token: process.env.KV_REST_API_TOKEN!,
+});
+
+// Quivr RAG API Configuration
+const QUIVR_API_URL = process.env.QUIVR_API_URL || 'http://34.27.192.55';
+const QUIVR_API_KEY = process.env.QUIVR_API_KEY || '8f3e9d2a7b6c1e4f5a8d9c2b3e6f7a1b4c5d8e9f2a3b6c7d8e9f1a2b3c4d5e6f';
+
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
+
+interface NotebookSource {
+  id: string;
+  title: string;
+  type: 'file' | 'website' | 'text';
+  status: 'uploading' | 'processing' | 'completed' | 'error';
+  progress: number;
+  fileSize?: string;
+  dateCreated: string;
+  fileName?: string;
+  selected: boolean;
+  quivrDocName?: string;
+  fileType?: string;
+  content?: string;
+}
+
+interface Notebook {
+  id: string;
+  title: string;
+  sources: NotebookSource[];
+  sourceCount: number;
+  created: string;
+  lastUpdated: string;
+  userAddress: string;
+}
+
+interface UploadResponse {
+  success: boolean;
+  source?: NotebookSource;
+  quivrDocName?: string;
+  message?: string;
+  error?: string;
+}
+
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse<UploadResponse>
+): Promise<void> {
+  if (req.method !== 'POST') {
+    res.status(405).json({ success: false, message: 'Method not allowed' });
+    return;
+  }
+
+  let file: FormidableFile | undefined;
+
+  try {
+    const form = new IncomingForm({
+      uploadDir: path.join(process.cwd(), 'tmp'),
+      keepExtensions: true,
+      maxFileSize: 50 * 1024 * 1024, // 50MB
+    });
+
+    const tmpDir = path.join(process.cwd(), 'tmp');
+    if (!fs.existsSync(tmpDir)) {
+      fs.mkdirSync(tmpDir, { recursive: true });
+    }
+
+    const [fields, files] = await form.parse(req);
+    file = Array.isArray(files.file) ? files.file[0] : files.file;
+
+    const userKey = Array.isArray(fields.userKey) ? fields.userKey[0] : fields.userKey;
+    const sourceId = Array.isArray(fields.sourceId) ? fields.sourceId[0] : fields.sourceId;
+    const notebookId = Array.isArray(fields.notebookId) ? fields.notebookId[0] : fields.notebookId;
+    const userAddress = Array.isArray(fields.userAddress) ? fields.userAddress[0] : fields.userAddress;
+
+    if (!file || !userKey || !sourceId || !notebookId || !userAddress) {
+      if (file?.filepath && fs.existsSync(file.filepath)) {
+        fs.unlinkSync(file.filepath);
+      }
+      res.status(400).json({
+        success: false,
+        error: 'Missing required parameters'
+      });
+      return;
+    }
+
+    console.log('📁 Processing file upload:', file.originalFilename);
+
+    // Get notebook from KV
+    const notebookKey = `${userKey}:notebook:${notebookId}`;
+    const notebookData = await kv.get(notebookKey);
+
+    if (!notebookData) {
+      if (file?.filepath && fs.existsSync(file.filepath)) {
+        fs.unlinkSync(file.filepath);
+      }
+      res.status(404).json({
+        success: false,
+        error: 'Notebook not found'
+      });
+      return;
+    }
+
+    const notebook: Notebook = typeof notebookData === 'string'
+      ? JSON.parse(notebookData)
+      : notebookData as Notebook;
+
+    // ✅ FIX: Sanitize filename ONCE and use consistently
+    const sanitizedFileName = file.originalFilename?.replace(/[^a-zA-Z0-9._-]/g, '_') || `doc_${Date.now()}`;
+    
+    console.log('📤 Uploading file to Quivr RAG API...');
+    console.log(`   Original filename: ${file.originalFilename}`);
+    console.log(`   Sanitized doc name: ${sanitizedFileName}`);
+    
+    const formData = new FormData();
+    const fileStream = fs.createReadStream(file.filepath);
+    
+    formData.append('name', sanitizedFileName);
+    formData.append('file', fileStream, {
+      filename: file.originalFilename || 'document.txt',
+      contentType: file.mimetype || 'text/plain',
+    });
+
+    let quivrDocName: string | undefined;
+    let uploadSuccess = false;
+
+    try {
+      const uploadResponse = await axios.post(
+        `${QUIVR_API_URL}/documents/upload`,
+        formData,
+        {
+          headers: {
+            ...formData.getHeaders(),
+            'X-API-Key': QUIVR_API_KEY,
+          },
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity,
+          timeout: 120000,
+        }
+      );
+
+      console.log('✅ Quivr API Response:', JSON.stringify(uploadResponse.data, null, 2));
+
+      // ✅ FIX: Handle the actual Quivr API response structure
+      if (uploadResponse.data && uploadResponse.status === 200) {
+        // The Quivr API returns: { message, document_name, size, total_documents }
+        quivrDocName = uploadResponse.data.document_name || sanitizedFileName;
+        uploadSuccess = true;
+        console.log(`✅ Successfully uploaded to Quivr with doc name: ${quivrDocName}`);
+      }
+
+    } catch (uploadError) {
+      const error = uploadError as AxiosError<any>;
+      console.error('❌ Quivr upload failed:');
+      console.error('   Status:', error.response?.status);
+      console.error('   Data:', JSON.stringify(error.response?.data, null, 2));
+      console.error('   Message:', error.message);
+      
+      // ✅ FIX: Even if API call fails, still use the sanitized name
+      // This ensures chat.ts can find the document
+      quivrDocName = sanitizedFileName;
+      uploadSuccess = false;
+    }
+
+    // Cleanup temp file
+    if (file?.filepath && fs.existsSync(file.filepath)) {
+      fs.unlinkSync(file.filepath);
+    }
+
+    // ✅ FIX: ALWAYS set quivrDocName, even on failure
+    const source: NotebookSource = {
+      id: sourceId,
+      title: file.originalFilename || 'Unknown File',
+      type: 'file',
+      status: uploadSuccess ? 'completed' : 'error',
+      progress: uploadSuccess ? 100 : 0,
+      fileSize: formatFileSize(file.size),
+      dateCreated: new Date().toLocaleDateString(),
+      fileName: file.originalFilename || undefined,
+      selected: true,
+      quivrDocName: quivrDocName, // ✅ This is now ALWAYS set
+      fileType: path.extname(file.originalFilename || '').toLowerCase(),
+    };
+
+    console.log('📝 Source object created:', JSON.stringify(source, null, 2));
+
+    // Update notebook in KV
+    const existingSources = notebook.sources || [];
+    const existingIndex = existingSources.findIndex((s: NotebookSource) => s.id === sourceId);
+
+    if (existingIndex !== -1) {
+      existingSources[existingIndex] = source;
+    } else {
+      existingSources.push(source);
+    }
+
+    const updatedNotebook: Notebook = {
+      ...notebook,
+      sources: existingSources,
+      sourceCount: existingSources.length,
+      lastUpdated: new Date().toISOString(),
+    };
+
+    await kv.set(notebookKey, JSON.stringify(updatedNotebook));
+
+    console.log('✅ Upload completed - quivrDocName set to:', quivrDocName);
+
+    const message = uploadSuccess 
+      ? 'File uploaded and indexed in Quivr RAG successfully'
+      : 'File processed but Quivr indexing may have failed - chat may still work';
+
+    res.status(200).json({
+      success: true,
+      source,
+      quivrDocName,
+      message,
+    });
+
+  } catch (error) {
+    console.error('❌ Upload error:', error);
+    if (file?.filepath && fs.existsSync(file.filepath)) {
+      fs.unlinkSync(file.filepath);
+    }
+
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Upload failed',
+    });
+  }
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}

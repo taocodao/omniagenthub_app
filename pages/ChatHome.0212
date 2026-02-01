@@ -1,0 +1,1852 @@
+import { useActiveAccount } from "thirdweb/react";
+import styles from "../styles/ChatHome1.module.css";
+import Navbar from "../components/Navbar";
+import { useState, useEffect, useRef, useCallback, useContext, ChangeEvent } from "react";
+import SignIn from "../components/SignIn";
+import RatingComponent from "../components/RatingComponent";
+import Head from "next/head";
+import { useSharedContext } from "../context/SharedContext";
+import { useRouter } from "next/router";
+import ChatBase from "../components/ChatBase";
+import { LocalizedText, getLocalizedString } from "../util/LocalizedText";
+import { LocalizationContext } from "../util/LocalizationContext";
+import { usePayment } from "../hook/Payment_Process";
+import { UPLOAD_FILE_FEE, PLATFORM_NAME } from "../constants/constants";
+import { toast } from "react-toastify";
+import TaskItem from "../components/TaskItem";
+import RoleItem from "../components/RoleItem";
+import axios from "axios";
+
+// Define interfaces
+interface RoleData {
+    department: string;
+    role: string;
+}
+
+interface LocalizedMessages {
+    cleanupSuccess: string;
+    cleanupFailed: string;
+    cleanupError: string;
+    translateFailed: string;
+    uploadSuccess: string;
+    uploadFailed: string;
+}
+
+// EmbeddingItem is the type returned by listEmbeddings endpoint.
+interface EmbeddingItem {
+    key: string;
+    documentName?: string;
+    owner: string;
+    shared: string[];
+    isOwner: boolean;
+}
+
+//
+// ShareManager Component
+// Renders a share button which toggles a dropdown list for the owner.
+// The owner may add or remove shared user IDs using the new endpoints.
+//
+
+// Type for a user entry returned by the APIs.
+interface IUser {
+    userAddress: string;
+    userName: string;
+}
+
+// Type for the embedding item passed from the parent.
+interface EmbeddingItem {
+    key: string;
+    shared: string[]; // list of user addresses with whom the file is shared
+    // add additional fields if needed
+}
+
+// Component props include the current userAddress, the embedding item,
+// a callback to update the shared list, and a callback to close the modal.
+interface ShareManagerProps {
+    userAddress: string;
+    embedding: EmbeddingItem;
+    onUpdateShare: (newShares: string[]) => void;
+    onClose: () => void;
+}
+
+const ShareManager: React.FC<ShareManagerProps> = ({
+    userAddress,
+    embedding,
+    onUpdateShare,
+    onClose,
+}) => {
+    // sharedUsers: users with whom the file is currently shared.
+    const [sharedUsers, setSharedUsers] = useState<IUser[]>([]);
+    // companyUsers: all users from the company.
+    const [companyUsers, setCompanyUsers] = useState<IUser[]>([]);
+    // Selected values for removal and addition.
+    const [selectedSharedUser, setSelectedSharedUser] = useState("");
+    const [selectedCompanyUser, setSelectedCompanyUser] = useState("");
+
+    // Fetch the names of shared users using the provided addresses in embedding.shared.
+    useEffect(() => {
+        const fetchSharedUsers = async () => {
+            try {
+                const userPromises = embedding.shared.map(async (addr) => {
+                    const response = await axios.get(`/api/getUserName?userAddress=${addr}`);
+                    const { userName } = response.data;
+                    return { userAddress: addr, userName };
+                });
+                const shared = await Promise.all(userPromises);
+                setSharedUsers(shared);
+            } catch (error) {
+                console.error("Error fetching shared users:", error);
+            }
+        };
+
+        // Fetch all company users from the API endpoint.
+        const fetchCompanyUsers = async () => {
+            try {
+                const response = await axios.get(`/api/getCompanyUsers?userAddress=${userAddress}`);
+                setCompanyUsers(response.data.users || []);
+            } catch (error) {
+                console.error("Error fetching company users:", error);
+            }
+        };
+
+        fetchSharedUsers();
+        fetchCompanyUsers();
+    }, [embedding.shared, userAddress]);
+
+    // Compute available users by filtering out those already shared and excluding the current user.
+    const availableUsers = companyUsers.filter(
+        (companyUser) =>
+            !sharedUsers.some(
+                (sharedUser) =>
+                    sharedUser.userAddress.toLowerCase() === companyUser.userAddress.toLowerCase()
+            ) && companyUser.userAddress.toLowerCase() !== userAddress.toLowerCase()
+    );
+
+    // Remove a shared user: update the server (simulate with an API call) and then update state.
+    const handleRemoveSharedUser = async () => {
+        if (!selectedSharedUser) return;
+        try {
+            // Call your API to remove the shared user.
+            await axios.delete(
+                `/api/removeSharedUser?userAddress=${userAddress}&sharedUser=${selectedSharedUser}`
+            );
+            const newShared = sharedUsers.filter(
+                (user) => user.userAddress.toLowerCase() !== selectedSharedUser.toLowerCase()
+            );
+            setSharedUsers(newShared);
+            // Also update the embedding's shared list.
+            const updatedSharedAddresses = embedding.shared.filter(
+                (addr) => addr.toLowerCase() !== selectedSharedUser.toLowerCase()
+            );
+            onUpdateShare(updatedSharedAddresses);
+            setSelectedSharedUser("");
+        } catch (error) {
+            console.error("Error removing shared user:", error);
+        }
+    };
+
+    // Add a new shared user.
+    const handleAddSharedUser = async () => {
+        if (!selectedCompanyUser) return;
+        try {
+            // Call your API to add the shared user.
+            await axios.post("/api/addSharedUser", {
+                userAddress,
+                sharedUser: selectedCompanyUser,
+            });
+            // Fetch and construct the new shared user object.
+            const response = await axios.get(`/api/getUserName?userAddress=${selectedCompanyUser}`);
+            const newUser: IUser = { userAddress: selectedCompanyUser, userName: response.data.userName };
+            const updatedSharedUsers = [...sharedUsers, newUser];
+            setSharedUsers(updatedSharedUsers);
+            // Update parent component with the new sharing list.
+            const updatedSharedAddresses = [...embedding.shared, selectedCompanyUser];
+            onUpdateShare(updatedSharedAddresses);
+            setSelectedCompanyUser("");
+        } catch (error) {
+            console.error("Error adding shared user:", error);
+        }
+    };
+
+   
+    return (
+        <div
+            className="modal-overlay"
+            onClick={onClose}
+            style={{
+                position: "fixed",
+                top: 0,
+                left: 0,
+                width: "100vw",
+                height: "100vh",
+                backgroundColor: "rgba(0, 0, 0, 0.5)",
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                zIndex: 1000,
+            }}
+        >
+            <div
+                className="share-manager-modal"
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                    background: "white",
+                    padding: "1.5rem",
+                    borderRadius: "8px",
+                    minWidth: "300px",
+                    maxWidth: "400px",
+                    boxShadow: "0 2px 10px rgba(0,0,0,0.2)",
+                }}
+            >
+                <h3 style={{ marginTop: 0, marginBottom: "1rem", color: "blue" }}>
+                    <LocalizedText name="Manage Sharing" />
+                </h3>
+                <div style={{ marginBottom: "1.5rem" }}>
+                    <label style={{ display: "block", marginBottom: "0.5rem", fontWeight: "bold", color: "blue" }}>
+                        <LocalizedText name="Currently Shared Users" />:
+                    </label>
+                    <select
+                        value={selectedSharedUser}
+                        onChange={(e) => setSelectedSharedUser(e.target.value)}
+                        style={{
+                            width: "100%",
+                            padding: "0.5rem",
+                            marginBottom: "0.5rem",
+                            borderRadius: "4px",
+                            border: "1px solid #ccc",
+                        }}
+                    >
+                        <option value=""><LocalizedText name="Select a user to remove" /></option>
+                        {sharedUsers.map((user) => (
+                            <option key={user.userAddress} value={user.userAddress}>
+                                {user.userName}
+                            </option>
+                        ))}
+                    </select>
+                    <button
+                        onClick={handleRemoveSharedUser}
+                        disabled={!selectedSharedUser}
+                        style={{
+                            padding: "0.5rem 1rem",
+                            backgroundColor: "red",
+                            color: "white",
+                            border: "none",
+                            borderRadius: "4px",
+                            cursor: selectedSharedUser ? "pointer" : "not-allowed",
+                        }}
+                    >
+                        <LocalizedText name="Remove" />
+                    </button>
+                </div>
+                <div>
+                    <label style={{ display: "block", marginBottom: "0.5rem", fontWeight: "bold", color: "blue" }}>
+                        <LocalizedText name="Available Company Users" />:
+                    </label>
+                    <select
+                        value={selectedCompanyUser}
+                        onChange={(e) => setSelectedCompanyUser(e.target.value)}
+                        style={{
+                            width: "100%",
+                            padding: "0.5rem",
+                            marginBottom: "0.5rem",
+                            borderRadius: "4px",
+                            border: "1px solid #ccc",
+                        }}
+                    >
+                        <option value=""><LocalizedText name="Select a user to add" /></option>
+                        {availableUsers.map((user) => (
+                            <option key={user.userAddress} value={user.userAddress}>
+                                {user.userName}
+                            </option>
+                        ))}
+                    </select>
+                    <button
+                        onClick={handleAddSharedUser}
+                        disabled={!selectedCompanyUser}
+                        style={{
+                            padding: "0.5rem 1rem",
+                            backgroundColor: "green",
+                            color: "white",
+                            border: "none",
+                            borderRadius: "4px",
+                            cursor: selectedCompanyUser ? "pointer" : "not-allowed",
+                        }}
+                    >
+                        <LocalizedText name="Add" />
+                    </button>
+                </div>
+                <button
+                    onClick={onClose}
+                    style={{
+                        marginTop: "1.5rem",
+                        padding: "0.5rem 1rem",
+                        backgroundColor: "blue",
+                        color: "white",
+                        border: "none",
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                    }}
+                >
+                    <LocalizedText name="Close" />
+                </button>
+            </div>
+        </div>
+    );
+
+};
+
+
+//
+// ChatHome Component
+//
+const ChatHome: React.FC = () => {
+    const { language, setLanguage } = useContext(LocalizationContext);
+    const account = useActiveAccount();
+    const address = account?.address;
+    const [selectedRole, setSelectedRole] = useState<RoleData | null>(null);
+    const [roles, setRoles] = useState<RoleData[]>([]);
+    const [tasks, setTasks] = useState<string[]>([]);
+    const [selectedTask, setSelectedTask] = useState<string | null>(null);
+    const [isRatingModalOpen, setIsRatingModalOpen] = useState(false);
+    const [scrapeStatus, setScrapeStatus] = useState<string>("");
+    const [scrapeStatuses, setScrapeStatuses] = useState<{ url: string; scrapedAt: string }[]>([]);
+
+    const { freeChatsLeft, setFreeChatsLeft, freeUploadsLeft, setFreeUploadsLeft, freeCustomGPTLeft, setFreeCustomGPTLeft } = useSharedContext();
+
+    const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
+    const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+    const [modalContent, setModalContent] = useState("");
+    // isModalOpen controls the file-upload modal visibility
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const router = useRouter();
+    const roleButtonRef = useRef<HTMLDivElement>(null);
+    const taskButtonRef = useRef<HTMLDivElement>(null);
+    const [selectedFile, setSelectedFile] = useState<File | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const [isRoleDropdownOpen, setIsRoleDropdownOpen] = useState(false);
+    const [isTaskDropdownOpen, setIsTaskDropdownOpen] = useState(false);
+    const [textInput, setTextInput] = useState("");
+    // Language dropdown is removed from the modal; we use the stored language.
+    const [selectedLanguage, setSelectedLanguage] = useState<string>("English");
+    const [languages, setLanguages] = useState<string[]>([]);
+    const [taskDescription, setTaskDescription] = useState<string | null>(null);
+    const [hoveredTask, setHoveredTask] = useState<string | null>(null);
+    const { process_payment, isPaymentProcessing } = usePayment();
+    const [isTaskModalVisible, setIsTaskModalVisible] = useState(false);
+    const [modalPosition, setModalPosition] = useState({ top: 0, left: 0 });
+    const [isTooltipVisible, setIsTooltipVisible] = useState(false);
+    const modalRef = useRef<HTMLDivElement>(null);
+    const [activeButton, setActiveButton] = useState<string | null>(null);
+    const [isRoleModalVisible, setIsRoleModalVisible] = useState(false);
+    const [roleModalPosition, setRoleModalPosition] = useState({ top: 0, left: 0 });
+    const [roleDescription, setRoleDescription] = useState<string | null>(null);
+    const [activeRoleButton, setActiveRoleButton] = useState<string | null>(null);
+    const hasAddedFavoriteFromURL = useRef(false);
+    const [selectedDepartment, setSelectedDepartment] = useState<string | null>(null);
+    const [isFavoriteTasksLoaded, setIsFavoriteTasksLoaded] = useState<boolean>(false);
+    const [isChatRunning, setIsChatRunning] = useState(false);
+    const [favoriteTasks, setFavoriteTasks] = useState<string[]>([]);
+    const [isRunButtonDisabled, setIsRunButtonDisabled] = useState(false);
+    const [isRunButtonHovered, setIsRunButtonHovered] = useState(false);
+    const [showShareManager, setShowShareManager] = useState(false);
+    const [openShareManagerKey, setOpenShareManagerKey] = useState<string | null>(null);
+
+    // NEW: Define availableEmbeddings (using our EmbeddingItem interface)
+    const [availableEmbeddings, setAvailableEmbeddings] = useState<EmbeddingItem[]>([]);
+    // Selected embeddings (by key) that the user wants to include in the Q&A context.
+    const [selectedEmbeddings, setSelectedEmbeddings] = useState<string[]>([]);
+
+    // New state for file upload: upload name
+    const [uploadName, setUploadName] = useState<string>("");
+
+    // Check for upload name uniqueness before uploading.
+    const checkUploadNameExists = async (name: string): Promise<boolean> => {
+        try {
+            const res = await fetch(`/api/checkUploadName?name=${encodeURIComponent(name)}&userAddress=${address}`);
+            if (res.ok) {
+                const data = await res.json();
+                return data.exists;
+            }
+            return false;
+        } catch (error) {
+            console.error("Error checking upload name:", error);
+            return false;
+        }
+    };
+    // ============================
+    // NEW STATE AND HELPER FUNCTIONS (add near your other useState hooks)
+    // ============================
+    const [userSelectedSources, setUserSelectedSources] = useState<string[]>([]);
+
+    const fetchUserSelectedSources = async () => {
+        if (!address) return;
+        try {
+            const res = await fetch(`/api/selectedSources/get?userAddress=${address}`);
+            if (res.ok) {
+                const data = await res.json();
+                console.log("[fetchUserSelectedSources] Retrieved:", data.selectedSources);
+                setUserSelectedSources(data.selectedSources || []);
+            }
+        } catch (error) {
+            console.error("Error fetching selected sources:", error);
+        }
+    };
+
+    const handleAddSource = async (sourceKey: string) => {
+        if (!address) return;
+        try {
+            const res = await fetch("/api/selectedSources/add", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ userAddress: address, sourceKey }),
+            });
+            if (res.ok) {
+                const data = await res.json();
+                console.log("[handleAddSource] Updated selected sources:", data.selectedSources);
+                setUserSelectedSources(data.selectedSources);
+            }
+        } catch (error) {
+            console.error("Error adding source:", error);
+        }
+    };
+
+    const handleRemoveSource = async (sourceKey: string) => {
+        if (!address) return;
+        try {
+            const res = await fetch("/api/selectedSources/remove", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ userAddress: address, sourceKey }),
+            });
+            if (res.ok) {
+                const data = await res.json();
+                console.log("[handleRemoveSource] Updated selected sources:", data.selectedSources);
+                setUserSelectedSources(data.selectedSources);
+            }
+        } catch (error) {
+            console.error("Error removing source:", error);
+        }
+    };
+
+    // Fetch the selected sources when the modal opens:
+    useEffect(() => {
+        if (isModalOpen && address) {
+            fetchUserSelectedSources();
+        }
+    }, [isModalOpen, address]);
+
+
+    const handleDescriptionMouseEnter = () => {
+        setIsTooltipVisible(true);
+    };
+
+    const handleDescriptionMouseLeave = () => {
+        setIsTooltipVisible(false);
+    };
+
+    // Fetch and set user perks
+    const fetchUserPerks = useCallback(async () => {
+        if (!address) return;
+        try {
+            const response = await fetch(`/api/get-user-perks?userAddress=${encodeURIComponent(address)}`);
+            if (response.ok) {
+                const data = await response.json();
+                setFreeChatsLeft(data.freeTrades);
+                setFreeUploadsLeft(data.freeUploads);
+                setFreeCustomGPTLeft(data.freeCustomGPT);
+            } else {
+                const errorData = await response.json();
+                toast.error(errorData.message || "Failed to retrieve perks.");
+            }
+        } catch (error) {
+            console.error("Error fetching user perks:", error);
+            toast.error("An unexpected error occurred while fetching perks.");
+        }
+    }, [address]);
+
+    // Fetch available embeddings from the backend
+    useEffect(() => {
+        if (isModalOpen && address) {
+            fetch(`/api/listEmbeddings?userAddress=${address}`)
+                .then((res) => res.json())
+                .then((data) => {
+                    // data.embeddings is expected to be an array of EmbeddingItem objects
+                    setAvailableEmbeddings(data.embeddings || []);
+                })
+                .catch((error) => console.error("Error fetching embeddings list:", error));
+        }
+    }, [isModalOpen, address]);
+
+
+
+    // Fetch the user's current selected sources from the new API endpoint.
+    useEffect(() => {
+        if (isModalOpen && address) {
+            fetch(`/api/selectedSources/get?userAddress=${address}`)
+                .then((res) => res.json())
+                .then((data) => {
+                    setSelectedEmbeddings(data.selectedSources || []);
+                })
+                .catch((err) => console.error("Error fetching selected sources:", err));
+        }
+    }, [isModalOpen, address]);
+
+    // Handle changes to the embedding checkbox by calling the add/remove endpoints.
+    const handleEmbeddingCheckboxChange = async (embeddingKey: string, checked: boolean) => {
+        if (!address) return;
+        try {
+            if (checked) {
+                const res = await fetch("/api/selectedSources/add", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ userAddress: address, sourceKey: embeddingKey }),
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    setSelectedEmbeddings(data.selectedSources);
+                } else {
+                    toast.error("Failed to add selected embedding");
+                }
+            } else {
+                const res = await fetch("/api/selectedSources/remove", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ userAddress: address, sourceKey: embeddingKey }),
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    setSelectedEmbeddings(data.selectedSources);
+                } else {
+                    toast.error("Failed to remove selected embedding");
+                }
+            }
+        } catch (error) {
+            console.error("Error updating selected embedding:", error);
+        }
+    };
+
+
+    // (Optional) Update scrapeStatuses if needed
+    useEffect(() => {
+        if (isModalOpen && address) {
+            fetch(`/api/get-scrape-status?userAddress=${address}`)
+                .then((res) => res.json())
+                .then((data) => {
+                    setScrapeStatuses(data);
+                })
+                .catch((error) => {
+                    console.error("Error fetching scrape statuses:", error);
+                });
+        }
+    }, [isModalOpen, address]);
+
+    useEffect(() => {
+        if (address) {
+            fetchUserPerks();
+        } else {
+            setFreeChatsLeft(null);
+            setFreeUploadsLeft(null);
+            setFreeCustomGPTLeft(null);
+        }
+    }, [address, fetchUserPerks]);
+
+    const addFavorite = useCallback(
+        async (task: string) => {
+            if (!address || !selectedRole) return;
+            if (favoriteTasks.includes(task)) return;
+            try {
+                const response = await fetch("/api/add-task-favorite", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        userAddress: address,
+                        department: selectedRole.department,
+                        role: selectedRole.role,
+                        task: task,
+                    }),
+                });
+                if (!response.ok) throw new Error("Failed to add favorite task");
+                setFavoriteTasks((prev) => [...prev, task]);
+                toast.info(<LocalizedText name={`Task ${task} Favorited`} />, {
+                    style: { backgroundColor: "#4CAF50", color: "#fff" },
+                });
+            } catch (error) {
+                console.error("Error adding favorite task:", error);
+                toast.error(<LocalizedText name="Failed To Update Favorite" />);
+            }
+        },
+        [address, selectedRole, favoriteTasks]
+    );
+
+    const fetchFavoriteTasks = async () => {
+        if (!address || !selectedRole) return;
+        try {
+            const response = await fetch("/api/get-task-favorites", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    userAddress: address,
+                    department: selectedRole.department,
+                    role: selectedRole.role,
+                }),
+            });
+            if (!response.ok) throw new Error("Failed to fetch favorite tasks");
+            const data = await response.json();
+            setFavoriteTasks(data.favoriteTasks || []);
+        } catch (error) {
+            console.error("Error fetching favorite tasks:", error);
+        } finally {
+            setIsFavoriteTasksLoaded(true);
+        }
+    };
+
+    useEffect(() => {
+        fetchFavoriteTasks();
+    }, [selectedRole, address]);
+
+    const toggleFavorite = useCallback(
+        async (task: string) => {
+            if (!address || !selectedRole) return;
+            const isFavorited = favoriteTasks.includes(task);
+            const endpoint = isFavorited ? "/api/remove-task-favorite" : "/api/add-task-favorite";
+            try {
+                const response = await fetch(endpoint, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        userAddress: address,
+                        department: selectedRole.department,
+                        role: selectedRole.role,
+                        task: task,
+                    }),
+                });
+                if (!response.ok) throw new Error("Failed to update favorite task");
+                if (isFavorited) {
+                    setFavoriteTasks((prev) => prev.filter((t) => t !== task));
+                } else {
+                    setFavoriteTasks((prev) => [...prev, task]);
+                }
+                toast.info(
+                    !isFavorited ? (
+                        <LocalizedText name={`Task ${task} Favorited`} />
+                    ) : (
+                        <LocalizedText name={`Task ${task} Unfavorited`} />
+                    ),
+                    { style: { backgroundColor: !isFavorited ? "#4CAF50" : "#F44336", color: "#fff" } }
+                );
+            } catch (error) {
+                console.error("Error updating favorite task:", error);
+                toast.error(<LocalizedText name="Failed To Update Favorite" />);
+            }
+        },
+        [address, selectedRole, favoriteTasks]
+    );
+
+    const handleTaskChange = (task: string) => {
+        setSelectedTask(task);
+        setIsTaskDropdownOpen(false);
+        setIsTaskModalVisible(false);
+        setIsRoleModalVisible(false);
+        setIsChatRunning(false);
+        setIsRunButtonDisabled(false);
+    };
+
+    const handleDescriptionClick = async (event: React.MouseEvent<HTMLButtonElement>, task: string) => {
+        event.stopPropagation();
+        setIsRoleModalVisible(false);
+        setTaskDescription(null);
+        setActiveButton(task);
+        const targetElement = event.currentTarget;
+        if (!targetElement) {
+            console.error("event.currentTarget is null");
+            return;
+        }
+        const rect = targetElement.getBoundingClientRect();
+        setModalPosition({ top: rect.top + window.scrollY, left: rect.right + 10 + window.scrollX });
+        setIsTaskModalVisible(true);
+        if (!selectedRole) {
+            console.error("selectedRole is null");
+            return;
+        }
+        if (taskDescription && activeButton === task) return;
+        try {
+            const response = await fetch("/api/get_task_description", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    department: selectedRole.department,
+                    role: selectedRole.role,
+                    task,
+                    language: selectedLanguage,
+                }),
+            });
+            if (!response.ok) throw new Error("Failed to fetch task description");
+            const data = await response.json();
+            setTaskDescription(data.description);
+        } catch (error) {
+            console.error("Error fetching task description:", error);
+            setTaskDescription("");
+        }
+    };
+
+    const handleRoleDescriptionClick = async (event: React.MouseEvent<HTMLButtonElement>, roleData: { department: string; role: string }) => {
+        event.stopPropagation();
+        setRoleDescription(null);
+        const { department, role } = roleData;
+        const uniqueKey = `${department}:${role}`;
+        setActiveRoleButton(uniqueKey);
+        const targetElement = event.currentTarget;
+        if (!targetElement) {
+            console.error("event.currentTarget is null");
+            return;
+        }
+        const rect = targetElement.getBoundingClientRect();
+        setRoleModalPosition({ top: rect.top - 100 + window.scrollY, left: rect.left - 465 + window.scrollX });
+        setIsRoleModalVisible(true);
+        try {
+            const response = await fetch("/api/get_role_description", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ department, role, language: selectedLanguage }),
+            });
+            if (!response.ok) throw new Error("Failed to fetch role description");
+            const data = await response.json();
+            setRoleDescription(data.description);
+        } catch (error) {
+            console.error("Error fetching role description:", error);
+            setRoleDescription("");
+        }
+    };
+
+    const toggleTaskDropdown = () => {
+        if (isTaskDropdownOpen) {
+            handleCloseDropdown();
+        } else {
+            setIsTaskDropdownOpen(true);
+        }
+        setIsRoleDropdownOpen(false);
+    };
+
+    const toggleRoleDropdown = () => {
+        setIsRoleDropdownOpen(!isRoleDropdownOpen);
+        setIsTaskDropdownOpen(false);
+    };
+
+    const handleCloseModal = () => {
+        setIsTaskDropdownOpen(false);
+        setIsRoleDropdownOpen(false);
+    };
+
+    const handleClickOutside = useCallback((event: MouseEvent) => {
+        if (
+            taskButtonRef.current &&
+            !taskButtonRef.current.contains(event.target as Node) &&
+            modalRef.current &&
+            !modalRef.current.contains(event.target as Node)
+        ) {
+            handleCloseDropdown();
+        }
+    }, []);
+
+    const handleCloseDropdown = () => {
+        setIsTaskDropdownOpen(false);
+        setIsTaskModalVisible(false);
+        setActiveButton(null);
+        setActiveRoleButton(null);
+        setIsRoleModalVisible(false);
+    };
+
+    const initializeContent = async () => {
+        const fetchLanguages = async () => {
+            try {
+                const response = await fetch("/api/get_all_languages");
+                if (response.ok) {
+                    const langs: string[] = await response.json();
+                    setLanguages(Array.from(new Set(langs)));
+                }
+            } catch (error) {
+                console.error("Error fetching languages:", error);
+            }
+        };
+
+        const fetchUserLanguage = async () => {
+            if (address) {
+                try {
+                    const response = await fetch(`/api/get_user_language?userAddress=${address}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.language) {
+                            setSelectedLanguage(data.language);
+                            setLanguage(data.language);
+                        } else {
+                            setSelectedLanguage("English");
+                            setLanguage("English");
+                        }
+                    }
+                } catch (error) {
+                    console.error("Failed to fetch user language:", error);
+                    setSelectedLanguage("English");
+                }
+            }
+        };
+
+        await fetchLanguages();
+        await fetchUserLanguage();
+    };
+
+    useEffect(() => {
+        initializeContent();
+    }, [address]);
+
+    useEffect(() => {
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+        };
+    }, [handleClickOutside]);
+
+    useEffect(() => {
+        if (address) {
+            fetchRoles();
+        }
+        fetchAvailableLanguages();
+    }, [address]);
+
+    useEffect(() => {
+        const fetchTaskDescription = async (task: string, retries = 3) => {
+            try {
+                const response = await fetch("/api/get_task_description", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        department: selectedRole?.department,
+                        role: selectedRole?.role,
+                        task,
+                        language: selectedLanguage,
+                    }),
+                });
+                if (!response.ok) throw new Error("Failed to fetch task description");
+                const data = await response.json();
+                setTaskDescription(data.description);
+            } catch (error) {
+                console.error("Error fetching task description:", error);
+                if (retries > 0) {
+                    setTimeout(() => fetchTaskDescription(task, retries - 1), 1000);
+                } else {
+                    setTaskDescription("Error fetching .");
+                }
+            }
+        };
+
+        if (isTaskModalVisible && activeButton && !taskDescription) {
+            fetchTaskDescription(activeButton);
+        }
+    }, [isTaskModalVisible, activeButton, selectedRole, selectedLanguage, taskDescription]);
+
+    useEffect(() => {
+        const initializeData = async () => {
+            if (router.query.selectedRole && router.query.selectedCategory) {
+                const selectedRoleData: RoleData = {
+                    role: router.query.selectedRole as string,
+                    department: router.query.selectedCategory as string,
+                };
+                setSelectedRole(selectedRoleData);
+                await fetchTasks(selectedRoleData.department, selectedRoleData.role);
+                if (router.query.selectedTask) {
+                    setSelectedTask(router.query.selectedTask as string);
+                    try {
+                        const response = await fetch("/api/add-role-mapping", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                userAddress: address,
+                                department: selectedRoleData.department,
+                                role: selectedRoleData.role,
+                            }),
+                        });
+                        if (!response.ok) {
+                            throw new Error("Failed to add role mapping");
+                        }
+                        if (router.query.language && typeof router.query.language === "string") {
+                            const languageFromURL = router.query.language;
+                            setSelectedLanguage(languageFromURL);
+                            setLanguage(languageFromURL);
+                        }
+                    } catch (error) {
+                        console.error(`Error adding role mapping:`, error);
+                    }
+                    setIsChatRunning(false);
+                } else {
+                    setSelectedTask(null);
+                }
+            }
+            if (router.query.language && typeof router.query.language === "string") {
+                const languageFromURL = router.query.language;
+                setSelectedLanguage(languageFromURL);
+                setLanguage(languageFromURL);
+            }
+        };
+        initializeData();
+    }, [router.query]);
+
+    const fetchRoles = async () => {
+        try {
+            const response = await fetch("/api/get-role-by-address", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ address }),
+            });
+            if (!response.ok) throw new Error("Failed to fetch roles");
+            const rolesData = await response.json();
+            setRoles(rolesData);
+        } catch (error) {
+            console.error("Error fetching roles:", error);
+        }
+    };
+
+    const fetchTasks = async (department: string, role: string): Promise<void> => {
+        try {
+            const response = await fetch("/api/get-tasks", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ department, role }),
+            });
+            if (!response.ok) throw new Error("Failed to fetch tasks");
+            const tasksData = await response.json();
+            setTasks(tasksData.tasks);
+        } catch (error) {
+            console.error("Error fetching tasks:", error);
+        }
+    };
+
+    const fetchAvailableLanguages = async () => {
+        try {
+            const response = await fetch("/api/get_all_languages");
+            if (!response.ok) throw new Error("Failed to fetch languages");
+            const langs = await response.json();
+            //setAvailableLanguages(langs);
+        } catch (error) {
+            console.error("Error fetching languages:", error);
+        }
+    };
+
+    const handleRoleChange = (role: RoleData) => {
+        setSelectedRole(role);
+        setSelectedTask(null);
+        fetchTasks(role.department, role.role);
+        setIsRoleDropdownOpen(false);
+        setIsChatRunning(false);
+    };
+
+    useEffect(() => {
+        if (selectedRole && selectedRole.role && selectedRole.department) {
+            fetchRoleDescription(selectedRole.department, selectedRole.role);
+        }
+    }, [selectedRole]);
+
+    const fetchRoleDescription = async (department: string, role: string) => {
+        try {
+            const response = await fetch(`/api/role-description?department=${department}&role=${role}`);
+            if (response.ok) {
+                const data = await response.json();
+                setRoleDescription(data.description);
+            } else {
+                setRoleDescription("The persona description is currently unavailable. Please try again later");
+            }
+        } catch (error) {
+            console.error("Error fetching role description:", error);
+            setRoleDescription("Error fetching persona description");
+        }
+    };
+
+    const handleOpenModal = () => setIsModalOpen(true);
+    const handleCloseFileModal = () => setIsModalOpen(false);
+
+    // ─── Define handleUpload for file upload modal ─────
+    const handleUpload = async () => {
+        setIsLoading(true);
+        try {
+            if (!address) {
+                toast.info(await getLocalizedString("Please connect your wallet.", selectedLanguage));
+                return;
+            }
+            if (!uploadName.trim()) {
+                toast.info(await getLocalizedString("Please input the upload name.", selectedLanguage));
+                return;
+            }
+            // Check if the upload name already exists.
+            const nameExists = await checkUploadNameExists(uploadName.trim());
+            if (nameExists) {
+                const overwrite = window.confirm("This upload name already exists. Do you want to overwrite it?");
+                if (!overwrite) {
+                    toast.info("Please choose a different upload name.");
+                    setIsLoading(false);
+                    return;
+                }
+            }
+            if (!textInput.trim()) {
+                toast.info(await getLocalizedString("Please input the content.", selectedLanguage));
+                return;
+            }
+            const uploadFee = UPLOAD_FILE_FEE;
+            const paymentSuccessful = await process_payment(address, uploadFee, PLATFORM_NAME);
+            if (!paymentSuccessful) {
+                toast.error(await getLocalizedString("Insufficient balance or payment failed. Please try again.", selectedLanguage));
+                return;
+            }
+            let finalText = textInput;
+            // Always translate to English if needed.
+            if (selectedLanguage.toLowerCase() !== "english") {
+                try {
+                    const response = await fetch("/api/translate", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            name: uploadName,
+                            description: textInput,
+                            fromLanguage: selectedLanguage,
+                            toLanguage: "English",
+                        }),
+                    });
+                    if (!response.ok) throw new Error("Translation failed");
+                    const result = await response.json();
+                    finalText = result.translatedText;
+                } catch (error) {
+                    console.error("Error translating text:", error);
+                }
+            }
+            // Call /api/uploadFile with the upload name, text, etc.
+            const response = await fetch("/api/uploadFile", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "User-Address": address,
+                },
+                body: JSON.stringify({
+                    name: uploadName.trim(),
+                    text: finalText,
+                    sharedUserIds: [], // The backend will add the owner's ID automatically.
+                }),
+            });
+            if (!response.ok) {
+                throw new Error("Failed to upload text");
+            }
+            toast.success(await getLocalizedString("Text uploaded successfully", selectedLanguage));
+            // Reset upload fields
+            setUploadName("");
+            setTextInput("");
+            handleCloseFileModal();
+        } catch (error) {
+            console.error("Error uploading text:", error);
+            toast.error(await getLocalizedString("Error uploading text. Please try again.", selectedLanguage));
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    // Local state for loading and placeholder text
+    const [isLoading, setIsLoading] = useState(false);
+    const [localizedPlaceholder, setLocalizedPlaceholder] = useState("Type or paste your text here...");
+
+    useEffect(() => {
+        const updatePlaceholder = async () => {
+            const placeholderText = await getLocalizedString("Type or paste your text here...", selectedLanguage);
+            setLocalizedPlaceholder(placeholderText);
+        };
+        updatePlaceholder();
+    }, [selectedLanguage]);
+
+    const [localizedMessages, setLocalizedMessages] = useState<LocalizedMessages>({
+        cleanupSuccess: "Embedding segment cleaned up successfully",
+        cleanupFailed: "Embedding segment not found or already clean up",
+        cleanupError: "Error occurred while cleaning up embedding segment",
+        translateFailed: "Failed to translate text. Uploading original text.",
+        uploadSuccess: "Text uploaded successfully",
+        uploadFailed: "Failed to upload text. Please try again.",
+    });
+
+    useEffect(() => {
+        const updateLocalizedMessages = async () => {
+            const updatedMessages: Partial<LocalizedMessages> = {};
+            for (const [key, message] of Object.entries(localizedMessages)) {
+                updatedMessages[key as keyof LocalizedMessages] = await getLocalizedString(message, selectedLanguage);
+            }
+            setLocalizedMessages((prevMessages) => ({
+                ...prevMessages,
+                ...updatedMessages,
+            }));
+        };
+        updateLocalizedMessages();
+    }, [selectedLanguage]);
+
+    useEffect(() => {
+        const addFavoriteFromURL = async () => {
+            if (
+                selectedTask &&
+                selectedRole &&
+                isFavoriteTasksLoaded &&
+                !hasAddedFavoriteFromURL.current &&
+                !favoriteTasks.includes(selectedTask)
+            ) {
+                await addFavorite(selectedTask);
+                hasAddedFavoriteFromURL.current = true;
+            }
+        };
+        addFavoriteFromURL();
+    }, [selectedTask, selectedRole, addFavorite, isFavoriteTasksLoaded]);
+
+    const [siteUrl, setSiteUrl] = useState("");
+
+    const handleLoadData = async () => {
+        setIsLoading(true);
+        setScrapeStatus("Scraping in progress...");
+        toast.info(await getLocalizedString("Scraping in progress...", language));
+        try {
+            if (!address) {
+                toast.info(await getLocalizedString("Please connect your wallet.", language));
+                return;
+            }
+            if (!siteUrl.trim()) {
+                toast.info(await getLocalizedString("Please enter a valid website URL.", language));
+                return;
+            }
+            const scrapeFee = 2 * UPLOAD_FILE_FEE;
+            const paymentSuccessful = await process_payment(address, scrapeFee, PLATFORM_NAME);
+            if (!paymentSuccessful) {
+                toast.error(await getLocalizedString("Insufficient balance or payment failed. Please try again.", language));
+                return;
+            }
+            try {
+                const response = await fetch("/api/scrape_web", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        accountID: address,
+                    },
+                    body: JSON.stringify({ url: siteUrl }),
+                });
+                if (!response.ok) {
+                    throw new Error("Failed to scrape website");
+                }
+                const data = await response.json();
+                const scrapeTime = new Date().toLocaleString();
+                setScrapeStatus(`Scraped ${siteUrl} at ${scrapeTime}`);
+                toast.success(await getLocalizedString(`Scrape successful: ${data.message}`, language));
+            } catch (error) {
+                console.error("Error scraping website:", error);
+                toast.error(await getLocalizedString("Error scraping website: " + error, language));
+                setScrapeStatus("Scraping failed.");
+            }
+        } catch (error) {
+            console.error("Unexpected error during scraping:", error);
+            toast.error(await getLocalizedString("An unexpected error occurred during scraping.", language));
+            setScrapeStatus("Scraping encountered an error.");
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleExecuteTask = async (e: React.MouseEvent<HTMLButtonElement>) => {
+        e.stopPropagation();
+        if (isRunButtonDisabled) return;
+        setIsRunButtonDisabled(true);
+        if (!selectedRole) {
+            toast.error(await getLocalizedString("Please select a persona.", language));
+            setIsRunButtonDisabled(false);
+            return;
+        }
+        try {
+            const response = await fetch("/api/get-role-mappings", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    department: selectedRole.department,
+                    role: selectedRole.role,
+                }),
+            });
+            if (!response.ok) {
+                throw new Error("Failed to get role mapping");
+            }
+            const roleMapping = await response.json();
+            const executionFee = roleMapping.price;
+            process_payment(address!, executionFee, roleMapping.user).catch((error) => {
+                console.error("Payment process error:", error);
+            });
+        } catch (error) {
+            console.error("Error fetching role mapping:", error);
+            toast.error(await getLocalizedString("Error processing payment for role.", language));
+            setIsRunButtonDisabled(false);
+            return;
+        }
+        setIsChatRunning(true);
+    };
+
+    const handleCleanup = async () => {
+        if (!address) return;
+        try {
+            const response = await fetch("/api/cleanup_embedding", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ namespace: address }),
+            });
+            if (response.ok) {
+                toast.info(await getLocalizedString("Embedding segment cleaned up successfully", language));
+            } else {
+                console.error("Failed to clean up embedding segment");
+                toast.info(await getLocalizedString("Failed to clean up embedding segment", language));
+            }
+        } catch (error) {
+            console.error("Error cleaning up embedding segment:", error);
+            toast.info(await getLocalizedString("Error cleaning up embedding segment:" + error, language));
+        }
+    };
+
+    useEffect(() => {
+        setSelectedLanguage(language);
+    }, [language]);
+
+    // Note: The language drop-down has been removed from the upload modal.
+    const handleLanguageChange = async (event: ChangeEvent<HTMLSelectElement>) => {
+        const newLanguage = event.target.value;
+        setSelectedLanguage(newLanguage);
+    };
+
+    return (
+        <>
+            <Head>
+                <title>Web3AIstore</title>
+                <link rel="icon" href="/favicon.ico" />
+            </Head>
+            <main className={styles.main}>
+                <div className={styles.container}>
+                    {!address ? (
+                        <SignIn />
+                    ) : (
+                        <>
+                            <Navbar />
+                            <div
+                                style={{
+                                    display: "flex",
+                                    flexDirection: "row",
+                                    justifyContent: "space-between",
+                                    alignItems: "center",
+                                    padding: "1px",
+                                    width: "100%",
+                                }}
+                            >
+                                <h3
+                                    style={{ cursor: selectedRole ? "pointer" : "default", marginRight: "20px" }}
+                                    onClick={() => selectedRole && setIsRatingModalOpen(true)}
+                                >
+                                    {selectedRole ? <LocalizedText name="Review" /> : <LocalizedText name="GPT Chat" />}
+                                </h3>
+                                <div
+                                    style={{
+                                        display: "flex",
+                                        flexDirection: "row",
+                                        justifyContent: "space-between",
+                                        alignItems: "center",
+                                        width: "100%",
+                                    }}
+                                >
+                                    <div
+                                        ref={taskButtonRef}
+                                        style={{
+                                            flex: 1,
+                                            position: "relative",
+                                            textAlign: "center",
+                                            display: "flex",
+                                            alignItems: "center",
+                                        }}
+                                    >
+                                        <div
+                                            style={{
+                                                border: "2px solid #444",
+                                                padding: "0.5rem 1rem",
+                                                borderRadius: "8px",
+                                                cursor: "pointer",
+                                                backgroundColor: "blue",
+                                                position: "relative",
+                                                maxWidth: "600px",
+                                                flex: 1,
+                                                display: "flex",
+                                                alignItems: "center",
+                                                justifyContent: "space-between",
+                                            }}
+                                            onClick={toggleTaskDropdown}
+                                        >
+                                            {selectedTask && (
+                                                <span
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        if (selectedTask) toggleFavorite(selectedTask);
+                                                    }}
+                                                    style={{
+                                                        cursor: "pointer",
+                                                        color: favoriteTasks.includes(selectedTask) ? "gold" : "grey",
+                                                        marginRight: "10px",
+                                                        fontSize: "24px",
+                                                    }}
+                                                >
+                                                    &#9733;
+                                                </span>
+                                            )}
+                                            <p style={{ fontSize: "18px", margin: 0, flex: 1, textAlign: "left" }}>
+                                                {selectedTask ? <LocalizedText name={selectedTask} /> : <LocalizedText name="Select a Task" />}
+                                            </p>
+                                            {selectedTask && (
+                                                <div className={styles.tooltipWrapper} style={{ position: "relative" }}>
+                                                    <button
+                                                        style={{
+                                                            marginRight: "0.2px",
+                                                            padding: "0.1rem 0.5rem",
+                                                            borderRadius: "4px",
+                                                            cursor: isRunButtonDisabled ? "default" : "pointer",
+                                                            backgroundColor: isRunButtonDisabled ? "#rgba(0, 208, 255, 0.95)" : "#0070f3",
+                                                            color: "white",
+                                                            border: "none",
+                                                            fontSize: "18px",
+                                                            fontWeight: "bold",
+                                                            boxShadow: isRunButtonDisabled ? "none" : "2px 4px red",
+                                                            transform: isRunButtonDisabled ? "none" : "scale(1)",
+                                                            transition: "transform 0.2s",
+                                                        }}
+                                                        onClick={handleExecuteTask}
+                                                        onMouseEnter={(e) => {
+                                                            if (!isRunButtonDisabled) {
+                                                                e.currentTarget.style.transform = "scale(0.8)";
+                                                                e.currentTarget.style.backgroundColor = "#1e0af3";
+                                                                e.currentTarget.style.boxShadow = "1px 2px red";
+                                                            }
+                                                        }}
+                                                        onMouseLeave={(e) => {
+                                                            if (!isRunButtonDisabled) {
+                                                                e.currentTarget.style.transform = "scale(1)";
+                                                                e.currentTarget.style.backgroundColor = "#0070f3";
+                                                                e.currentTarget.style.boxShadow = "2px 4px red";
+                                                            }
+                                                        }}
+                                                        disabled={isRunButtonDisabled}
+                                                    >
+                                                        {isChatRunning ? <LocalizedText name="In Progress" /> : <LocalizedText name="Execute" />}
+                                                    </button>
+                                                    <span className={styles.tooltip}>
+                                                        <LocalizedText name="Click to execute the task" />
+                                                    </span>
+                                                </div>
+                                            )}
+                                        </div>
+                                        {isTaskDropdownOpen && (
+                                            <div
+                                                style={{
+                                                    position: "absolute",
+                                                    top: "100%",
+                                                    left: 0,
+                                                    width: "100%",
+                                                    maxWidth: "600px",
+                                                    backgroundColor: "blue",
+                                                    padding: "1rem",
+                                                    marginTop: "0px",
+                                                    borderRadius: "8px",
+                                                    boxShadow: "0 2px 10px rgba(0,0,0,0.2)",
+                                                    zIndex: 1000,
+                                                    fontSize: 18,
+                                                }}
+                                            >
+                                                {tasks.map((task) => (
+                                                    <TaskItem
+                                                        key={task}
+                                                        task={task}
+                                                        handleTaskChange={handleTaskChange}
+                                                        handleDescriptionClick={handleDescriptionClick}
+                                                        selectedTask={selectedTask}
+                                                        activeButton={activeButton}
+                                                        isFavorited={favoriteTasks.includes(task)}
+                                                        toggleFavorite={toggleFavorite}
+                                                    />
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className={styles.tooltipWrapper}>
+                                        <button
+                                            style={{
+                                                marginRight: "2px",
+                                                padding: "0.5rem 1rem",
+                                                borderRadius: "8px",
+                                                cursor: "pointer",
+                                                backgroundColor: "darkblue",
+                                                color: "white",
+                                                border: "none",
+                                                fontSize: "18px",
+                                            }}
+                                            onClick={handleOpenModal}
+                                            aria-label="Knowledge Base"
+                                        >
+                                            <LocalizedText name="Knowledge Base" />
+                                        </button>
+                                        <span className={styles.tooltip}>
+                                            <LocalizedText name="Input or paste text to create a knowledge base, enabling AI to provide optimal answers" />
+                                        </span>
+                                    </div>
+                                    {/* The file upload modal */}
+
+
+                                    {isModalOpen && (
+                                        <div className={styles.modalOverlay1}>
+                                            <div
+                                                className={styles.modalContent1}
+                                                style={{
+                                                    padding: "2rem",
+                                                    minHeight: "600px",
+                                                    position: "relative",
+                                                    maxHeight: "90vh", // limit height to viewport and enable scrolling
+                                                    overflowY: "auto", // enable vertical scrolling
+                                                }}
+                                            >
+                                                <h2 className={styles.modalTitle} style={{ marginBottom: "1rem" }}>
+                                                    <LocalizedText name="Input Text" />
+                                                </h2>
+                                                {/* Upload Name Input Field with uniqueness check */}
+                                                <div style={{ marginBottom: "1rem" }}>
+                                                    <label
+                                                        style={{
+                                                            display: "block",
+                                                            marginBottom: "0.5rem",
+                                                            fontWeight: "bold",
+                                                            color: "blue",
+                                                        }}
+                                                    >
+                                                        <LocalizedText name="Upload Name" />
+                                                    </label>
+                                                    <input
+                                                        type="text"
+                                                        value={uploadName}
+                                                        onBlur={async () => {
+                                                            if (uploadName.trim()) {
+                                                                const exists = await checkUploadNameExists(uploadName.trim());
+                                                                if (exists) {
+                                                                    const overwrite = window.confirm(
+                                                                        "This upload name already exists. Do you want to overwrite it?"
+                                                                    );
+                                                                    if (!overwrite) {
+                                                                        setUploadName("");
+                                                                    }
+                                                                }
+                                                            }
+                                                        }}
+                                                        onChange={(e) => setUploadName(e.target.value)}
+                                                        placeholder="Enter a unique upload name"
+                                                        style={{
+                                                            width: "100%",
+                                                            padding: "0.5rem",
+                                                            border: "2px solid #444",
+                                                            borderRadius: "8px",
+                                                            fontSize: "16px",
+                                                            boxSizing: "border-box",
+                                                        }}
+                                                    />
+                                                </div>
+                                                {/* Textarea for content */}
+                                                <textarea
+                                                    className={styles.textarea1}
+                                                    value={textInput}
+                                                    onChange={(e) => setTextInput(e.target.value)}
+                                                    placeholder={localizedPlaceholder}
+                                                    style={{
+                                                        width: "100%",
+                                                        height: "300px",
+                                                        padding: "1rem",
+                                                        borderRadius: "8px",
+                                                        border: "2px solid #444",
+                                                        resize: "vertical",
+                                                        fontSize: "16px",
+                                                        marginBottom: "1.5rem",
+                                                        boxSizing: "border-box",
+                                                    }}
+                                                />
+                                                {/* Upload Buttons */}
+                                                <div
+                                                    className={styles.buttonContainer}
+                                                    style={{ display: "flex", justifyContent: "space-between", marginBottom: "1rem" }}
+                                                >
+                                                    <button
+                                                        className={styles.copyButton}
+                                                        onClick={handleUpload}
+                                                        disabled={isLoading}
+                                                        style={{
+                                                            flex: 1,
+                                                            marginRight: "0.5rem",
+                                                            padding: "0.75rem",
+                                                            fontSize: "16px",
+                                                            borderRadius: "8px",
+                                                            border: "none",
+                                                            backgroundColor: "blue",
+                                                            color: "white",
+                                                            cursor: "pointer",
+                                                        }}
+                                                    >
+                                                        {isLoading ? <LocalizedText name="Loading..." /> : <LocalizedText name="Submit" />}
+                                                    </button>
+                                                    <button
+                                                        className={styles.copyButton}
+                                                        onClick={handleCleanup}
+                                                        style={{
+                                                            flex: 1,
+                                                            marginRight: "0.5rem",
+                                                            padding: "0.75rem",
+                                                            fontSize: "16px",
+                                                            borderRadius: "8px",
+                                                            border: "none",
+                                                            backgroundColor: "blue",
+                                                            color: "white",
+                                                            cursor: "pointer",
+                                                        }}
+                                                    >
+                                                        <LocalizedText name="Clean up" />
+                                                    </button>
+                                                    <button
+                                                        className={styles.copyButton}
+                                                        onClick={handleCloseFileModal}
+                                                        style={{
+                                                            flex: 1,
+                                                            padding: "0.75rem",
+                                                            fontSize: "16px",
+                                                            borderRadius: "8px",
+                                                            border: "none",
+                                                            backgroundColor: "blue",
+                                                            color: "white",
+                                                            cursor: "pointer",
+                                                        }}
+                                                    >
+                                                        <LocalizedText name="Close" />
+                                                    </button>
+                                                    {/* New Chat Button */}
+                                                    <button
+                                                        className={styles.copyButton}
+                                                        onClick={() =>
+                                                            window.open(`/chatbotwin?userId=${encodeURIComponent(address)}`, "_blank")
+                                                        }
+                                                        style={{
+                                                            flex: 1,
+                                                            padding: "0.75rem",
+                                                            fontSize: "16px",
+                                                            borderRadius: "8px",
+                                                            border: "none",
+                                                            backgroundColor: "green",
+                                                            color: "white",
+                                                            cursor: "pointer",
+                                                            marginLeft: "0.5rem",
+                                                        }}
+                                                    >
+                                                        <LocalizedText name="Chat" />
+                                                    </button>
+                                                </div>
+                                                {/* Scrape Web Section */}
+                                                <div style={{ marginTop: "1rem" }}>
+                                                    <label
+                                                        style={{
+                                                            display: "block",
+                                                            marginBottom: "0.5rem",
+                                                            fontWeight: "bold",
+                                                            color: "blue",
+                                                        }}
+                                                    >
+                                                        <LocalizedText name="Web Scrape the Website to be used as Knowledge Base, Enter the URL below" />
+                                                    </label>
+                                                    <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-start" }}>
+                                                        <input
+                                                            type="url"
+                                                            placeholder="https://example.com"
+                                                            value={siteUrl}
+                                                            onChange={(e) => setSiteUrl(e.target.value)}
+                                                            style={{
+                                                                width: "250px",
+                                                                padding: "0.75rem",
+                                                                fontSize: "16px",
+                                                                borderRadius: "8px",
+                                                                border: "2px solid #444",
+                                                                marginRight: "0.5rem",
+                                                                boxSizing: "border-box",
+                                                            }}
+                                                        />
+                                                        <button
+                                                            className={styles.copyButton}
+                                                            onClick={handleLoadData}
+                                                            style={{
+                                                                width: "140px",
+                                                                padding: "0.75rem",
+                                                                fontSize: "16px",
+                                                                borderRadius: "8px",
+                                                                border: "none",
+                                                                backgroundColor: "blue",
+                                                                color: "white",
+                                                                cursor: "pointer",
+                                                            }}
+                                                        >
+                                                            <LocalizedText name="Load Data" />
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                {/* Embedding Selection Section moved to the very bottom */}
+                                                <div style={{ borderTop: "1px solid #ccc", paddingTop: "1rem", marginTop: "1rem" }}>
+                                                    <label style={{ display: "block", marginBottom: "0.5rem", fontWeight: "bold", color: "blue" }}>
+                                                        <LocalizedText name="Select Embeddings" />
+                                                    </label>
+                                                    {availableEmbeddings.map((embedding) => {
+                                                        const displayLabel = embedding.documentName || embedding.key;
+                                                        return (
+                                                            <div
+                                                                key={embedding.key}
+                                                                style={{
+                                                                    display: "flex",
+                                                                    alignItems: "center",
+                                                                    justifyContent: "space-between",
+                                                                    padding: "0.5rem",
+                                                                    border: "1px solid #ccc",
+                                                                    borderRadius: "8px",
+                                                                    marginBottom: "0.5rem",
+                                                                }}
+                                                            >
+                                                                <label style={{ display: "flex", alignItems: "center", flex: 1 }}>
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={userSelectedSources.includes(embedding.key)}
+                                                                        onChange={(e) => {
+                                                                            if (e.target.checked) {
+                                                                                handleAddSource(embedding.key);
+                                                                            } else {
+                                                                                handleRemoveSource(embedding.key);
+                                                                            }
+                                                                        }}
+                                                                        style={{ marginRight: "0.5rem" }}
+                                                                    />
+                                                                    {displayLabel}
+                                                                </label>
+                                                                {embedding.isOwner && (
+                                                                    <>
+                                                                        <button onClick={() => setOpenShareManagerKey(embedding.key)}>
+                                                                            Share
+                                                                        </button>
+                                                                        {openShareManagerKey === embedding.key && (
+                                                                            <ShareManager
+                                                                                userAddress={address}
+                                                                                embedding={embedding}
+                                                                                onUpdateShare={(newShares: string[]) =>
+                                                                                    setAvailableEmbeddings((prev) =>
+                                                                                        prev.map((e) =>
+                                                                                            e.key === embedding.key ? { ...e, shared: newShares } : e
+                                                                                        )
+                                                                                    )
+                                                                                }
+                                                                                onClose={() => setOpenShareManagerKey(null)}
+                                                                            />
+                                                                        )}
+                                                                    </>
+                                                                )}
+
+
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+
+
+
+                                    {isLoading && (
+                                        <div className={styles.modalOverlay1}>
+                                            <div className={styles.modalContent1}>
+                                                <div style={{ textAlign: "center" }}>
+                                                    <p>
+                                                        <LocalizedText name="Loading..." />
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                    <div
+                                        ref={roleButtonRef}
+                                        style={{
+                                            position: "relative",
+                                            width: "100%",
+                                            maxWidth: "400px",
+                                        }}
+                                    >
+                                        <div
+                                            style={{
+                                                marginLeft: "1rem",
+                                                border: "2px solid #444",
+                                                padding: "0.5rem 1rem",
+                                                borderRadius: "8px",
+                                                cursor: "pointer",
+                                                backgroundColor: "blue",
+                                                position: "relative",
+                                                zIndex: 1000,
+                                                width: "100%",
+                                                boxSizing: "border-box",
+                                            }}
+                                            onClick={toggleRoleDropdown}
+                                        >
+                                            <p style={{ fontSize: "17px", margin: 0 }}>
+                                                {selectedRole ? <LocalizedText name={selectedRole.role} /> : <LocalizedText name="Select a Persona" />}
+                                            </p>
+                                        </div>
+                                        {isRoleDropdownOpen && (
+                                            <div
+                                                style={{
+                                                    position: "absolute",
+                                                    top: "100%",
+                                                    left: 0,
+                                                    width: "100%",
+                                                    backgroundColor: "blue",
+                                                    padding: "1rem",
+                                                    marginTop: "0px",
+                                                    borderRadius: "8px",
+                                                    boxShadow: "0 2px 10px rgba(0,0,0,0.2)",
+                                                    zIndex: 1000,
+                                                    fontSize: "18px",
+                                                }}
+                                            >
+                                                {roles.map((role) => (
+                                                    <RoleItem
+                                                        key={role.role}
+                                                        role={role.role}
+                                                        department={role.department}
+                                                        handleRoleChange={handleRoleChange}
+                                                        handleRoleDescriptionClick={handleRoleDescriptionClick}
+                                                        selectedRole={selectedRole?.role ?? null}
+                                                        activeRoleButton={activeRoleButton}
+                                                    />
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                            {/* Pass selected embeddings to ChatBase via props extension */}
+                            {isChatRunning && selectedTask && selectedRole && (
+                                <ChatBase
+                                    key={`${selectedRole?.role}-${selectedTask}`}
+                                    {...({
+                                        role: selectedRole?.role || "",
+                                        task: selectedTask || "",
+                                        department: selectedRole?.department || "",
+                                        selectedSources: selectedEmbeddings,
+                                    } as any)}
+                                />
+                            )}
+                            {isRatingModalOpen && (
+                                <RatingComponent
+                                    tokenId={selectedRole?.role || ""}
+                                    department={selectedRole?.department || ""}
+                                    role={selectedRole?.role || ""}
+                                    onClose={() => setIsRatingModalOpen(false)}
+                                />
+                            )}
+                        </>
+                    )}
+                </div>
+                {isTaskModalVisible && (
+                    <div
+                        ref={modalRef}
+                        style={{
+                            position: "absolute",
+                            top: modalPosition.top,
+                            left: modalPosition.left,
+                            backgroundColor: "blue",
+                            color: "white",
+                            padding: "15px",
+                            border: "1px solid #ccc",
+                            borderRadius: "8px",
+                            boxShadow: "2px 2px 5px darkred",
+                            width: "400px",
+                            zIndex: 1000,
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <button
+                            style={{
+                                position: "absolute",
+                                top: "5px",
+                                right: "5px",
+                                background: "transparent",
+                                border: "none",
+                                fontSize: "16px",
+                                cursor: "pointer",
+                            }}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setIsTaskModalVisible(false);
+                            }}
+                        >
+                            &times;
+                        </button>
+                        <h4 style={{ textAlign: "center", marginTop: "6px", marginBottom: "10px" }}>
+                            <LocalizedText name="Task Description" />
+                        </h4>
+                        <p style={{ marginTop: "6px" }}>
+                            {taskDescription ? (
+                                taskDescription
+                            ) : (
+                                <LocalizedText name="Please wait, Still loading ...." />
+                            )}
+                        </p>
+                    </div>
+                )}
+                {isRoleModalVisible && (
+                    <div
+                        ref={modalRef}
+                        style={{
+                            position: "absolute",
+                            top: roleModalPosition.top,
+                            left: roleModalPosition.left,
+                            backgroundColor: "blue",
+                            color: "white",
+                            padding: "15px",
+                            border: "1px solid #ccc",
+                            borderRadius: "8px",
+                            boxShadow: "2px 2px 5px darkred",
+                            width: "450px",
+                            zIndex: 1000,
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <button
+                            style={{
+                                position: "absolute",
+                                top: "5px",
+                                right: "5px",
+                                background: "transparent",
+                                border: "none",
+                                fontSize: "16px",
+                                cursor: "pointer",
+                            }}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setIsRoleModalVisible(false);
+                            }}
+                        >
+                            &times;
+                        </button>
+                        <h4 style={{ textAlign: "center", marginTop: "6px", marginBottom: "10px" }}>
+                            <LocalizedText name={`Persona Description `} />
+                        </h4>
+                        <p style={{ marginTop: "20px" }}>
+                            {roleDescription ? (
+                                roleDescription
+                            ) : (
+                                <LocalizedText name="Please wait, Still loading ...." />
+                            )}
+                        </p>
+                    </div>
+                )}
+            </main>
+        </>
+    );
+};
+
+export default ChatHome;

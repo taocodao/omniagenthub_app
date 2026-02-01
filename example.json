@@ -1,0 +1,25 @@
+[
+    {
+        "name": "<app_name>",
+        "description": "<description>",
+        "image": "",
+        "attributes": [
+            {
+                "trait_type": "OPENAI_API_KEY",
+                "value": "<api_key>"
+            },
+            {
+                "trait_type": "ASSISTANT_ID",
+                "value": "<assitant_id>"
+            },
+            {
+                "trait_type": "WALLET_ADDRESS",
+                "value": "<user_name>"
+            },
+            {
+                "trait_type": "PRICE",
+                "value": "<price>"
+            }
+        ]
+    }
+]

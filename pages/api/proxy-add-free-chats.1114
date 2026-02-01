@@ -1,0 +1,38 @@
+// pages/api/proxy-add-free-chats.ts
+
+import type { NextApiRequest, NextApiResponse } from 'next';
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    // Allow only POST requests
+    if (req.method !== 'POST') {
+        res.setHeader('Allow', 'POST');
+        return res.status(405).json({ message: 'Method Not Allowed' });
+    }
+
+    const { userKey, freeTrades } = req.body;
+
+    // Validate required fields
+    if (!userKey || typeof freeTrades !== 'number') {
+        return res.status(400).json({ message: 'User key and number of free trades are required.' });
+    }
+
+    try {
+        // Forward the request to add-free-chats.ts with the updater token
+        const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL}api/add-free-chats`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-updater-token': process.env.UPDATER_SECRET_TOKEN!, // Securely add the token
+            },
+            body: JSON.stringify({ userKey, freeTrades }),
+        });
+
+        const data = await response.json();
+
+        // Forward the response from add-free-chats.ts to the client
+        return res.status(response.status).json(data);
+    } catch (error) {
+        console.error('Error proxying add-free-chats:', error);
+        return res.status(500).json({ message: 'Internal server error.' });
+    }
+}

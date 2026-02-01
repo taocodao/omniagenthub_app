@@ -1,0 +1,94 @@
+.modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 1000;
+    background-color: #fff;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    width: 80%;
+    max-width: 400px;
+}
+
+.modalContent {
+    text-align: center;
+}
+
+.title {
+    color: #0070f3;
+    font-size: 24px;
+    margin-bottom: 32px;
+}
+
+.star1 {
+    color: #ccc;
+    /* Lighter color for unselected stars */
+    font-size: 30px;
+    margin: 0 5px;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+}
+
+.star {
+    color: #ccc;
+    /* Lighter color for unselected stars */
+    font-size: 30px;
+    margin: 0 5px;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+}
+
+.star:hover {
+    transform: scale(1.2);
+}
+
+.on {
+    color: gold;
+    /* Gold color for selected stars */
+    font-size: 30px;
+    margin: 0 5px;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+    background: transparent;
+    border: none;
+}
+
+.off {
+    color: #ccc;
+    /* Lighter color for unselected stars */
+    font-size: 30px;
+    margin: 0 5px;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+    background: transparent;
+    border: none;
+}
+
+.on1,
+.off1 {
+    background: transparent;
+    border: none;
+
+}
+
+.button {
+    background-color: #0070f3;
+    color: #ffffff;
+    border: none;
+    border-radius: 4px;
+    padding: 10px 20px;
+    margin: 10px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+.button:hover {
+    background-color: #0056b3;
+}
+
+.closemodal {
+    background-color: grey;
+    margin-left: 10px;
+}

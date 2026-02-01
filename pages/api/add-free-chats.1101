@@ -1,0 +1,45 @@
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    const { userKey: userKey, freeTrades } = req.body;
+    console.log('Request body:', req.body);
+    console.log(" Add the initial bunus userky is  ", userKey);
+    console.log(" Add the initial bunus freeTrades is  ", freeTrades);
+    if (!userKey || typeof freeTrades !== 'number') {
+        return res.status(400).json({ message: 'User address and number of free trades are required' });
+    }
+
+    try {
+        let currentFreeTrades = await kv.get(`${userKey}:freeTrades`) as number;
+        if (!currentFreeTrades) {
+            await kv.set(`${userKey}:freeTrades`, freeTrades);
+            console.log("Free trades updated successfully");
+            return res.status(200).json({ message: 'Free trades updated successfully', remainingChats: currentFreeTrades + freeTrades });
+        }
+
+        currentFreeTrades = currentFreeTrades ? Number(currentFreeTrades) : 0;
+        console.log("currentFreeTrades", currentFreeTrades);
+
+        if (currentFreeTrades <= 0) {
+            return res.status(400).json({ message: 'No enough free Chats', remainingChats: 0 });
+        }
+
+        if (currentFreeTrades + freeTrades <= 0) {
+            await kv.set(`${userKey}:freeTrades`, 0.0);
+            return res.status(400).json({ message: 'Not enough free chats available', remainingChats: currentFreeTrades + freeTrades });
+        }
+
+        await kv.set(`${userKey}:freeTrades`, currentFreeTrades + freeTrades);
+        console.log("Free trades updated successfully");
+        return res.status(200).json({ message: 'Free trades updated successfully', remainingChats: currentFreeTrades + freeTrades });
+    } catch (error) {
+        console.error('Error updating free trades:', error);
+        return res.status(500).json({ message: 'Internal server error' });
+    }
+}

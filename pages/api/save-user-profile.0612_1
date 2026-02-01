@@ -1,0 +1,178 @@
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+interface ProfileData {
+    name: string;
+    business: string;
+    ups: string;
+    persona: string;
+    challenge: string;
+    websiteUrl?: string;
+    rawContent: string;
+    userAddress: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
+type ResponseData = {
+    message: string;
+    success: boolean;
+    profileId?: string;
+};
+
+// Helper function to extract LAST occurrence of each placeholder from raw content
+function extractLastPlaceholderValues(content: string) {
+    console.log('Extracting placeholders from content length:', content.length);
+
+    const placeholders = [
+        {
+            key: 'business',
+            pattern: /business:\s*([\s\S]*?)(?=\n\s*(?:usp:|persona:|challenges?:|$))/gis
+        },
+        {
+            key: 'ups',
+            pattern: /usp:\s*([\s\S]*?)(?=\n\s*(?:business:|persona:|challenges?:|$))/gis
+        },
+        {
+            key: 'persona',
+            pattern: /persona:\s*([\s\S]*?)(?=\n\s*(?:business:|usp:|challenges?:|$))/gis
+        },
+        {
+            key: 'challenge',
+            pattern: /challenges?:\s*([\s\S]*?)(?=\n\s*(?:business:|usp:|persona:|$))/gis
+        }
+    ];
+
+    const result: Record<string, string> = {};
+
+    for (const { key, pattern } of placeholders) {
+        const matches = [];
+        let match;
+
+        // Reset regex lastIndex for global search
+        pattern.lastIndex = 0;
+
+        // Find all matches for this placeholder
+        while ((match = pattern.exec(content)) !== null) {
+            // Clean the matched content
+            const cleanedContent = match[1]
+                .trim()
+                .replace(/^\s*\n+/g, '') // Remove leading newlines
+                .replace(/\n+\s*$/g, '') // Remove trailing newlines
+                .replace(/\n{3,}/g, '\n\n'); // Limit consecutive newlines
+
+            matches.push(cleanedContent);
+        }
+
+        // Take the LAST occurrence (most recent iteration)
+        if (matches.length > 0) {
+            result[key] = matches[matches.length - 1];
+            console.log(`Found ${matches.length} occurrences of ${key}, using last one`);
+        } else {
+            result[key] = '';
+            console.log(`No matches found for ${key}`);
+        }
+    }
+
+    console.log('Extracted placeholder values (only 4 fields)');
+    return result;
+}
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse<ResponseData>) {
+    if (req.method !== 'POST') {
+        return res.status(405).json({
+            message: 'Method not allowed',
+            success: false
+        });
+    }
+
+    const { name, business, ups, persona, challenge, websiteUrl, rawContent, userAddress } = req.body;
+
+    // Validate input - check if we have individual fields OR raw content to extract from
+    if (!name || !userAddress) {
+        return res.status(400).json({
+            message: 'Missing required fields. Profile name and user address are required.',
+            success: false
+        });
+    }
+
+    let finalBusiness = business;
+    let finalUps = ups;
+    let finalPersona = persona;
+    let finalChallenge = challenge;
+
+    // If individual fields are missing but we have rawContent, extract from it
+    if ((!business || !ups || !persona || !challenge) && rawContent) {
+        console.log('Individual fields missing, extracting from rawContent...');
+        const extracted = extractLastPlaceholderValues(rawContent);
+
+        finalBusiness = business || extracted.business;
+        finalUps = ups || extracted.ups;
+        finalPersona = persona || extracted.persona;
+        finalChallenge = challenge || extracted.challenge;
+    }
+
+    // Final validation - ensure we have all required data (ONLY the 4 fields)
+    if (!finalBusiness || !finalUps || !finalPersona || !finalChallenge) {
+        return res.status(400).json({
+            message: 'Missing required profile fields. All fields (Business, USP, Persona, Challenge) are required.',
+            success: false
+        });
+    }
+
+    try {
+        // Generate unique profile ID
+        const profileId = `profile_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const timestamp = new Date().toISOString();
+
+        // Create profile data with ONLY the extracted/provided fields (4 fields only)
+        const profileData: ProfileData = {
+            name: name.trim(),
+            business: finalBusiness.trim(),
+            ups: finalUps.trim(),
+            persona: finalPersona.trim(),
+            challenge: finalChallenge.trim(),
+            websiteUrl: websiteUrl?.trim() || '',
+            rawContent: rawContent || '',
+            userAddress: userAddress,
+            createdAt: timestamp,
+            updatedAt: timestamp
+        };
+
+        console.log('Saving profile data (4 fields only):', {
+            name: profileData.name,
+            businessLength: profileData.business.length,
+            upsLength: profileData.ups.length,
+            personaLength: profileData.persona.length,
+            challengeLength: profileData.challenge.length
+        });
+
+        // Save profile data
+        await kv.set(`userProfile:${userAddress}:${profileId}`, profileData);
+
+        // Update user's profile list
+        let userProfiles = await kv.get(`userProfiles:${userAddress}`) as string[];
+        userProfiles = userProfiles || [];
+        userProfiles.push(profileId);
+        await kv.set(`userProfiles:${userAddress}`, userProfiles);
+
+        console.log(`Profile saved successfully: ${profileId} for user: ${userAddress}`);
+
+        return res.status(200).json({
+            message: 'Profile saved successfully',
+            success: true,
+            profileId: profileId
+        });
+    } catch (error) {
+        console.error('Error saving profile:', error);
+        return res.status(500).json({
+            message: 'Internal server error while saving profile',
+            success: false
+        });
+    }
+}

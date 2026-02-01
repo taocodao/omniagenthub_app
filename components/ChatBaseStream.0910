@@ -1,0 +1,110 @@
+'use client';
+
+import React, { useState, useEffect, useRef, useContext } from 'react';
+import ReactMarkdown from 'react-markdown';
+import rehypeRaw from 'rehype-raw';
+import remarkGfm from 'remark-gfm';
+import styles from "../styles/Home5.module.css";
+import HashUtil from '../util/hashToFixedDigits';
+import { useActiveAccount } from 'thirdweb/react';
+import { LocalizedText, useLocalizedString, getLocalizedString } from '../util/LocalizedText';
+import { LocalizationContext } from '../util/LocalizationContext';
+import { usePayment } from '../hook/Payment_Process';
+import { useAssistant, Message } from 'ai/react';
+
+interface ChatBaseStreamProps {
+    role: string;
+    task: string;
+    initialMessage: string;
+    department: string;
+    user: string | null;
+    price: number | null;
+}
+
+export function ChatBaseStream({
+    role, task, initialMessage, department, user, price
+}: ChatBaseStreamProps) {
+    const { process_payment, isPaymentProcessing } = usePayment();
+    const [isLoading, setIsLoading] = useState(false);
+    const [isRefining, setIsRefining] = useState(false);
+    const account = useActiveAccount();
+    const userAddress = account?.address;
+    const assistantId = HashUtil.hashTo(role + task);
+    const { language } = useContext(LocalizationContext);
+    const initialMessageSentRef = useRef(false);
+
+    // Using useAssistant hook to handle chat logic
+    const { messages, input, handleInputChange, append, submitMessage, status } = useAssistant({
+        api: '/api/assistant1',
+        body: {
+            assistantId,
+            threadId: null, // thread ID will be managed on the backend
+        },
+    });
+
+    useEffect(() => {
+        if (initialMessage && !initialMessageSentRef.current) {
+            submitQuestion(initialMessage); // Submit the initial message
+            initialMessageSentRef.current = true;
+        }
+    }, [initialMessage]);
+
+    // Submit question (mimicking form submission)
+    const submitQuestion = async (message: string) => {
+        setIsLoading(true);
+
+        if (price && user) {
+            const isPaymentValid = await process_payment(String(userAddress), price, user);
+            if (!isPaymentValid) {
+                alert(await getLocalizedString('Insufficient balance', language));
+                setIsLoading(false);
+                return;
+            }
+        }
+
+        append({ role: 'user', content: message }); // Append user message
+        await submitMessage(); // Submit to the assistant backend for streaming response
+
+        setIsLoading(false);
+    };
+
+    const handleButtonClick = async (action: string) => {
+        await submitQuestion(action);
+    };
+
+    const handleFormSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        await submitQuestion(input);
+    };
+
+    return (
+        <div>
+            <div className={styles.chatContainer}>
+                {messages.map((message: Message, index) => (
+                    <div key={index} className={`${styles.message} ${message.role === 'user' ? styles.userMessage : styles.aiMessage}`}>
+                        <div className={styles.messageRole}>
+                            {message.role === 'user' ? <LocalizedText name={`User: ${task}`} /> : <LocalizedText name={role} />}
+                        </div>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+                            {message.content}
+                        </ReactMarkdown>
+                    </div>
+                ))}
+                {status === 'in_progress' && <div className={styles.loadingIndicator}><LocalizedText name="AI is thinking..." /></div>}
+            </div>
+
+            <form onSubmit={handleFormSubmit} className={styles.inputForm}>
+                <textarea
+                    value={input}
+                    onChange={handleInputChange}
+                    placeholder={isRefining ? "Please type your feedback or leave it blank" : "Type your message"}
+                    rows={1}
+                    className={`${styles.input} ${isRefining ? styles.refineInput : ''}`}
+                />
+                <button type="submit" className={styles.cardButton}>
+                    <LocalizedText name={isRefining ? 'refine' : 'send'} />
+                </button>
+            </form>
+        </div>
+    );
+}

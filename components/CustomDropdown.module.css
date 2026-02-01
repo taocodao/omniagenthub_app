@@ -1,0 +1,84 @@
+/* components/CustomDropdown.module.css */
+
+.dropdown {
+    position: relative;
+    width: 250px;
+    color: white;
+    font-family: Arial, sans-serif;
+}
+
+.label {
+    margin-right: 1rem;
+    font-size: 21px;
+    font-weight: bold;
+    color: white;
+}
+
+.dropdownButton {
+    width: 100%;
+    padding: 0.5rem 1rem;
+    border: 2px solid #444;
+    border-radius: 8px;
+    cursor: pointer;
+    background-color: blue;
+    color: white;
+    font-size: 18px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: background-color 0.3s ease;
+}
+
+.dropdownButton:hover,
+.dropdownButton:focus {
+    background-color: darkblue;
+    outline: none;
+}
+
+.arrow {
+    margin-left: 0.5rem;
+    font-size: 12px;
+}
+
+.dropdownList {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background-color: blue;
+    border: 2px solid #444;
+    border-radius: 8px;
+    z-index: 1000;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: none;
+    /* Allow full height */
+    overflow: hidden;
+    /* Prevent scrollbars */
+}
+
+.dropdownItem {
+    padding: 10px 20px;
+    cursor: pointer;
+    white-space: nowrap;
+    /* Prevent text from wrapping */
+    color: white;
+    transition: background-color 0.2s ease;
+}
+
+.dropdownItem:hover,
+.dropdownItem:focus {
+    background-color: red;
+    outline: none;
+}
+
+.focused {
+    background-color: darkred;
+}
+
+.selected {
+    background-color: darkred;
+}

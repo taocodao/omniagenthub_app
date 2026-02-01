@@ -1,0 +1,80 @@
+import { NextApiRequest, NextApiResponse } from 'next';
+import { RunAssistantRSC } from '../../components/RunAssistantRSC';
+import { createClient } from '@vercel/kv';
+
+// Initialize Vercel KV client
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+export const config = {
+    runtime: 'edge'
+};
+
+export default async (req: NextApiRequest, res: NextApiResponse) => {
+    if (req.method === 'POST') {
+        const { assistantId, threadId, userMessage, isPolling, jobId } = req.body;
+
+        if (isPolling) {
+            // Polling logic: Check if job response exists in KV
+            console.log(`Polling job with ID: ${jobId}`);
+
+            const jobData = await kv.get(jobId as string);
+            if (!jobData) {
+                // If no data is found, keep polling (client will handle retry)
+                res.status(404).json({ error: 'Job not found' });
+            } else {
+                // Job is completed and response exists
+                res.status(200).json({ result: jobData });
+            }
+            return;
+
+        } else {
+            // Create a unique job ID
+            const newJobId = `${assistantId}-${threadId}-${Date.now()}`;
+            console.log(`Creating job with ID: ${newJobId}`);
+
+            // Process the job in the background
+            processAssistantJob(newJobId, { assistantId, threadId, userMessage });
+
+            // Return the job ID immediately
+            res.status(202).json({ jobId: newJobId });
+        }
+    } else {
+        res.setHeader('Allow', ['POST']);
+        res.status(405).end(`Method ${req.method} Not Allowed`);
+    }
+};
+
+async function processAssistantJob(
+    jobId: string,
+    { assistantId, threadId, userMessage }: { assistantId: string; threadId: string; userMessage: string }
+) {
+    try {
+        const response = await RunAssistantRSC({ assistantId, threadId, userMessage });
+        console.log(`Processing job: ${jobId}`);
+
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+
+        if (reader) {
+            let accumulatedResponse = '';
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                accumulatedResponse += decoder.decode(value);
+            }
+
+            // Store the job response directly in KV and set expiration for 15 minutes
+            await kv.set(jobId, accumulatedResponse, { ex: 900 });
+            console.log(`Job with ID: ${jobId} completed and stored in KV`);
+        } else {
+            throw new Error('Unable to read response stream');
+        }
+    } catch (error) {
+        console.error(`Error processing job ${jobId}:`, error);
+        // Store the error result in KV
+        await kv.set(jobId, 'Failed to run assistant', { ex: 900 });
+    }
+}

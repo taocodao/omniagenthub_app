@@ -1,0 +1,118 @@
+// pages/api/initiate_scrape.ts
+
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { ApifyClient } from 'apify-client';
+import { createClient } from '@vercel/kv';
+import { normalizeUrl } from '../../utils/embeddings';
+import { encrypt } from '../../utils/crypto';
+
+// Validate environment variables
+const requiredEnvVars = [
+    'APIFY_API_TOKEN',
+    'KV_REST_API_URL',
+    'KV_REST_API_TOKEN',
+    'ENCRYPTION_SECRET',
+    'OPENAI_API_KEY',
+    'PINECONE_API_KEY',
+    'PINECONE_INDEX_NAME'
+];
+
+for (const envVar of requiredEnvVars) {
+    if (!process.env[envVar]) {
+        throw new Error(`Missing required environment variable: ${envVar}`);
+    }
+}
+
+const apifyClient = new ApifyClient({
+    token: process.env.APIFY_API_TOKEN!,
+});
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+interface ScrapeJobDetails {
+    normalizedUrl: string;
+    userId: string;
+    url: string;
+    status: string;
+    startedAt: string;
+    apifyRunId?: string;
+    pineconeNamespace?: string;
+    sharedUserIds?: string[];
+}
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed' });
+    }
+
+    try {
+        const userId = (req.headers['accountid'] as string) || 'anonymous';
+        const { url, sharedUserIds } = req.body as { url: string; sharedUserIds?: string[] };
+
+        if (!url) {
+            return res.status(400).json({ error: 'Missing "url" in request body' });
+        }
+
+        const normalizedUrl = normalizeUrl(url);
+        const jobId = `scrape-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+        // Use the OpenAI API key directly - the tri_angle actor doesn't support encrypted keys
+        // We'll need to modify the actor to support decryption if we want to use encryption
+        const wccInput = {
+            url,
+            openaiApiKey: process.env.OPENAI_API_KEY!,
+            pineconeApiKey: process.env.PINECONE_API_KEY!,
+            pineconeIndexName: process.env.PINECONE_INDEX_NAME!,
+            pineconeIndexNamespace: userId,
+            chunkSize: 2000,
+            chunkOverlap: 200,
+            enableDeltaUpdates: true,
+            metadataDatasetFields: {
+                title: "metadata.title",
+                url: "url"
+            }
+        };
+
+        console.log("Starting Apify actor with input:", JSON.stringify({
+            ...wccInput,
+            openaiApiKey: "***REDACTED***",
+            pineconeApiKey: "***REDACTED***"
+        }));
+
+        // Start Apify actor
+        const run = await apifyClient.actor('tri_angle/wcc-pinecone-integration').call({
+            input: wccInput
+        });
+
+        // Store job details
+        const jobDetails: ScrapeJobDetails = {
+            normalizedUrl,
+            userId,
+            url,
+            status: 'STARTED',
+            startedAt: new Date().toISOString(),
+            apifyRunId: run.id,
+            pineconeNamespace: userId,
+            sharedUserIds
+        };
+
+        await kv.set(`scrape-job:${jobId}`, jobDetails);
+        await kv.set(`apify-run-map:${run.id}`, jobId);
+
+        res.status(200).json({
+            jobId,
+            statusUrl: `https://api.apify.com/v2/actor-runs/${run.id}?token=${process.env.APIFY_API_TOKEN}`,
+            webhookUrl: `${process.env.NEXTAUTH_URL || req.headers.origin}/api/scrape-webhook?jobId=${jobId}`
+        });
+
+    } catch (error) {
+        console.error('Scrape initiation error:', error);
+        return res.status(500).json({
+            error: 'Failed to initiate scrape',
+            details: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+}

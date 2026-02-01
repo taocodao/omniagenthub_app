@@ -1,0 +1,100 @@
+.formContainer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: 20px;
+}
+
+.formTitle {
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+.centeredForm {
+    display: flex;
+    flex-direction: column;
+    align-items: left;
+    width: 100%;
+}
+
+.formGroup {
+    margin-bottom: 5px;
+}
+
+.formLabel {
+    margin-bottom: 5px;
+}
+
+.formInput {
+    width: 100%;
+    /* Make the input wider */
+    padding: 10px;
+    margin-bottom: 5px;
+    /* Space for instruction */
+}
+
+.inputInstruction {
+    font-size: 14px;
+    color: #07ec1a;
+    margin-top: 6px;
+}
+
+.formButton {
+    padding: 10px 20px;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.main {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+}
+
+.container {
+    text-align: center;
+}
+
+.centered {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.inputGroup {
+    margin-bottom: 20px;
+}
+
+.inputField,
+.textArea,
+.select {
+    display: block;
+    margin: 10px auto;
+    padding: 10px;
+    width: 300px;
+}
+
+.textArea {
+    height: 100px;
+}
+
+.button {
+    margin-top: 10px;
+    padding: 10px 20px;
+    cursor: pointer;
+}
+
+.navLink {
+    margin-right: 1rem;
+    color: blue;
+    text-decoration: none;
+    transition: color 0.3s;
+}
+
+.navLink:hover {
+    color: white;
+}

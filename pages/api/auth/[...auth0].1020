@@ -1,0 +1,47 @@
+import { handleAuth, handleLogin, handleCallback } from '@auth0/nextjs-auth0';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import type { Session } from '@auth0/nextjs-auth0';
+import { generateWalletFromAuth0Id } from '../../../utils/walletGenerator'; // ✅ Fixed import
+
+export default handleAuth({
+    login: handleLogin({
+        // returnTo from query parameter
+    }),
+
+    signup: handleLogin({
+        authorizationParams: {
+            screen_hint: 'signup',
+        },
+    }),
+
+    callback: handleCallback({
+        afterCallback: async (
+            req: NextApiRequest,
+            res: NextApiResponse,
+            session: Session
+        ): Promise<Session> => {
+            try {
+                console.log('✅ User authenticated:', session.user.sub);
+
+                // Generate wallet from user ID (works for Polygon and all EVM chains)
+                const { address } = generateWalletFromAuth0Id(session.user.sub); // ✅ Fixed function name
+
+                // Add wallet to session
+                session.user.walletAddress = address;
+
+                console.log('✅ Wallet generated:', address);
+                console.log('🔗 View on PolygonScan:', `https://polygonscan.com/address/${address}`);
+
+                return session;
+            } catch (error) {
+                console.error('❌ Error in callback:', error);
+                return session;
+            }
+        },
+    }),
+
+    onError: (req: NextApiRequest, res: NextApiResponse, error: Error) => {
+        console.error('Auth0 error:', error);
+        res.redirect('/signin?error=auth_failed');
+    },
+});

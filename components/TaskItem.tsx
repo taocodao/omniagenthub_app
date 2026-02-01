@@ -1,0 +1,179 @@
+// TaskItem.tsx
+
+import React, { useState } from 'react';
+import { LocalizedText } from '../util/LocalizedText'; // Adjust the import path accordingly
+import { toast } from 'react-toastify'; // **Import toast from react-toastify**
+import 'react-toastify/dist/ReactToastify.css'; // **Import react-toastify CSS**
+
+interface TaskItemProps {
+    task: string;
+    handleTaskChange: (task: string) => void;
+    handleDescriptionClick: (event: React.MouseEvent<HTMLButtonElement>, task: string) => void;
+    selectedTask: string | null;
+    activeButton: string | null; // Moved activeButton as prop
+    isFavorited: boolean; // **Added prop to indicate if the task is favorited**
+    toggleFavorite: (task: string) => void; // **Added prop to toggle favorite status**
+}
+
+const TaskItem: React.FC<TaskItemProps> = ({
+    task,
+    handleTaskChange,
+    handleDescriptionClick,
+    selectedTask,
+    activeButton,
+    isFavorited,
+    toggleFavorite,
+}) => {
+    const [isTooltipVisible, setIsTooltipVisible] = useState(false);
+    const [isTaskHovered, setIsTaskHovered] = useState(false);
+    const [isButtonHovered, setIsButtonHovered] = useState(false);
+
+    // Handlers for task hover
+    const handleTaskMouseEnter = () => {
+        setIsTaskHovered(true);
+    };
+
+    const handleTaskMouseLeave = () => {
+        setIsTaskHovered(false);
+    };
+
+    // Handlers for button hover and tooltip
+    const handleButtonMouseEnter = () => {
+        setIsTooltipVisible(true);
+        setIsButtonHovered(true);
+    };
+
+    const handleButtonMouseLeave = () => {
+        setIsTooltipVisible(false);
+        setIsButtonHovered(false);
+    };
+
+    // Handle button click
+    const handleButtonClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+        handleDescriptionClick(event, task);
+    };
+
+    // Determine background color for task
+    const getTaskBackgroundColor = () => {
+        if (isTaskHovered) {
+            return 'deeppink'; // Dark pink color
+        } else {
+            return 'blue';
+        }
+    };
+
+    // Determine background color for button
+    const getButtonBackgroundColor = () => {
+        if (activeButton === task || isButtonHovered) {
+            return 'yellow';
+        } else {
+            return 'blue';
+        }
+    };
+
+    // **Handle Favorite Star Click with Toast Notification**
+    const handleFavoriteClick = (e: React.MouseEvent<HTMLSpanElement, MouseEvent>) => {
+        e.stopPropagation(); // Prevent triggering task selection
+        toggleFavorite(task); // **Toggle favorite status**
+
+        // Determine the new favorite status
+        const newFavorited = !isFavorited;
+
+        // Display localized toast notification
+        /* toast.info(
+             newFavorited ? (
+                 <LocalizedText name={`Task ${task} Favorited`} />
+             ) : (
+                 <LocalizedText name={`Task ${task} Unfavorited`} />
+             ),
+             {
+                 style: {
+                     backgroundColor: newFavorited ? '#4CAF50' : '#F44336', // Green for favorited, Red for unfavorited
+                     color: '#fff', // Ensure text is readable
+                 },
+             }
+         );*/
+    };
+
+    return (
+        <div style={{ display: 'flex', alignItems: 'center', position: 'relative', marginBottom: '10px' }}>
+            {/* **Favorite Star Icon** */}
+            <span
+                onClick={handleFavoriteClick} // **Attach the new click handler**
+                style={{
+                    cursor: 'pointer',
+                    color: isFavorited ? 'gold' : 'grey',
+                    marginRight: '10px',
+                    fontSize: '24px', // **Made the star bigger**
+                }}
+                title={isFavorited ? 'Unfavorite Task' : 'Favorite Task'}
+            >
+                &#9733;
+            </span>
+
+            {/* **Task Name** */}
+            <p
+                style={{
+                    fontSize: '17px',
+                    padding: '0.25rem 0.35rem',
+                    cursor: 'pointer',
+                    borderBottom: '1px solid #eee',
+                    margin: 0.8,
+                    flex: 1,
+                    backgroundColor: getTaskBackgroundColor(),
+                    color: 'white',
+                    transition: 'background-color 0.2s',
+                }}
+                onClick={() => handleTaskChange(task)}
+                onMouseEnter={handleTaskMouseEnter}
+                onMouseLeave={handleTaskMouseLeave}
+            >
+                <LocalizedText name={task} />
+            </p>
+
+            {/* **"D" Button for Task Description** */}
+            <button
+                style={{
+                    width: '24px',
+                    height: '24px',
+                    marginLeft: '8px',
+                    backgroundColor: getButtonBackgroundColor(),
+                    color: 'white',
+                    fontWeight: 'bold',
+                    border: '1px solid #ccc',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    position: 'relative',
+                    boxShadow: '3px 1px 1px darkred',
+                    transition: 'background-color 0.2s',
+                }}
+                onMouseEnter={handleButtonMouseEnter}
+                onMouseLeave={handleButtonMouseLeave}
+                onClick={handleButtonClick}
+            >
+                D
+                {isTooltipVisible && (
+                    <div
+                        style={{
+                            position: 'absolute',
+                            top: '-30px',
+                            left: '50%',
+                            transform: 'translateX(-50%)',
+                            backgroundColor: '#333',
+                            color: '#fff',
+                            padding: '5px 10px',
+                            borderRadius: '4px',
+                            fontSize: '14px',
+                            whiteSpace: 'nowrap',
+                            zIndex: 1000,
+                        }}
+                    >
+                        <LocalizedText name="Click to display detailed task description" />
+                    </div>
+                )}
+            </button>
+        </div>
+    );
+};
+
+export default TaskItem;

@@ -1,0 +1,762 @@
+// components/ChatBase.tsx
+
+import React, { useState, useEffect, useContext, useMemo } from 'react';
+import QAResponse from './QAResponse';
+import { UserQuestions, UserQA, QuestionAnswer } from '../types';
+import HashUtil from '../util/hashToFixedDigits';
+import { useActiveAccount } from "thirdweb/react";
+import { ChatBaseStream } from './ChatBaseStream';
+import styles from "../styles/Home6.module.css";
+import { LocalizedText } from '../util/LocalizedText';
+import { LocalizationContext } from '../util/LocalizationContext';
+import { polygonAmoy, polygon, Chain } from "thirdweb/chains";
+import { ACTIVE_CHAIN } from "../constants/constants";
+import { usePayment } from '../hook/Payment_Process';
+import { debounce, throttle } from 'lodash';
+import { useCallback } from 'react';
+import { getLocalizedString } from '../util/LocalizedText';
+import { toast } from 'react-toastify';
+
+export const maxDuration = 300; // This function can run for a maximum of 300 seconds
+
+export const dynamic = 'force-dynamic';
+
+
+interface ChatBaseProps {
+    role: string;
+    task: string;
+    department: string;
+    requiresSDK?: boolean;
+}
+
+const ChatBase: React.FC<ChatBaseProps> = ({ role, task, department }) => {
+    const [qaResponse, setQAResponse] = useState('');
+    const [editableQA, setEditableQA] = useState<QuestionAnswer[]>([]);
+    const [editableQAForEmbed, setEditableQAForEmbed] = useState<QuestionAnswer[]>([]);
+    const [isLoading, setIsLoading] = useState(false);
+    const [isJsonFormat, setIsJsonFormat] = useState(false);
+    const [isEditing, setIsEditing] = useState(false);
+    const [numQuestions, setNumQuestions] = useState(0);
+    const [showChatStream, setShowChatStream] = useState(false);
+    const account = useActiveAccount();
+    const userAddress = account?.address;
+    const [textareaHeights, setTextareaHeights] = useState<number[]>([]);
+    // const assistantId = HashUtil.hashTo(role + task);
+    // const generatedThreadId = HashUtil.hashTo(role + task + userAddress);
+    const assistantId = useMemo(() => HashUtil.hashTo(role + task), [role, task]);
+    const generatedThreadId = useMemo(() => HashUtil.hashTo(role + task + userAddress), [role, task, userAddress]);
+
+    // const { contract: accountFactory } = useContract(ACCOUNT_FACTORY_ADDRESS);
+    const chainMap: { [key: string]: Chain } = {
+        "polygon-amoy-testnet": polygonAmoy,
+        "polygon": polygon, // Add Polygon mainnet
+    };
+
+    // Ensure activeChain is a Chain object
+    const activeChain: Chain = chainMap[ACTIVE_CHAIN];
+    const [user, setUser] = useState<string | null>(null);
+    const [price, setPrice] = useState<number | null>(null);
+    const { language, setLanguage } = useContext(LocalizationContext);
+    const [originalQuestions, setOriginalQuestions] = useState<string[]>([]);
+    const { process_payment, isPaymentProcessing } = usePayment();
+    const [isAssistantRun, setIsAssistantRun] = useState(false); // Track if assistant has run
+    const memoizedLanguage = useMemo(() => language, [language]);
+
+
+    useEffect(() => {
+        if (!userAddress || isAssistantRun) return;
+
+        //console.log("assistant Id is", assistantId);
+        //console.log("Thread Id is", generatedThreadId);
+
+        const runInitialTasks = async () => {
+            await handleCleanThread();
+            await handleRunAssistant();
+            setIsAssistantRun(true);
+        };
+
+        runInitialTasks();
+    }, [userAddress, task]);  // Remove `assistantId` and `generatedThreadId`, they are derived from `task` and `userAddress`
+
+
+
+    useEffect(() => {
+        fetchRoleMappings();
+    }, [department, role]);
+
+    const getRoleMappings = async (department: string, role: string) => {
+        const response = await fetch('/api/get-role-mappings', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ department, role }),
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to get role mappings');
+        }
+
+        const data = await response.json();
+
+        return data;
+    };
+
+    const fetchRoleMappings = async () => {
+        try {
+            const roleMappings = await getRoleMappings(department, role);
+            //console.log("roleMappings is ", roleMappings);
+
+            setUser(roleMappings.user);
+            setPrice(roleMappings.price);
+
+            //console.log("Updated user is ", roleMappings.user);
+            //console.log("Updated price is ", roleMappings.price);
+
+            return roleMappings; // Return the fetched data
+        } catch (error) {
+            console.error('Error fetching role mappings:', error);
+            throw error;
+        }
+    };
+
+
+    const handleCleanThread = async () => {
+        try {
+            const response = await fetch('/api/cleanup', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ threadId: generatedThreadId }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to clean thread');
+            }
+        } catch (error) {
+            console.error('Error cleaning thread:', error);
+        }
+    };
+
+
+    const handleRunAssistant = useCallback(debounce(async () => {
+        if (isAssistantRun) return; // Prevent re-runs
+        setIsLoading(true);
+
+        try {
+            let currentUser = user;
+            let currentPrice = price;
+
+            // Fetch user and price if not available
+            if (!currentUser || !currentPrice) {
+                const roleMappings = await fetchRoleMappings();
+                currentUser = roleMappings.user;
+                currentPrice = roleMappings.price;
+            }
+
+            if (!currentUser || !currentPrice) {
+                console.log('User or price information not available');
+                return;
+            }
+
+            // Process payment if price is available
+            if (currentPrice) {
+                const freeChatsUsed = await process_payment(String(userAddress), currentPrice, currentUser);
+                if (!freeChatsUsed) {
+                    const message = 'Insufficient balance. Unable to proceed with the request.';
+                    toast.success(await getLocalizedString(message, language));
+
+                    return;
+                }
+            }
+
+            // Fetch questions and responses
+            const existingQuestionsResponse = await fetch('/api/getQuestions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ threadId: generatedThreadId }),
+            });
+
+            const existingQuestionsData = await existingQuestionsResponse.json();
+
+            if (existingQuestionsData.questions && existingQuestionsData.questions.length > 0) {
+                // Existing questions found
+                await handleExistingQuestions(existingQuestionsData.questions);
+            } else {
+                // No existing questions found, generate new ones
+                await handleNewQuestions();
+            }
+            setIsAssistantRun(true); // Only set this after successful completion
+        } catch (error) {
+            console.error('Error running assistant:', error);
+        } finally {
+            setIsLoading(false);
+        }
+    }, 300), [user, price, userAddress, generatedThreadId, isAssistantRun]);  // 300ms debounce
+
+    const handleExistingQuestions = async (questions: string[]) => {
+        setNumQuestions(questions.length);
+        const userQuestions: UserQuestions = {
+            userId: userAddress!,
+            questions: questions.map((q: string) => ({ question: q })),
+        };
+
+        const qaResponse = await fetch('/api/qa', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(userQuestions),
+        });
+
+        if (!qaResponse.ok) throw new Error('Failed to get QA response');
+
+        const qaData: UserQA = await qaResponse.json();
+
+        await processQAData(qaData);
+    };
+
+    const handleNewQuestions = async () => {
+        const questionsText = await runAssistant(
+            assistantId,
+            "ask 5 pertinent questions designed to elicit as much detail as needed to create the highest quality personalized output that achieves your goal. Return the questions only, one question one line",
+            generatedThreadId
+        );
+
+        const questionList = extractQuestions(questionsText);
+        setNumQuestions(questionList.length);
+
+        await fetch('/api/saveQuestions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ threadId: generatedThreadId, questions: questionList }),
+        });
+
+        const userQuestions: UserQuestions = {
+            userId: userAddress!,
+            questions: questionList.map((q) => ({ question: q })),
+        };
+
+        const qaResponse = await fetch('/api/qa', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(userQuestions),
+        });
+
+        if (!qaResponse.ok) throw new Error('Failed to get QA response');
+
+        const qaData: UserQA = await qaResponse.json();
+
+        await processQAData(qaData);
+    };
+
+    const processQAData = async (qaData: UserQA) => {
+        const originalQuestionsTemp = [...originalQuestions];
+
+        // Translate questions and answers if the language is not English
+        if (language.toLowerCase() !== 'english' && language.toLowerCase() !== 'en') {
+            for (let qa of qaData.qa) {
+                originalQuestionsTemp.push(qa.question); // Store the original English question
+                qa.question = await translateViaApi('Question', qa.question, 'English', language);
+                qa.answer = await translateViaApi('Answer', qa.answer, 'English', language);
+            }
+        }
+
+        setOriginalQuestions(originalQuestionsTemp);
+
+        const formattedQA = qaData.qa
+            .map((qa: QuestionAnswer) => `Q: ${qa.question}\n\nA: ${qa.answer}`)
+            .join('\n\n---\n\n');
+
+        setQAResponse(formattedQA);
+        setEditableQA(qaData.qa);
+        setIsJsonFormat(false);
+        setIsEditing(false);
+    };
+
+
+    const runAssistant = async (assistantId: string, message: string, threadId: string): Promise<string> => {
+        const response = await fetch('/api/runAssistant', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ assistantId, userMessage: message, threadId, userAddress }),
+        });
+        if (!response.ok) {
+            throw new Error('Failed to run assistant');
+        }
+        const data = await response.json();
+        return data.response;
+    };
+
+    function extractQuestions(input: string): string[] {
+        const lines = input.split('\n');
+        const questions: string[] = [];
+
+        for (let i = 0; i < lines.length && questions.length < 5; i++) {
+            const line = lines[i].trim();
+            if (line && !line.startsWith('📌')) {
+                // Remove leading numbers and dots if present
+                const question = line.replace(/^\d+\.\s*/, '').trim();
+                questions.push(question);
+            }
+        }
+
+        return questions;
+    }
+
+    const toggleEdit = () => {
+        if (isEditing) {
+            // Switching from edit mode to show mode
+            const formatted = editableQA.map((qa: QuestionAnswer) =>
+                `Q: ${qa.question}\n\nA: ${qa.answer}`
+            ).join('\n\n---\n\n');
+            setQAResponse(formatted);
+        } else {
+            // Switching from show mode to edit mode
+            const qaPairs = qaResponse.split('\n\n---\n\n');
+            const parsedQA = qaPairs.map((pair: string) => {
+                const [question, answer] = pair.split('\n\nA: ');
+                return {
+                    question: question.replace('Q: ', '').trim(),
+                    answer: answer.trim()
+                };
+            });
+            setEditableQA(parsedQA);
+        }
+        setIsEditing(!isEditing);
+    };
+
+    const handleAnswerChange = (index: number, newAnswer: string) => {
+        const updatedQA = [...editableQA];
+        updatedQA[index].answer = newAnswer;
+        setEditableQA(updatedQA);
+    };
+
+    const handleAnswerSubmit = async () => {
+        setIsLoading(true);
+        try {
+            // Translate answers back to English
+            let editqa;
+            if (language.toLowerCase() !== 'english' && language.toLowerCase() !== 'en') {
+                const newEditableQAForEmbed = await Promise.all(
+                    editableQA.map(async (qa, index) => {
+                        const originalQuestion = originalQuestions[index] || qa.question; // Fallback to original if missing
+                        try {
+                            const translatedAnswer = await translateViaApi('Answer', qa.answer, language, 'English');
+                            const translatedQuestion = await translateViaApi('Question', qa.question, language, 'English');
+                            //console.log("Translated Question is ", translatedQuestion);
+                            //console.log("Translated Answer is ", translatedAnswer);
+                            return {
+                                //  ...qa,
+                                question: originalQuestion,
+                                answer: translatedAnswer,
+                            };
+                        } catch (error) {
+                            console.error(`Error translating answer for index ${index}:`, error);
+                            return qa; // Return original QA if translation fails
+                        }
+                    })
+                );
+
+                setEditableQAForEmbed(newEditableQAForEmbed);
+                //console.log("new embedding is ", newEditableQAForEmbed);
+                editqa = newEditableQAForEmbed;
+            } else {
+                editqa = editableQA;
+            }
+            const userQA: UserQA = { userId: userAddress!, qa: editqa };
+            const response = await fetch('/api/qa', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(userQA)
+            });
+            if (response.ok) {
+                const formatted = editableQA.map((qa: QuestionAnswer) =>
+                    `Q: ${qa.question}\n\nA: ${qa.answer}`
+                ).join('\n\n---\n\n');
+                setQAResponse(formatted);
+                setIsEditing(false);
+                setShowChatStream(true);
+            } else {
+                console.error('Error submitting answers');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const translateViaApi = async (name: string, description: string, fromLanguage: string, toLanguage: string): Promise<string> => {
+        const response = await fetch('/api/translate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, description, fromLanguage, toLanguage }),
+        });
+
+        if (!response.ok) {
+            console.error('Failed to translate');
+            return description; // Return original if translation fails
+        }
+
+        const data = await response.json();
+        return data.translatedText || description;
+    };
+
+    /*const handleAskAdditionalQuestions = async () => {
+        if (!userAddress) {
+            console.log('User address not available');
+            return;
+        }
+
+        setIsLoading(true);
+        try {
+            // Use null as threadId to start a new conversation
+            const previousQuestionsArray = editableQA.map(qa => qa.question);
+            const previousQuestions = previousQuestionsArray.join('\n');
+            const prompt = `Based on the following task: ${task}, please generate 10 new and unique questions that have not been asked before. Previously asked questions are:\n${previousQuestions}\nEnsure the new questions are different from any of these. Return the questions only, one question per line.`;
+
+            const questionsText = await runAssistant(assistantId, prompt, "");
+            console.log('Assistant generated questions:', questionsText);
+            const questionList = extractQuestions(questionsText);
+
+            // Filter out duplicate questions
+            const newQuestions = questionList.filter(q => !previousQuestionsArray.includes(q));
+
+            // Inform if fewer than 5 new questions
+            if (newQuestions.length < 5) {
+                console.log(`Only ${newQuestions.length} new questions were generated.`);
+                toast.info(`Only ${newQuestions.length} new questions could be generated.`);
+            }
+
+            // Use the first 5 new questions
+            const questionsToUse = newQuestions.slice(0, 5);
+
+            // Proceed if there are any new questions
+            if (questionsToUse.length === 0) {
+                console.log('No new questions could be generated.');
+                toast.error('No new questions could be generated. Please try again later.');
+                setIsLoading(false);
+                return;
+            }
+
+            let currentUser = user;
+            let currentPrice = price;
+
+            // Fetch user and price if not available
+            if (!currentUser || !currentPrice) {
+                const roleMappings = await fetchRoleMappings();
+                currentUser = roleMappings.user;
+                currentPrice = roleMappings.price;
+            }
+
+            if (!currentUser || !currentPrice) {
+                console.log('User or price information not available');
+                setIsLoading(false);
+                return;
+            }
+
+            const freeChatsUsed = await process_payment(String(userAddress), currentPrice, currentUser);
+
+            if (!freeChatsUsed) {
+                const message = 'Insufficient balance. Unable to proceed with the request.';
+                toast.error(await getLocalizedString(message, language));
+                setIsLoading(false);
+                return;
+            }
+
+            // Save the new questions (optional)
+            await fetch('/api/saveQuestions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ threadId: generatedThreadId, questions: questionsToUse }),
+            });
+
+            // Prepare userQuestions with new questions
+            const userQuestions: UserQuestions = {
+                userId: userAddress!,
+                questions: questionsToUse.map(q => ({ question: q })),
+            };
+
+            const qaResponse = await fetch('/api/qa', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(userQuestions),
+            });
+
+            if (!qaResponse.ok) {
+                throw new Error('Failed to get QA response');
+            }
+
+            const qaData: UserQA = await qaResponse.json();
+
+            // Update numQuestions
+            setNumQuestions(qaData.qa.length);
+
+            // Update originalQuestions
+            let updatedOriginalQuestions: string[] = [];
+
+            if (language.toLowerCase() !== 'english' && language.toLowerCase() !== 'en') {
+                for (let qa of qaData.qa) {
+                    updatedOriginalQuestions.push(qa.question);
+                    qa.question = await translateViaApi('Question', qa.question, 'English', language);
+                    qa.answer = await translateViaApi('Answer', qa.answer, 'English', language);
+                }
+                setOriginalQuestions(updatedOriginalQuestions);
+            } else {
+                updatedOriginalQuestions = qaData.qa.map(qa => qa.question);
+                setOriginalQuestions(updatedOriginalQuestions);
+            }
+
+            // Update the QA data after translation
+            const formattedQA = qaData.qa.map((qa: QuestionAnswer) =>
+                `Q: ${qa.question}\n\nA: ${qa.answer}`
+            ).join('\n\n---\n\n');
+
+            // Overwrite the previous Q&A with the new one
+            setQAResponse(formattedQA);
+            setEditableQA(qaData.qa);
+
+        } catch (error) {
+            console.error('Error asking additional questions:', error);
+        } finally {
+            setIsLoading(false);
+        }
+    };*/
+    const handleAskAdditionalQuestions = async () => {
+        if (!userAddress) {
+            console.log('User address not available');
+            return;
+        }
+
+        setIsLoading(true);
+        try {
+            // Include previous questions to avoid duplicates
+            const previousQuestionsArray = editableQA.map(qa => qa.question);
+            const previousQuestions = previousQuestionsArray.join('\n');
+
+            // Prepare the prompt for OpenAI
+            const prompt = `Based on the following task: ${task}, please generate 5 new and unique questions that have not been asked before. Previously asked questions are:\n${previousQuestions}\nEnsure the new questions are different from any of these. Return the questions only, one question per line.`;
+
+            // Call the new API endpoint to get the questions
+            const response = await fetch('/api/generateQuestions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to generate questions');
+            }
+
+            const data = await response.json();
+            const questionsText = data.questions;
+
+            console.log('Generated questions:', questionsText);
+
+            const questionList = extractQuestions(questionsText);
+
+            // Proceed with the rest of your logic
+            // Filter out duplicate questions
+            const newQuestions = questionList.filter(q => !previousQuestionsArray.includes(q));
+
+            // Use the new questions
+            if (newQuestions.length === 0) {
+                console.log('No new questions could be generated.');
+                toast.error('No new questions could be generated. Please try again later.');
+                setIsLoading(false);
+                return;
+            }
+
+            // Proceed with payment processing and fetching answers
+            let currentUser = user;
+            let currentPrice = price;
+
+            // Fetch user and price if not available
+            if (!currentUser || !currentPrice) {
+                const roleMappings = await fetchRoleMappings();
+                currentUser = roleMappings.user;
+                currentPrice = roleMappings.price;
+            }
+
+            if (!currentUser || !currentPrice) {
+                console.log('User or price information not available');
+                setIsLoading(false);
+                return;
+            }
+
+            const freeChatsUsed = await process_payment(String(userAddress), currentPrice, currentUser);
+
+            if (!freeChatsUsed) {
+                const message = 'Insufficient balance. Unable to proceed with the request.';
+                toast.error(await getLocalizedString(message, language));
+                setIsLoading(false);
+                return;
+            }
+            //update usage
+            // **Start of New Code: Update Usage Count**
+            try {
+                const updateResponse = await fetch('/api/updateUsage', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        department,
+                        role,
+                        increment: 1, // Increment usage by 1
+                    }),
+                });
+
+                if (!updateResponse.ok) {
+                    // Handle non-2xx HTTP responses
+                    const errorData = await updateResponse.json();
+                    console.error('Failed to update usage:', errorData.message || updateResponse.statusText);
+                    // Optionally, notify the user about the failure
+                    //toast.error('Failed to update usage count. Please try again.');
+                } else {
+                    const data = await updateResponse.json();
+                    console.log(`Usage count updated successfully. New usage: ${data.usage}`);
+                    // Optionally, you can update local state or perform other actions based on the new usage count
+                }
+            } catch (error) {
+                // Handle network or other unforeseen errors
+                console.error('Error updating usage:', error);
+                toast.error('An error occurred while updating usage count.');
+            }
+            // **End of New Code** 
+
+            // Save the new questions (optional)
+            await fetch('/api/saveQuestions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ threadId: generatedThreadId, questions: newQuestions }),
+            });
+
+            // Prepare userQuestions with new questions
+            const userQuestions: UserQuestions = {
+                userId: userAddress!,
+                questions: newQuestions.map(q => ({ question: q })),
+            };
+
+            const qaResponse = await fetch('/api/qa', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(userQuestions),
+            });
+
+            if (!qaResponse.ok) {
+                throw new Error('Failed to get QA response');
+            }
+
+            const qaData: UserQA = await qaResponse.json();
+
+            // Update numQuestions
+            setNumQuestions(qaData.qa.length);
+
+            // Update originalQuestions
+            let updatedOriginalQuestions: string[] = [];
+
+            if (language.toLowerCase() !== 'english' && language.toLowerCase() !== 'en') {
+                for (let qa of qaData.qa) {
+                    updatedOriginalQuestions.push(qa.question);
+                    qa.question = await translateViaApi('Question', qa.question, 'English', language);
+                    qa.answer = await translateViaApi('Answer', qa.answer, 'English', language);
+                }
+                setOriginalQuestions(updatedOriginalQuestions);
+            } else {
+                updatedOriginalQuestions = qaData.qa.map(qa => qa.question);
+                setOriginalQuestions(updatedOriginalQuestions);
+            }
+
+            // Update the QA data after translation
+            const formattedQA = qaData.qa.map((qa: QuestionAnswer) =>
+                `Q: ${qa.question}\n\nA: ${qa.answer}`
+            ).join('\n\n---\n\n');
+
+            // Overwrite the previous Q&A with the new one
+            setQAResponse(formattedQA);
+            setEditableQA(qaData.qa);
+
+        } catch (error) {
+            console.error('Error asking additional questions:', error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    return (
+        <div className={styles.container}>
+
+            {isLoading && (
+                <div className={styles.loadingIndicator}>
+                    <LocalizedText name="AI is thinking" />...
+                </div>
+            )}
+            {qaResponse && !showChatStream && (
+                <div className={styles.qaContainer}>
+                    <div className={styles.qaHeader}>
+                        <h3 className={styles.qaTitle}>
+                            <LocalizedText name="Q&A" />:
+                        </h3>
+                        <div className={styles.buttonContainer}>
+                            <button
+                                onClick={toggleEdit}
+                                className={styles.editButton}
+                                aria-label={isEditing ? 'Show Q&A' : 'Edit Q&A'}
+                            >
+                                {isEditing ? <LocalizedText name='Show' /> : <LocalizedText name='Edit' />}
+                            </button>
+                            {isEditing ? (
+                                <button
+                                    onClick={handleAnswerSubmit}
+                                    className={styles.submitButton}
+                                    disabled={isLoading}
+                                    aria-label='Submit Answers'
+                                >
+                                    {isLoading ? <LocalizedText name='Submitting...' /> : <LocalizedText name='Submit Answers' />}
+                                </button>
+                            ) : (
+                                <button
+                                    onClick={handleAskAdditionalQuestions}
+                                    className={styles.submitButton}
+                                    disabled={isLoading}
+                                    aria-label='More Questions'
+                                >
+                                    {isLoading ? <LocalizedText name='Asking more...' /> : <LocalizedText name='More Questions' />}
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                    <QAResponse
+                        qaResponse={qaResponse}
+                        isEditing={isEditing}
+                        editableQA={editableQA}
+                        editableQAForEmbed={editableQAForEmbed}
+                        toggleEdit={toggleEdit}
+                        handleAnswerChange={handleAnswerChange}
+                        handleAnswerSubmit={handleAnswerSubmit}
+                        numQuestions={numQuestions}
+                        isLoading={isLoading}
+                    />
+                </div>
+            )}
+            {showChatStream && (
+                <div className={styles.chatStreamContainer}>
+                    <ChatBaseStream
+                        key={`${role}-${department}`}
+                        role={role}
+                        task={task}
+                        initialMessage={qaResponse ? `Please proceed to the task in language:${language} based on the following Q&A information ${qaResponse} and continue in that language.` : ''}
+                        department={department}
+                        user={user}
+                        price={price}
+                    />
+                </div>
+            )}
+        </div>
+    );
+
+
+};
+
+export default ChatBase;

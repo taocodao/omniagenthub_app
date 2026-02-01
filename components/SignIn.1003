@@ -1,0 +1,57 @@
+
+import { ConnectEmbed, darkTheme, } from "thirdweb/react";
+import { client } from "../util/client"
+import { embeddedWallet, inAppWallet } from "thirdweb/wallets";
+import { polygonAmoy, polygon, Chain } from "thirdweb/chains";
+import { ACTIVE_CHAIN, CLIENT_ID, ACCOUNT_FACTORY_ADDRESS } from "../constants/constants";
+const customTheme = darkTheme({
+    colors: {
+        modalBg: "black",
+    }
+});
+
+const chainMap: { [key: string]: Chain } = {
+    "polygon-amoy-testnet": polygonAmoy,
+    "polygon": polygon, // Add Polygon mainnet
+};
+
+const activeChain: Chain = chainMap[ACTIVE_CHAIN];
+
+const SignIn = () => {
+    return (
+        <div style={{
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            alignItems: "center",
+            height: "100vh",
+        }}>
+            <h1>Welcome to Web3AIstore</h1>
+            <ConnectEmbed
+                client={client}
+                accountAbstraction={{
+                    chain: activeChain,
+                    sponsorGas: true,
+                    factoryAddress: ACCOUNT_FACTORY_ADDRESS,
+                }}
+                theme={customTheme}
+                style={{
+                    border: "none",
+                }}
+                wallets={[
+                    inAppWallet({
+                        auth: {
+                            options: ['email', 'google', 'apple', 'facebook', 'phone'],
+                        },
+                    }),
+                ]}
+                showThirdwebBranding={false}
+
+
+            />
+
+        </div>
+    )
+};
+
+export default SignIn;

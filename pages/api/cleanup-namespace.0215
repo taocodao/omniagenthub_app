@@ -1,0 +1,68 @@
+// pages/api/cleanup-namespace.ts
+import { NextApiRequest, NextApiResponse } from 'next';
+import { Pinecone } from '@pinecone-database/pinecone';
+import { createClient } from '@vercel/kv';
+
+const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
+const index = pc.index("user-documents");
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'DELETE') {
+        res.setHeader('Allow', ['DELETE']);
+        return res.status(405).json({
+            error: `Method ${req.method} Not Allowed`
+        });
+    }
+
+    const { namespace } = req.body;
+    if (!namespace) {
+        return res.status(400).json({
+            error: 'Missing required namespace parameter in request body'
+        });
+    }
+
+    try {
+        // 1. Delete Pinecone vectors
+        await index.namespace(namespace).deleteAll();
+
+        // 2. Delete KV storage entries
+        let deletedCount = 0;
+        const statusKeys = await kv.keys(`lastScrapeVersion:${namespace}:*`);
+        for (const key of statusKeys) {
+            await kv.del(key);
+            deletedCount++;
+        }
+
+        // 3. Remove from global embedding index
+        const indexKey = "embeddingIndex";
+        let currentIndex: string[] = [];
+        const indexData = await kv.get(indexKey);
+        if (indexData) currentIndex = indexData as string[];
+        const updatedIndex = currentIndex.filter(key => key !== namespace);
+        await kv.set(indexKey, updatedIndex);
+
+        // 4. Delete metadata entries
+        await kv.del(`embeddingOwner:${namespace}`);
+        await kv.del(`embeddingMapping:${namespace}`);
+
+        return res.status(200).json({
+            success: true,
+            message: `Namespace ${namespace} cleaned successfully`,
+            vectorsDeleted: true,
+            kvEntriesRemoved: deletedCount,
+            indexUpdated: true,
+            metadataRemoved: true
+        });
+
+    } catch (error) {
+        console.error('Namespace cleanup error:', error);
+        return res.status(500).json({
+            error: 'Failed to complete namespace cleanup',
+            details: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+}

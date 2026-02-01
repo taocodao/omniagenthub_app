@@ -1,0 +1,147 @@
+// SignIn.tsx
+
+import React from "react";
+import { ConnectEmbed, darkTheme } from "thirdweb/react";
+import { client } from "../util/client";
+import { inAppWallet } from "thirdweb/wallets";
+import { polygonAmoy, polygon, Chain } from "thirdweb/chains";
+import { ACTIVE_CHAIN, CLIENT_ID, ACCOUNT_FACTORY_ADDRESS } from "../constants/constants";
+
+// Custom dark theme configuration
+const customTheme = darkTheme({
+    colors: {
+        modalBg: "Blue",
+    },
+
+});
+
+// Mapping of chain identifiers to Chain objects
+const chainMap: { [key: string]: Chain } = {
+    "polygon-amoy-testnet": polygonAmoy,
+    polygon: polygon, // Polygon mainnet
+};
+
+// Select the active chain based on the ACTIVE_CHAIN constant
+const activeChain: Chain = chainMap[ACTIVE_CHAIN];
+
+const SignIn = () => {
+    return (
+        <div
+            style={{
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "center",
+                alignItems: "center",
+                height: "100vh",
+                backgroundColor: "darkblack", // Maintain black background
+                padding: "0 20px", // Added padding for better responsiveness on smaller screens
+            }}
+        >
+            {/* Welcome Message */}
+            <h1 style={{ marginBottom: "10px", color: "#fff" }}>Welcome to Web3AIstore</h1>
+
+            {/* Tagline */}
+            <p
+                style={{
+                    fontSize: "20px", // Increased font size for better visibility
+                    color: "#fff",
+                    textAlign: "center",
+                    maxWidth: "800px",
+                    marginBottom: "20px",
+                }}
+            >
+                Effortless AI Solutions to Boost Productivity and Gain an Edge in Work and Life
+            </p>
+
+            {/* ConnectEmbed Component for Wallet Connection */}
+            <ConnectEmbed
+                client={client}
+                accountAbstraction={{
+                    chain: activeChain,
+                    sponsorGas: true,
+                    factoryAddress: ACCOUNT_FACTORY_ADDRESS,
+                }}
+                theme={customTheme}
+                style={{
+                    border: "solid darkred",
+
+                    borderBlockColor: "solid black",
+                    width: "450px", // Optional: Set a specific width for consistency
+                    marginBottom: "30px", // Space between ConnectEmbed and the instruction text
+                }}
+                wallets={[
+                    inAppWallet({
+                        auth: {
+                            options: ["email", "google", "apple", "facebook", "phone"],
+                        },
+                    }),
+                ]}
+                showThirdwebBranding={false}
+            />
+
+            {/* Instructional Text */}
+            <p
+                style={{
+                    fontSize: "18px",
+                    color: "#fff",
+                    textAlign: "center",
+                    maxWidth: "300px",
+                    marginBottom: "20px",
+                }}
+            >
+                Not sure where to start?
+            </p>
+            <p
+                style={{
+                    fontSize: "18px",
+                    color: "#fff",
+                    textAlign: "center",
+                    maxWidth: "800px",
+                    marginBottom: "30px",
+                }}
+            >
+
+                Click the button below or tap the Web3AIstore logo anytime in the app for a quick demo
+
+            </p>
+
+            {/* Quick Demo Link/Button */}
+            <a
+                href="https://web3aistore.navattic.com/5810k4p"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                    textDecoration: "none",
+                }}
+            >
+                <button
+                    aria-label="Quick Demo"
+                    style={{
+                        padding: "10px 20px",
+                        fontSize: "16px",
+                        fontWeight: "bold",
+                        color: "#fff",
+                        backgroundColor: "blue", // Facebook blue color for visibility #4267B2
+                        border: "none",
+                        borderRadius: "5px",
+                        cursor: "pointer",
+                        boxShadow: "0 4px 6px rgba(0, 0, 0, 0.4)",
+                        transition: "background-color 0.3s, transform 0.2s",
+                    }}
+                    onMouseEnter={(e) => {
+                        (e.target as HTMLButtonElement).style.backgroundColor = "#365899";
+                        (e.target as HTMLButtonElement).style.transform = "translateY(-2px)";
+                    }}
+                    onMouseLeave={(e) => {
+                        (e.target as HTMLButtonElement).style.backgroundColor = "blue";
+                        (e.target as HTMLButtonElement).style.transform = "translateY(0)";
+                    }}
+                >
+                    Quick Demo
+                </button>
+            </a>
+        </div>
+    );
+};
+
+export default SignIn;

@@ -1,0 +1,120 @@
+import React, { useState } from 'react';
+import { LocalizedText, getLocalizedString } from '../util/LocalizedText';
+import { LocalizationContext } from '../util/LocalizationContext';
+
+interface TaskItemProps {
+    task: string;
+    handleTaskChange: (task: string) => void;
+    handleDescriptionClick: (event: React.MouseEvent<HTMLButtonElement>, task: string) => void;
+    selectedTask: string | null;
+}
+
+const TaskItem: React.FC<TaskItemProps> = ({
+    task,
+    handleTaskChange,
+    handleDescriptionClick,
+    selectedTask,
+}) => {
+    const [isTooltipVisible, setIsTooltipVisible] = useState(false);
+    const [isTaskHovered, setIsTaskHovered] = useState(false);
+    const [isButtonHovered, setIsButtonHovered] = useState(false);
+
+    // Handlers for task hover
+    const handleTaskMouseEnter = () => {
+        setIsTaskHovered(true);
+    };
+
+    const handleTaskMouseLeave = () => {
+        setIsTaskHovered(false);
+    };
+
+    // Handlers for button hover and tooltip
+    const handleButtonMouseEnter = () => {
+        setIsTooltipVisible(true);
+        setIsButtonHovered(true);
+    };
+
+    const handleButtonMouseLeave = () => {
+        setIsTooltipVisible(false);
+        setIsButtonHovered(false);
+    };
+
+    // Determine background color
+    const getBackgroundColor = () => {
+        if (selectedTask === task) {
+            return 'yellow';
+        } else if (isTaskHovered) {
+            return 'yellow';
+        } else {
+            return 'blue';
+        }
+    };
+
+    return (
+        <div style={{ display: 'flex', alignItems: 'center', position: 'relative' }}>
+            <p
+                style={{
+                    fontSize: '17px',
+                    padding: '0.25rem 0.35rem',
+                    cursor: 'pointer',
+                    borderBottom: '1px solid #eee',
+                    margin: 0.8,
+                    flex: 1,
+                    backgroundColor: getBackgroundColor(),
+                    color: 'white',
+                    transition: 'background-color 0.2s',
+                }}
+                onClick={() => {
+                    handleTaskChange(task);
+                }}
+                onMouseEnter={handleTaskMouseEnter}
+                onMouseLeave={handleTaskMouseLeave}
+            >
+                <LocalizedText name={task} />
+            </p>
+            <button
+                style={{
+                    width: '24px',
+                    height: '24px',
+                    marginLeft: '8px',
+                    backgroundColor: 'blue',
+                    color: 'white',
+                    fontWeight: 'bold',
+                    border: '1px solid #ccc',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    position: 'relative',
+                    boxShadow: '0 0 5px red',
+                    transform: isButtonHovered ? 'scale(0.8)' : 'scale(1)',
+                    transition: 'transform 0.2s',
+                }}
+                onClick={(e) => handleDescriptionClick(e, task)}
+                onMouseEnter={handleButtonMouseEnter}
+                onMouseLeave={handleButtonMouseLeave}
+            >
+                D
+                {isTooltipVisible && (
+                    <div
+                        style={{
+                            position: 'absolute',
+                            top: '-30px',
+                            left: '50%',
+                            transform: 'translateX(-50%)',
+                            backgroundColor: '#333',
+                            color: '#fff',
+                            padding: '5px 10px',
+                            borderRadius: '4px',
+                            fontSize: '12px',
+                            whiteSpace: 'nowrap',
+                            zIndex: 1000,
+                        }}
+                    >
+                        Click to display description of the task
+                    </div>
+                )}
+            </button>
+        </div>
+    );
+};
+
+export default TaskItem;

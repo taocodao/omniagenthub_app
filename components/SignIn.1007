@@ -1,0 +1,245 @@
+// SignIn.tsx
+
+import React, { useState, useEffect, useContext, ChangeEvent } from "react";
+import { useRouter } from 'next/router'; // For handling routing and query parameters
+import { ConnectEmbed, darkTheme } from "thirdweb/react";
+import { client } from "../util/client";
+import { inAppWallet } from "thirdweb/wallets";
+import { polygonAmoy, polygon, Chain } from "thirdweb/chains";
+import { ACTIVE_CHAIN, CLIENT_ID, ACCOUNT_FACTORY_ADDRESS } from "../constants/constants";
+import { getLocalizedString, LocalizedText } from '../util/LocalizedText';
+import { LocalizationContext } from '../util/LocalizationContext';
+
+// Custom dark theme configuration
+const customTheme = darkTheme({
+    colors: {
+        modalBg: "Blue",
+    },
+});
+
+// Mapping of chain identifiers to Chain objects
+const chainMap: { [key: string]: Chain } = {
+    "polygon-amoy-testnet": polygonAmoy,
+    "polygon": polygon, // Polygon mainnet
+};
+
+// Select the active chain based on the ACTIVE_CHAIN constant
+const activeChain: Chain = chainMap[ACTIVE_CHAIN];
+
+const SignIn = () => {
+    const router = useRouter();
+    const { query } = router;
+
+    const [languages, setLanguages] = useState<string[]>([]);
+    const [selectedLanguage, setSelectedLanguage] = useState<string>("English");
+    const { language, setLanguage } = useContext(LocalizationContext);
+
+    // Fetch available languages from the backend
+    const fetchLanguages = async () => {
+        try {
+            const response = await fetch('/api/get_all_languages');
+            if (response.ok) {
+                const langs: string[] = await response.json();
+                setLanguages(Array.from(new Set(langs))); // Ensure unique languages
+            } else {
+                console.error("Failed to fetch languages");
+                setLanguages(["English"]); // Fallback to English if fetch fails
+            }
+        } catch (error) {
+            console.error("Error fetching languages:", error);
+            setLanguages(["English"]); // Fallback to English on error
+        }
+    };
+
+    // Initialize languages and set the selected language based on URL query
+    useEffect(() => {
+        const initialize = async () => {
+            await fetchLanguages();
+            // Get 'lang' from URL query parameters, default to English
+            const lang = typeof query.lang === 'string' ? query.lang : "English";
+            setSelectedLanguage(lang);
+        };
+        initialize();
+    }, [query.lang]);
+
+    // Handle language change: update 'lang' query parameter
+    const handleLanguageChange = (event: ChangeEvent<HTMLSelectElement>) => {
+        const newLanguage = event.target.value;
+        setSelectedLanguage(newLanguage);
+        setLanguage(newLanguage);
+        // Update the URL with the new language, causing a page refresh
+        router.push({
+            pathname: router.pathname,
+            query: { ...router.query, lang: newLanguage },
+        }, undefined, { shallow: false });
+    };
+
+    return (
+        <div
+            style={{
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "center",
+                alignItems: "center",
+                height: "100vh",
+                backgroundColor: "darkblack", // Maintain black background
+                padding: "0 20px", // Added padding for better responsiveness on smaller screens
+                position: "relative", // For positioning the language dropdown
+            }}
+        >
+            {/* Language Dropdown */}
+            <div
+                style={{
+                    position: 'absolute',
+                    top: '20px',
+                    right: '20px',
+                }}
+            >
+                <select
+                    style={{
+                        padding: "0.5rem 1rem",
+                        border: "2px solid #444",
+                        borderRadius: "8px",
+                        cursor: "pointer",
+                        backgroundColor: "blue",
+                        color: "white",
+                        width: "150px",
+                        boxShadow: "0 2px 10px rgba(0,0,0,0.1)",
+                        fontSize: "18px",
+                        marginRight: "1rem"
+                    }}
+                    value={selectedLanguage}
+                    onChange={handleLanguageChange}
+                >
+                    {languages.map(language => (
+                        <option key={language} value={language} style={{
+                            backgroundColor: "blue",
+                            color: "white",
+                            padding: "10px 20px",
+                        }}>
+                            {language}
+                        </option>
+                    ))}
+                </select>
+            </div>
+
+            {/* Welcome Message */}
+            <h1 style={{ marginBottom: "10px", color: "#fff" }}>
+                <LocalizedText name="Welcome to Web3AIstore" />
+            </h1>
+
+            {/* Tagline */}
+            <p
+                style={{
+                    fontSize: "20px",
+                    color: "#fff",
+                    textAlign: "center",
+                    maxWidth: "800px",
+                    marginBottom: "20px",
+                }}
+            >
+                <LocalizedText name="Effortless AI Solutions to Boost Productivity and Gain an Edge in Work and Life" />
+            </p>
+
+            {/* ConnectEmbed Component for Wallet Connection */}
+            <ConnectEmbed
+                client={client}
+                accountAbstraction={{
+                    chain: activeChain,
+                    sponsorGas: true,
+                    factoryAddress: ACCOUNT_FACTORY_ADDRESS,
+                }}
+                theme={customTheme}
+                style={{
+                    border: "solid darkred",
+                    borderBlockColor: "solid black",
+                    width: "450px",
+                    marginBottom: "30px",
+                }}
+                wallets={[
+                    inAppWallet({
+                        auth: {
+                            options: ["email", "google", "apple", "facebook", "phone"],
+                        },
+                    }),
+                ]}
+                showThirdwebBranding={false}
+            />
+
+            {/* Login Instruction */}
+            <p
+                style={{
+                    fontSize: "16px",
+                    color: "#fff",
+                    textAlign: "center",
+                    maxWidth: "800px",
+                    marginBottom: "20px",
+                }}
+            >
+                <LocalizedText name="Use the social login by clicking the icons above to sign in with Google, Apple, or Facebook. Alternatively, log in with your email or phone number by entering the verification code sent to you" />
+            </p>
+
+            {/* Instructional Text--*/}
+            <p
+                style={{
+                    fontSize: "18px",
+                    color: "#fff",
+                    textAlign: "center",
+                    maxWidth: "300px",
+                    marginBottom: "20px",
+                }}
+            >
+                <LocalizedText name="Not sure where to start?" />
+            </p>
+            <p
+                style={{
+                    fontSize: "18px",
+                    color: "#fff",
+                    textAlign: "center",
+                    maxWidth: "800px",
+                    marginBottom: "30px",
+                }}
+            >
+                <LocalizedText name="Click the button below or tap the Web3AIstore logo anytime in the app for a quick demo" />
+            </p>
+
+            {/* Quick Demo Link/Button */}
+            <a
+                href="https://web3aistore.navattic.com/5810k4p"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                    textDecoration: "none",
+                }}
+            >
+                <button
+                    aria-label="Quick Demo"
+                    style={{
+                        padding: "10px 20px",
+                        fontSize: "16px",
+                        fontWeight: "bold",
+                        color: "#fff",
+                        backgroundColor: "blue",
+                        border: "none",
+                        borderRadius: "5px",
+                        cursor: "pointer",
+                        boxShadow: "0 4px 6px rgba(0, 0, 0, 0.4)",
+                        transition: "background-color 0.3s, transform 0.2s",
+                    }}
+                    onMouseEnter={(e) => {
+                        (e.target as HTMLButtonElement).style.backgroundColor = "#365899";
+                        (e.target as HTMLButtonElement).style.transform = "translateY(-2px)";
+                    }}
+                    onMouseLeave={(e) => {
+                        (e.target as HTMLButtonElement).style.backgroundColor = "blue";
+                        (e.target as HTMLButtonElement).style.transform = "translateY(0)";
+                    }}
+                >
+                    <LocalizedText name="Quick Demo" />
+                </button>
+            </a>
+        </div>
+    );
+};
+
+export default SignIn;

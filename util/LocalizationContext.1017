@@ -1,0 +1,108 @@
+import React, { createContext, useState, useCallback, useEffect } from 'react';
+
+
+let contentCache: Record<string, Record<string, string>> = {};
+let currentLanguage = 'english';
+
+interface LocalizationContextType {
+    language: string;
+    setLanguage: (lang: string) => void;
+    getLocalizedContent: (name: string, lang: string) => Promise<string>;
+}
+
+export const LocalizationContext = createContext<LocalizationContextType>({
+    language: 'english',
+    setLanguage: () => { },
+    getLocalizedContent: async () => '',
+});
+
+interface LocalizationProviderProps {
+    children: React.ReactNode;
+}
+
+export const getLocalizedContent = async (name: string, lang: string = currentLanguage): Promise<string> => {
+    if (lang.toLowerCase() === 'english' || lang.toLowerCase() === 'en') {
+        return name;
+    }
+
+    if (contentCache[name]?.[lang]) {
+        return contentCache[name][lang];
+    }
+
+    try {
+        const response = await fetch('/api/get_content_by_language', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, language: lang }),
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to fetch localized content');
+        }
+
+        const data = await response.json();
+        const content = data.content || name;
+
+        contentCache = {
+            ...contentCache,
+            [name]: { ...contentCache[name], [lang]: content },
+        };
+
+        return content;
+    } catch (error) {
+        console.error('Error fetching localized content:', error);
+        return name;
+    }
+};
+
+export const LocalizationProvider: React.FC<LocalizationProviderProps> = ({ children }) => {
+    const [language, setLanguage] = useState('english');
+    const [contentCache, setContentCache] = useState<Record<string, Record<string, string>>>({});
+
+    const getLocalizedContent = useCallback(async (name: string, lang: string): Promise<string> => {
+        if (lang.toLowerCase() === 'english' || lang.toLowerCase() === 'en') {
+            return name;
+        }
+
+        if (contentCache[name]?.[lang]) {
+            return contentCache[name][lang];
+        }
+
+        try {
+            const response = await fetch('/api/get_content_by_language', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, language: lang }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch localized content');
+            }
+
+            const data = await response.json();
+            const content = data.content || name;
+
+            setContentCache(prevCache => ({
+                ...prevCache,
+                [name]: { ...prevCache[name], [lang]: content },
+            }));
+
+            return content;
+        } catch (error) {
+            console.error('Error fetching localized content:', error);
+            return name;
+        }
+    }, [contentCache]);
+
+    const contextValue: LocalizationContextType = {
+        language,
+        setLanguage,
+        getLocalizedContent,
+    };
+
+    return (
+        <LocalizationContext.Provider value={contextValue}>
+            {children}
+        </LocalizationContext.Provider>
+    );
+};

@@ -1,0 +1,190 @@
+// get_role_task_desc.ts
+
+import { createClient } from '@vercel/kv';
+import OpenAI from 'openai';
+import HashUtil from '../util/hashToFixedDigits'; // Adjust the path as needed
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY!,
+});
+
+// Helper function to create a task description and limit to 800 characters
+async function rephraseDescription(description: string): Promise<string> {
+    const prompt = `Please create a clear and concise task description for the following, ensuring that the rephrased text does not exceed 1000 characters:
+
+"${description}" 
+
+If necessary, summarize the content to fit within the character limit while preserving the key information. Avoid phrases like "As ... your role is ... Task Description: ...".`;
+
+    const maxRetries = 5;
+    let attempt = 0;
+
+    while (attempt < maxRetries) {
+        try {
+            const response = await openai.chat.completions.create({
+                model: process.env.GPT_MODEL || 'gpt-3.5-turbo',
+                messages: [{ role: 'user', content: prompt }],
+            });
+
+            let rephrasedText = response.choices[0]?.message?.content?.trim();
+
+            if (rephrasedText) {
+                // Return the rephrased text without truncation
+                return rephrasedText;
+            } else {
+                console.warn(`Attempt ${attempt + 1}: Empty response, retrying...`);
+                attempt++;
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+            }
+        } catch (error) {
+            console.error(`Attempt ${attempt + 1}: Error rephrasing description:`, error);
+            attempt++;
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+    }
+
+    throw new Error(`Failed to rephrase description after ${maxRetries} attempts.`);
+}
+
+
+// Function 1: get_task_desc
+export async function get_task_desc(department: string, role: string, task: string): Promise<string> {
+    const taskKey = `task_desc:${role}:${task}`;
+
+    let taskDesc = (await kv.get(taskKey)) as string | null;
+
+    if (!taskDesc) {
+        console.log(`Task description not found for key ${taskKey} . Generating...`);
+        await set_role_task_desc(department, role);
+        taskDesc = (await kv.get(taskKey)) as string | null;
+        console.log(`Task description after generation found for key ${taskKey} is ${taskDesc}.`);
+    } else {
+        console.log(`Task description found for key ${taskKey} is ${taskDesc}.`);
+    }
+
+    return taskDesc || '';
+}
+
+// Function 2: get_role_desc
+export async function get_role_desc(department: string, role: string): Promise<string> {
+    const roleDescKey = `role_desc:${department}:${role}`;
+
+    let roleDesc = (await kv.get(roleDescKey)) as string | null;
+
+    if (!roleDesc) {
+        console.log(`Role description not found for key ${roleDescKey}. Generating...`);
+        await set_role_task_desc(department, role);
+        roleDesc = (await kv.get(roleDescKey)) as string | null;
+    } else {
+        console.log(`Role description found for key ${roleDescKey}.`);
+    }
+
+    return roleDesc || '';
+}
+
+// Function 3: set_role_task_desc
+export async function set_role_task_desc(department: string, role: string): Promise<void> {
+    const roleTasksKey = `department:${department}:role:${role}:tasks`;
+
+    try {
+        const tasksData = await kv.get(roleTasksKey);
+        console.log(`Tasks fetched for key ${roleTasksKey}:`, tasksData);
+
+        let tasks: string[] = [];
+
+        if (Array.isArray(tasksData)) {
+            tasks = tasksData;
+        } else if (typeof tasksData === 'string') {
+            try {
+                tasks = JSON.parse(tasksData);
+            } catch (parseError) {
+                console.error(`Error parsing tasks JSON for key ${roleTasksKey}:`, parseError);
+                tasks = [tasksData];
+            }
+        } else if (tasksData) {
+            tasks = [tasksData as string];
+        } else {
+            console.warn(`No tasks found for role ${role} in department ${department}.`);
+            return;
+        }
+
+        const taskDescriptions: string[] = [];
+
+        for (const task of tasks) {
+            const assistantId = HashUtil.hashTo(`${role}${task}`);
+            const instructionKey = `assistant:${assistantId}:instructions`;
+            console.log('Instruction Key:', instructionKey);
+
+            // Use your provided code to get the instruction
+            const existingInstructions = await kv.get(instructionKey);
+            console.log('Retrieved Instruction:', existingInstructions);
+            console.log('Type of instruction:', typeof existingInstructions);
+
+            if (!existingInstructions) {
+                console.warn(`Instructions not found for assistant ID: ${assistantId}`);
+                continue; // Skip to next task
+            }
+
+            const instructionsString =
+                typeof existingInstructions === 'object'
+                    ? JSON.stringify(existingInstructions)
+                    : String(existingInstructions);
+
+            try {
+                const instructionObj = JSON.parse(instructionsString);
+
+                const taskDescription = instructionObj.task_description;
+
+                if (taskDescription) {
+                    // Rephrase the task description and limit to 500 characters
+                    const rephrasedDescription = await rephraseDescription(taskDescription);
+
+                    // Store in mapping Hash(role+task) => desc
+                    const taskKey = `task_desc:${role}:${task}`;
+                    await kv.set(taskKey, rephrasedDescription);
+                    console.log(`Set task description for key ${taskKey}.`);
+
+                    taskDescriptions.push(rephrasedDescription);
+                } else {
+                    console.warn(`No task_description found in instruction for task ${task}.`);
+                }
+            } catch (parseError) {
+                console.error('Error parsing instruction JSON:', parseError);
+            }
+        }
+
+        if (taskDescriptions.length === 0) {
+            console.warn(`No task descriptions found for role ${role} in department ${department}.`);
+            return;
+        }
+
+        // Combine all task descriptions to create the role description
+        const combinedDescription = taskDescriptions.join(' ');
+
+        // Optionally, limit the combined description length before rephrasing
+        const maxCombinedLength = 1000; // Adjust as needed
+        let truncatedCombinedDescription = combinedDescription;
+
+        if (combinedDescription.length > maxCombinedLength) {
+            truncatedCombinedDescription = combinedDescription.slice(0, maxCombinedLength) + '...';
+        }
+
+        // Rephrase the combined description for the role, limiting to 500 characters
+        const roleDescription = await rephraseDescription(
+            `As a ${role} in the ${department} department, your responsibilities include: ${truncatedCombinedDescription}`
+        );
+
+        // Set the role description in the mapping
+        const roleDescKey = `role_desc:${department}:${role}`;
+        await kv.set(roleDescKey, roleDescription);
+        console.log(`Set role description for key ${roleDescKey}.`);
+
+    } catch (error) {
+        console.error(`Error in set_role_task_desc:`, error);
+    }
+}

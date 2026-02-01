@@ -1,0 +1,119 @@
+// pages/api/get-shared-profiles.ts
+import type { NextApiRequest, NextApiResponse } from "next";
+import { createClient } from "@vercel/kv";
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+export default async function handler(
+    req: NextApiRequest,
+    res: NextApiResponse
+) {
+    if (req.method !== "GET") {
+        return res.status(405).json({ error: "Method not allowed" });
+    }
+
+    const { userAddress } = req.query;
+
+    if (!userAddress || typeof userAddress !== "string") {
+        return res.status(400).json({ error: "Missing or invalid userAddress parameter" });
+    }
+
+    try {
+        const sharedProfiles = [];
+        let cursor: string | number = "0";
+        const pattern = "sharedProfiles:*";
+
+        console.log(`🔍 Scanning for shared profiles for user: ${userAddress}`);
+
+        do {
+            const scanResult = await kv.scan(cursor, { match: pattern, count: 100 });
+            cursor = scanResult[0];
+            const keys = scanResult[1];
+
+            console.log(`Found ${keys.length} shared profile keys in this batch`);
+
+            for (const key of keys) {
+                try {
+                    const profileId = key.replace("sharedProfiles:", "");
+                    const sharedUsers = await kv.get(key) as string[];
+
+                    console.log(`🔎 Profile ${profileId} is shared with:`, sharedUsers);
+
+                    if (sharedUsers && Array.isArray(sharedUsers) && sharedUsers.includes(userAddress)) {
+                        console.log(`✅ User ${userAddress} has access to profile ${profileId}`);
+
+                        // FIXED: Use the correct key format to fetch profile data
+                        // The profile ID IS the actual key for the profile data
+                        try {
+                            // NEW: Try to get profile data from the shared profile data key
+                            const profileDataKey = `sharedProfileData:${profileId}`;
+                            const profileData = await kv.get(profileDataKey) as any;
+
+                            console.log(`📦 Profile data for ${profileDataKey}:`, profileData ? 'Found' : 'Not found');
+
+
+                            console.log(`📦 Profile data for ${profileId}:`, profileData ? 'Found' : 'Not found');
+
+                            if (profileData) {
+                                // Ensure the profile has all required fields
+                                const formattedProfile = {
+                                    id: profileData.id || profileId,
+                                    name: profileData.name || `Profile ${profileId}`,
+                                    business: profileData.business || '',
+                                    USP: profileData.USP || '',
+                                    persona: profileData.persona || '',
+                                    challenges: profileData.challenges || '',
+                                    websiteUrl: profileData.websiteUrl || '',
+                                    description: profileData.description || '',
+                                    createdAt: profileData.createdAt || new Date().toISOString(),
+                                    updatedAt: profileData.updatedAt || new Date().toISOString(),
+                                    isOwned: false,
+                                    ownerAddress: profileData.userAddress || 'Unknown'
+                                };
+
+                                sharedProfiles.push(formattedProfile);
+                                console.log(`✅ Added shared profile: ${formattedProfile.name} (ID: ${formattedProfile.id})`);
+                            } else {
+                                console.log(`❌ No profile data found for key: ${profileId}`);
+
+                                // Additional debug - try to find what keys actually exist for this profile
+                                const debugPattern = `*${profileId}*`;
+                                const debugScan = await kv.scan(0, { match: debugPattern, count: 10 });
+                                console.log(`🔧 DEBUG: Keys containing ${profileId}:`, debugScan[1]);
+                            }
+                        } catch (profileError) {
+                            console.error(`❌ Error fetching profile data for ${profileId}:`, profileError);
+                        }
+                    } else {
+                        console.log(`❌ User ${userAddress} does not have access to profile ${profileId}`);
+                    }
+                } catch (keyError) {
+                    console.error(`❌ Error processing key ${key}:`, keyError);
+                }
+            }
+        } while (cursor !== "0");
+
+        console.log(`📊 Final result: Found ${sharedProfiles.length} shared profiles for user ${userAddress}`);
+        if (sharedProfiles.length > 0) {
+            console.log('📋 Shared profiles:', sharedProfiles.map(p => ({
+                id: p.id,
+                name: p.name,
+                owner: p.ownerAddress
+            })));
+        }
+
+        res.status(200).json({
+            success: true,
+            profiles: sharedProfiles
+        });
+    } catch (error) {
+        console.error("❌ Error fetching shared profiles:", error);
+        res.status(500).json({
+            success: false,
+            error: "Error fetching shared profiles"
+        });
+    }
+}

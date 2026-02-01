@@ -1,0 +1,250 @@
+import { useState } from 'react';
+import { ethers } from 'ethers';
+import { useSendTransaction } from "thirdweb/react";
+import {
+    TRANSACTION_FEE_RATE,
+    PLATFORM_NAME,
+    ACTIVE_CHAIN,
+    WEBAI_TOKEN_ADDRESS,
+    CLIENT_ID,
+    UPLOAD_FILE_FEE,
+} from "../constants/constants";
+import { polygonAmoy, polygon, Chain } from "thirdweb/chains";
+import { useSharedContext } from '../context/SharedContext';
+import { createThirdwebClient, prepareContractCall, getContract } from "thirdweb";
+import { prepareTransaction, toWei } from "thirdweb";
+import HashUtil from '../util/hashToFixedDigits';
+
+// Minimal ERC-20 ABI
+const erc20Abi = [
+    "function balanceOf(address owner) view returns (uint256)",
+    "function decimals() view returns (uint8)",
+    "function symbol() view returns (string)",
+];
+
+export function usePayment() {
+    const [isPaymentProcessing, setIsPaymentProcessing] = useState(false);
+    const { setBalanceData } = useSharedContext();
+
+    const chainMap: { [key: string]: Chain } = {
+        "polygon-amoy-testnet": polygonAmoy,
+        "polygon": polygon,
+    };
+    const activeChain: Chain = chainMap[ACTIVE_CHAIN];
+
+    const { mutateAsync: sendTransaction } = useSendTransaction();
+
+    /**
+     * Helper to check if an account is deployed on the blockchain.
+     */
+    const isAccountDeployed = async (address: string, provider: ethers.providers.JsonRpcProvider): Promise<boolean> => {
+        const code = await provider.getCode(address);
+        return code !== "0x"; // If code is not "0x", the account exists
+    };
+
+    /**
+     * Helper to fetch account address by username.
+     */
+    const getAccountAddressByUsername = async (username: string): Promise<string | null> => {
+        try {
+            const response = await fetch('/api/get_address_by_username', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username }),
+            });
+            const data = await response.json();
+            if (response.ok) {
+                return data.accountAddress;
+            } else {
+                console.error("Error fetching address:", data.error);
+                return null;
+            }
+        } catch (error) {
+            console.error("Error fetching account address:", error);
+            return null;
+        }
+    };
+
+    /**
+     * Helper to send funds using the connected wallet.
+     */
+    /* const sendFunds = async (receiverUsername: string, sendAmount: number): Promise<boolean> => {
+         try {
+             const receiverWalletAddress = await getAccountAddressByUsername(receiverUsername);
+             if (!receiverWalletAddress) {
+                 console.error("Receiver username does not exist:", receiverUsername);
+                 return false;
+             }
+ 
+             const toAddress = receiverWalletAddress as `0x${string}`;
+             const provider = new ethers.providers.JsonRpcProvider(activeChain.rpc);
+ 
+             // Check if the account is already deployed
+             const isDeployed = await isAccountDeployed(toAddress, provider);
+             if (!isDeployed) {
+                 console.error("Receiver's account is not deployed:", toAddress);
+                 return false; // Skip sending funds to undeployed accounts
+             }
+ 
+             const client = createThirdwebClient({ clientId: CLIENT_ID });
+             const contract = getContract({
+                 client,
+                 chain: activeChain,
+                 address: WEBAI_TOKEN_ADDRESS,
+             });
+ 
+             const transaction = await prepareContractCall({
+                 contract,
+                 method: "function transfer(address to, uint256 amount)",
+                 params: [
+                     toAddress,
+                     toWei(sendAmount.toString()) // Amount to transfer (e.g., 1 token) 
+                 ],
+             });
+ 
+             await sendTransaction(transaction);
+             console.log("Funds successfully sent to:", receiverWalletAddress, " with username:", receiverUsername);
+             return true;
+         } catch (error: any) {
+             console.error("Error sending funds to", receiverUsername, ":", error.message || error);
+             return false;
+         }
+     };*/
+    const sendFunds = async (receiverUsername: string, sendAmount: number): Promise<boolean> => {
+        try {
+            const receiverWalletAddress = await getAccountAddressByUsername(receiverUsername);
+            if (!receiverWalletAddress) {
+                console.error("Receiver username does not exist:", receiverUsername);
+                return false;
+            }
+
+            const toAddress = receiverWalletAddress as `0x${string}`;
+            const provider = new ethers.providers.JsonRpcProvider(activeChain.rpc);
+
+            const isDeployed = await isAccountDeployed(toAddress, provider);
+            if (!isDeployed) {
+                console.warn("Receiver's account is not a deployed smart contract. Proceeding with EOA transaction...");
+            }
+
+            const client = createThirdwebClient({ clientId: CLIENT_ID });
+            const contract = getContract({
+                client,
+                chain: activeChain,
+                address: WEBAI_TOKEN_ADDRESS,
+            });
+
+            const transaction = await prepareContractCall({
+                contract,
+                method: "function transfer(address to, uint256 amount)",
+                params: [
+                    toAddress,
+                    toWei(sendAmount.toString()) // Amount to transfer (e.g., 1 token)
+                ],
+            });
+
+            await sendTransaction(transaction);
+            console.log("Funds successfully sent to:", receiverWalletAddress, " with username:", receiverUsername);
+            return true;
+        } catch (error: any) {
+            console.error("Error sending funds to", receiverUsername, ":", error.message || error);
+            return false;
+        }
+    };
+
+    /**
+     * Pay using crypto and handle additional fees if necessary.
+     */
+    const payByCrypto = async (userAddress: string, user: string, sendAmount: number): Promise<boolean> => {
+        try {
+            setIsPaymentProcessing(true);
+
+            const provider = new ethers.providers.JsonRpcProvider(activeChain.rpc);
+            const erc20Contract = new ethers.Contract(WEBAI_TOKEN_ADDRESS, erc20Abi, provider);
+
+            const balance = await erc20Contract.balanceOf(userAddress);
+            const formattedBalance = ethers.utils.formatEther(balance);
+
+            const transactionFee = Number(sendAmount) * Number(TRANSACTION_FEE_RATE);
+            const totalAmount = sendAmount + transactionFee;
+
+            if (parseFloat(formattedBalance) < 2 * totalAmount) {
+                console.error("Insufficient balance to proceed with the payment.");
+                setIsPaymentProcessing(false);
+                return false;
+            }
+
+            console.log("Sufficient balance. Proceeding with the payment...");
+
+            const sendSuccess = await sendFunds(user, sendAmount);
+            if (!sendSuccess) {
+                console.error("Failed to send the funds.");
+                setIsPaymentProcessing(false);
+                return false;
+            }
+
+            if (!(sendAmount === UPLOAD_FILE_FEE && user === PLATFORM_NAME)) {
+                const sendFeeSuccess = await sendFunds(PLATFORM_NAME, transactionFee);
+                if (!sendFeeSuccess) {
+                    console.error("Failed to send the transaction fee.");
+                }
+            } else {
+                console.log("No transaction fee required for this payment.");
+            }
+
+            const updatedBalance = await erc20Contract.balanceOf(userAddress);
+            const formattedUpdatedBalance = ethers.utils.formatEther(updatedBalance);
+            setBalanceData(parseFloat(formattedUpdatedBalance).toFixed(3));
+
+            window.dispatchEvent(new CustomEvent('refreshFreeChats'));
+            setIsPaymentProcessing(false);
+            return true;
+        } catch (error: any) {
+            console.error("Error during payment:", error.message || error);
+            setIsPaymentProcessing(false);
+            return false;
+        }
+    };
+
+    /**
+     * Process a payment, either using free chats or crypto.
+     */
+    const process_payment = async (userAddress: string, price: number, user: string): Promise<boolean> => {
+        try {
+            const userKey = HashUtil.hashTo(userAddress || '');
+            const response = await fetch('/api/useFreeChats', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userKey, price }),
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                window.dispatchEvent(new CustomEvent('refreshFreeChats'));
+                return true;
+            } else if (data.remainingPrice) {
+                const paymentResult = await payByCrypto(userAddress, user, data.remainingPrice);
+
+                if (!paymentResult) {
+                    const usedFreeChats = data.usedFreeChats || 0;
+                    await fetch('/api/addFreeChats', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ userKey, usedFreeChats }),
+                    });
+                    console.error('Free chats have been reverted due to payment failure.');
+                }
+
+                return paymentResult;
+            } else {
+                console.error('No free chats and no remaining price. Payment not processed.');
+                return false;
+            }
+        } catch (error: any) {
+            console.error('Error during process_payment:', error.message || error);
+            return false;
+        }
+    };
+
+    return { process_payment, isPaymentProcessing };
+}

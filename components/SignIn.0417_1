@@ -1,0 +1,319 @@
+// pages/signin.tsx
+
+import React, { useState, useEffect, useContext, ChangeEvent } from "react";
+import { useRouter } from 'next/router';
+import Image from "next/image";
+import { ConnectEmbed, darkTheme } from "thirdweb/react";
+import { client } from "../util/client";
+import { inAppWallet } from "thirdweb/wallets";
+import { polygonAmoy, polygon, Chain } from "thirdweb/chains";
+import { ACTIVE_CHAIN, ACCOUNT_FACTORY_ADDRESS } from "../constants/constants";
+import { LocalizedText } from '../util/LocalizedText';
+import { LocalizationContext } from '../util/LocalizationContext';
+import styles from "../styles/Signin.module.css";
+
+import { toast } from 'react-toastify';
+import OpenWebsiteToast from '../components/OpenWebsiteToast'; // Corrected import path
+
+// Custom dark theme configuration
+const customTheme = darkTheme({
+    colors: {
+        modalBg: "Blue",
+    },
+});
+
+// Mapping of chain identifiers to Chain objects
+const chainMap: { [key: string]: Chain } = {
+    "polygon-amoy-testnet": polygonAmoy,
+    "polygon": polygon, // Polygon mainnet
+};
+
+// Select the active chain based on the ACTIVE_CHAIN constant
+const activeChain: Chain = chainMap[ACTIVE_CHAIN];
+
+const SignIn = () => {
+    const router = useRouter();
+    const { query } = router;
+
+    const [languages, setLanguages] = useState<string[]>([]);
+    const [selectedLanguage, setSelectedLanguage] = useState<string>("English");
+    const [isHovered, setIsHovered] = useState(false);
+    const { setLanguage } = useContext(LocalizationContext);
+
+    useEffect(() => {
+        const fetchLanguages = async () => {
+            try {
+                const response = await fetch('/api/get_all_languages');
+                if (response.ok) {
+                    const langs: string[] = await response.json();
+                    setLanguages(Array.from(new Set(langs))); // Ensure unique languages
+                } else {
+                    console.error("Failed to fetch languages");
+                    setLanguages(["English"]); // Fallback to English if fetch fails
+                }
+            } catch (error) {
+                console.error("Error fetching languages:", error);
+                setLanguages(["English"]); // Fallback to English on error
+            }
+        };
+
+        const initialize = async () => {
+            await fetchLanguages();
+            const lang = typeof query.lang === 'string' ? query.lang : "English";
+            setSelectedLanguage(lang);
+            setLanguage(lang);
+        };
+        initialize();
+    }, [query.lang, setLanguage]);
+
+    // Handle language change: update 'lang' query parameter
+    const handleLanguageChange = (event: ChangeEvent<HTMLSelectElement>) => {
+        const newLanguage = event.target.value;
+        setSelectedLanguage(newLanguage);
+        setLanguage(newLanguage);
+        // Update the URL with the new language, causing a page refresh
+        router.push({
+            pathname: router.pathname,
+            query: { ...router.query, lang: newLanguage },
+        }, undefined, { shallow: false });
+    };
+
+    useEffect(() => {
+
+
+        let toastTimer: NodeJS.Timeout;
+
+        // Trigger the toast after 3 seconds upon component mount
+        toastTimer = setTimeout(() => {
+            // Function to handle the "OK" button click
+            const handleOpen = () => {
+                window.open("https://web3aistore.com/home", "_blank", "noopener,noreferrer");
+                //window.open("https://www.youtube.com/watch?v=hOvMC7IY8CQ", "_blank", "noopener,noreferrer");
+
+                toast.dismiss('open-website-toast'); // Dismiss the toast after opening the website
+            };
+
+            // Display the custom toast with the message and "OK" button
+            toast(
+                <OpenWebsiteToast onOpen={handleOpen} />,
+                {
+                    toastId: 'open-website-toast', // Unique ID to prevent duplicates
+                    position: "top-center",
+                    autoClose: 15000, // Auto close after 10 seconds
+                    hideProgressBar: false,
+                    closeOnClick: true, // Prevent closing on click to ensure user interacts with the button
+                    pauseOnHover: false,
+                    draggable: true,
+                    theme: "dark",
+                }
+            );
+        }, 30000); // 30-second delay
+
+        // Cleanup function to clear the timer if the component unmounts
+        return () => {
+            if (toastTimer) {
+                clearTimeout(toastTimer);
+            }
+        };
+    }, []); // Empty dependency array ensures this runs once on mount
+
+    return (
+        <div className={styles.signInContainer}>
+            {/* Header Container with Flexbox */}
+            <div className={styles.header}>
+                {/* Logo Container */}
+                <div className={styles.logoContainer}>
+                    <div
+                        onMouseEnter={() => setIsHovered(true)}
+                        onMouseLeave={() => setIsHovered(false)}
+                        onClick={() =>
+                            window.open(
+                                "https://www.scam-detector.com/validator/web3aistore-com-review/",
+                                "_blank",
+                                "noopener,noreferrer"
+                            )
+                        }
+                        className={styles.logoWrapper} // Added a new class for better styling
+                    >
+
+                        <Image
+                            src="/images/trust.jpg"
+                            alt="Trust Logo"
+                            fill // Replaces 'layout="responsive"'
+                            className={styles.hoverLogo}
+                            priority // Optional: Preloads the image for better performance
+                        />
+
+
+                        {isHovered && (
+                            <div className={styles.hoverTooltip}>
+                                <LocalizedText name="Click to see the Trust Score" />
+                            </div>
+                        )}
+                    </div>
+                    <a
+                        href="https://www.scamadviser.com/check-website/web3aistore.com" // Updated URL
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={styles.visitWebsiteLink}
+                    >
+                        <LocalizedText name="Website You Trust" />
+                    </a>
+                </div>
+
+                {/* Language Dropdown */}
+                <div className={styles.languageContainer}>
+                    <select
+                        className={styles.languageSelect}
+                        value={selectedLanguage}
+                        onChange={handleLanguageChange}
+                    >
+                        {languages.map(language => (
+                            <option key={language} value={language}>
+                                {language}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+            </div>
+
+            {/* Welcome Message */}
+            <h1 className={styles.welcomeMessage}>
+                <a
+                    href="https://web3aistore.com/home"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={styles.welcomeLink} // Optional: Add this class to style the link
+                >
+                    <LocalizedText name="Unlock the Power of AI with Web3AIstore" />
+                </a>
+            </h1>
+
+
+            {/* Tagline */}
+            <p className={styles.tagline}>
+                <LocalizedText name="Effortless AI Solutions to Boost Productivity and Gain an Edge in Work and Life" />
+            </p>
+
+            {/* ConnectEmbed Component for Wallet Connection 
+            <ConnectEmbed
+                client={client}
+                accountAbstraction={{
+                    chain: activeChain,
+                    sponsorGas: true,
+                    factoryAddress: ACCOUNT_FACTORY_ADDRESS,
+                }}
+                theme={customTheme}
+                className={styles.connectEmbed}
+                wallets={[
+                    inAppWallet({
+                        auth: {
+                            options: ["email", "google", "apple", "facebook", "phone"],
+                        },
+                    }),
+                ]}
+                showThirdwebBranding={false}
+            />*/}
+
+            {/* Container for both components using flexbox */}
+            <div className={styles.authContainer}>
+                {/* ConnectEmbed Component for Wallet Connection */}
+                <ConnectEmbed
+                    client={client}
+                    accountAbstraction={{
+                        chain: activeChain,
+                        sponsorGas: true,
+                        factoryAddress: ACCOUNT_FACTORY_ADDRESS,
+                    }}
+                    theme={customTheme}
+                    className={styles.connectEmbed}
+                    wallets={[
+                        inAppWallet({
+                            auth: {
+                                options: ["email", "google", "apple", "facebook", "phone"],
+                            },
+                        }),
+                    ]}
+                    showThirdwebBranding={false}
+                />
+
+                {/* Award Logo (with proper sizing) */}
+                <div className={styles.awardLogoWrapper}>
+                    <Image
+                        src="/images/award-logo.png"
+                        alt="Award Recognition"
+                        width={300}
+                        height={300}
+                        className={styles.awardLogo}
+                        priority
+                    />
+                </div>
+            </div>
+
+
+
+            <p className={styles.instructionText}>
+                <LocalizedText name="Click the button below or tap the Web3AIstore logo anytime in the app for a quick demo" />
+            </p>
+            {/* Quick Demo Buttons */}
+            <div className={styles.quickDemoContainer}>
+                {/* About Us Button */}
+                <a
+                    href="https://www.youtube.com/watch?v=hOvMC7IY8CQ"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={styles.quickDemoLink}
+                >
+                    <button className={styles.quickDemoButton}>
+                        <LocalizedText name="About Us" />
+                    </button>
+                </a>
+                {/* Quick Demo */}
+                <a
+                    href="https://youtu.be/-AXFSRNhpU4"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={styles.quickDemoLink}
+                >
+                    <button className={styles.quickDemoButton}>
+                        <LocalizedText name="Quick Demo" />
+                    </button>
+                </a>
+
+                {/* Demostración Rápida */}
+                <a
+                    href="https://youtu.be/31bPyrbhl9A"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={styles.quickDemoLink}
+                >
+                    <button className={styles.quickDemoButton}>
+                        <LocalizedText name="Demostración Rápida" />
+                    </button>
+                </a>
+
+                {/* 快速演示 */}
+                <a
+                    href="https://youtu.be/TehYrtk1-Kw"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={styles.quickDemoLink}
+                >
+                    <button className={styles.quickDemoButton}>
+                        <LocalizedText name="快速演示" />
+                    </button>
+                </a>
+            </div>
+
+            {/* Instructional Text */}
+            <p className={styles.instructionText1}>
+                {/* <LocalizedText name="Start today with 200 free chats and explore over 2,000 innovative AI tools, customized to fit any work scenario. Our self-improving tools follow an agentic workflow, delivering optimal results through multiple iterations. Seamlessly integrate your knowledge base and fine-tune a large language model into a tailored solution just for you" />*/}
+                <LocalizedText name="Start today with 200 free chats and access 5,500+ AI solutions for typical work scenarios, supporting the seven most spoken languages for global accessibility. Share your goal with AI, and it will match you with the best tools or create a custom fit. Our self-improving AI agents refine through user feedback, emulated focus groups, and expert input, growing smarter with each iteration. Seamlessly integrate and build your knowledge base to fine-tune a Large Language Model, creating a truly tailored AI experience." />
+            </p>
+
+        </div>
+    );
+
+};
+
+export default SignIn;

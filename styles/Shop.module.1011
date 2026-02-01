@@ -1,0 +1,426 @@
+/* styles/Shop.module.css */
+
+/* ----------------- Parent Container ----------------- */
+.main {
+    padding: 20px;
+    background-color: #000000;
+    min-height: 100vh;
+    box-sizing: border-box;
+    color: #ffffff;
+}
+
+.container {
+    width: 100%;
+    max-width: 1440px;
+    padding: 0 1rem;
+    margin: 0 auto;
+}
+
+/* ----------------- Category Selection Styles ----------------- */
+.categorySection {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem;
+    width: 100%;
+    color: white;
+    background-color: #000;
+    /* Optional: Add background if needed */
+}
+
+.categorySectionInner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-grow: 1;
+}
+
+.categoryLabel {
+    margin-right: 1rem;
+    font-size: 21px;
+    font-weight: bold;
+    color: white;
+}
+
+.categorySelect {
+    padding: 0.5rem 1rem;
+    border: 2px solid #444;
+    border-radius: 8px;
+    cursor: pointer;
+    background-color: blue;
+    color: white;
+    width: 250px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    font-size: 18px;
+    transition: width 0.3s ease, font-size 0.3s ease;
+}
+
+.categorySelect option {
+    background-color: blue;
+    color: white;
+    padding: 10px 20px;
+}
+
+.categorySelect option:hover {
+    background-color: red;
+    color: white;
+}
+
+@media (max-width: 600px) {
+    .categorySection {
+        flex-direction: column;
+        align-items: center;
+        padding: 0.5rem;
+    }
+
+    .categorySectionInner {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .categorySelect {
+        width: 100%;
+        max-width: 200px;
+        font-size: 16px;
+    }
+
+    .categoryLabel {
+        font-size: 18px;
+        margin-bottom: 5px;
+    }
+}
+
+/* ----------------- Grid Layout ----------------- */
+.grid {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    width: 100%;
+}
+
+/* ----------------- NFT Container Styles ----------------- */
+.nftContainer {
+    background-color: #0f6190;
+    padding: 10px;
+    border-radius: 10px;
+    cursor: pointer;
+    min-width: 200px;
+    text-align: center;
+    margin-bottom: 10px;
+    position: relative;
+}
+
+.nftImageWrapper {
+    display: inline-block;
+    position: relative;
+    cursor: pointer;
+    transition: transform 0.2s;
+    max-width: 100%;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+}
+
+.nftImageWrapper.selected {
+    border: 4px solid red;
+}
+
+.nftImage {
+    width: 100%;
+    max-width: 250px;
+    height: auto;
+    object-fit: cover;
+    border-radius: 4px 4px 0 0;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.nftImageWrapper:hover .nftImage {
+    transform: scale(0.95);
+    box-shadow: 10px 5px 5px rgba(141, 9, 11, 0.5);
+}
+
+.hoverTooltip {
+    position: absolute;
+    bottom: -20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: black;
+    color: white;
+    padding: 5px 10px;
+    border-radius: 5px;
+    white-space: nowrap;
+    text-align: center;
+    z-index: 5;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.nftImageWrapper:hover .hoverTooltip {
+    opacity: 1;
+}
+
+/* ----------------- NFT Info Styles ----------------- */
+.nftInfo {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+}
+
+.nftName {
+    font-weight: bold;
+    font-size: 20px;
+    text-align: center;
+    margin-top: 4px;
+    margin-bottom: 4px;
+    cursor: pointer;
+    transition: color 0.3s ease;
+}
+
+.nftName:hover {
+    color: #007bff;
+}
+
+.ratingAndAmount {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+}
+
+.ratingValue {
+    margin-right: 5px;
+    font-size: 14px;
+    color: white;
+}
+
+.sendAmount {
+    margin-left: 10px;
+    font-size: 16px;
+    color: white;
+}
+
+.centeredSendAmount {
+    text-align: center;
+    display: block;
+    margin: auto;
+    font-size: 16px;
+    color: white;
+}
+
+/* ----------------- Modal Styles ----------------- */
+.modalOverlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(33, 2, 106, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 2060;
+}
+
+.modalContent {
+    background: rgb(4, 2, 101);
+    padding: 20px;
+    border-radius: 5px;
+    box-shadow: 0 2px 10px rgba(136, 2, 2, 0.3);
+    width: 80%;
+    height: auto;
+    min-width: 200px;
+    min-height: 100px;
+    max-height: 80vh;
+    overflow-y: auto;
+    padding-bottom: 60px;
+    position: relative;
+    z-index: 2060;
+}
+
+.closeButton {
+    position: absolute;
+    bottom: 15px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 8px 16px;
+    cursor: pointer;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+}
+
+.modalTitle {
+    text-align: center;
+    font-weight: bold;
+    color: rgb(8, 8, 238);
+    margin-bottom: 20px;
+}
+
+.modalSubTitle {
+    text-align: center;
+    font-weight: bold;
+    font-size: medium;
+    color: rgb(8, 8, 238);
+    margin-bottom: 20px;
+}
+
+/* ----------------- Responsive Adjustments ----------------- */
+@media (max-width: 600px) {
+    .nftContainer {
+        padding: 5px;
+    }
+
+    .nftImageWrapper {
+        max-width: 100%;
+    }
+
+    .nftName {
+        font-size: 18px;
+    }
+
+    .ratingValue {
+        font-size: 12px;
+    }
+
+    .sendAmount {
+        font-size: 14px;
+    }
+}
+
+@media (max-width: 480px) {
+    .nftName {
+        font-size: 16px;
+    }
+
+    .ratingValue {
+        font-size: 10px;
+    }
+
+    .sendAmount {
+        font-size: 12px;
+    }
+}
+
+/* ----------------- Additional Utility Classes ----------------- */
+.selected {
+    border: 10px solid #032902;
+    transform: scale(1.05);
+}
+
+/* Rating Component Styles */
+.ratingAndCount {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.countValue {
+    margin-left: auto;
+}
+
+.stars {
+    display: flex;
+    justify-content: center;
+    margin: 1rem 0;
+}
+
+.filledStar,
+.emptyStar {
+    font-size: 2rem;
+    cursor: pointer;
+}
+
+.filledStar {
+    color: gold;
+}
+
+.emptyStar {
+    color: lightgray;
+}
+
+.submitButton {
+    background-color: blue;
+    color: white;
+    border: none;
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    border-radius: 8px;
+    margin: 0.5rem;
+    transition: background-color 0.3s ease;
+}
+
+.submitButton:hover {
+    background-color: darkblue;
+}
+
+/* Share Block */
+.shareBlock {
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    margin: 10px 0;
+}
+
+/* Additional Classes as Needed */
+
+/* Ensure modal content is scrollable on small devices */
+.modalContent,
+.modalContent1 {
+    overflow-y: auto;
+}
+
+/* styles/Shop.module.css */
+
+/* ... [Existing styles] ... */
+
+/* ----------------- NFT Name Wrapper ----------------- */
+.nftNameWrapper {
+    position: relative;
+    width: 100%;
+    height: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+/* ----------------- Modal Description ----------------- */
+.modalDescription {
+    text-align: left;
+    color: #f9f5f5;
+    /* Ensure text is readable */
+    word-wrap: break-word;
+}
+
+/* ----------------- Responsive Adjustments ----------------- */
+@media (max-width: 600px) {
+    /* ... [Existing responsive styles] ... */
+
+    .nftImage {
+        max-width: 200px;
+        /* Adjust as needed for smaller screens */
+    }
+
+}
+
+@media (max-width: 480px) {
+    /* ... [Existing mobile-specific styles] ... */
+
+    .nftImage {
+        max-width: 150px;
+        /* Further adjust for very small screens */
+    }
+
+
+}
+
+/* Optional: Adjust the AutoFitText component's container */
+.autoFitTextContainer {
+    width: 100%;
+    max-width: 250px;
+    /* Adjust based on your image width */
+}

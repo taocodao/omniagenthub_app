@@ -1,0 +1,185 @@
+// app/api/chatbot/route.ts
+
+import { NextRequest } from 'next/server';
+import { Pinecone } from '@pinecone-database/pinecone';
+import { OpenAI } from 'openai';
+import { ScoredPineconeRecord } from '@pinecone-database/pinecone';
+
+export const runtime = 'edge';
+
+interface MatchMetadata {
+    [key: string]: any; // Index signature to satisfy RecordMetadata
+    description?: string;
+}
+
+export async function POST(req: NextRequest) {
+    try {
+        // Initialize OpenAI client
+        const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+
+        // Initialize Pinecone client
+        const pinecone = new Pinecone({
+            apiKey: process.env.PINECONE_API_KEY!,
+        });
+
+        // Get the Pinecone index
+        const index = pinecone.index('task-descriptions'); // Ensure this index exists in Pinecone
+
+        // Extract the message from the request body
+        const { messages } = await req.json();
+
+        // Validate messages
+        if (!messages || !Array.isArray(messages)) {
+            return streamError("Invalid request format. 'messages' must be an array.");
+        }
+
+        // Define the questions to ask
+        const questions = [
+            "What is the primary objective or outcome you want to achieve with this task?\n(For example, \"I want to minimize operational risks associated with market expansion and ensure compliance with local regulations, aiming to reduce risk exposure by 40% within six months.\")",
+            "Who is your target audience or who will benefit from the outcome of this task?\n(For example, \"The target audience is our executive team and risk management department. The leadership team will benefit from clear risk insights, while the risk department will use this to refine mitigation strategies.\")",
+            "Are there any specific challenges or obstacles you're currently facing that you'd like this task to address?\n(For example, \"We are currently facing challenges with identifying unforeseen regulatory risks, and our risk matrix lacks the depth to handle complex scenarios. This has led to potential non-compliance.\")",
+            "What are the key performance indicators (KPIs) or metrics that will define success for this task?\n(For example, \"Success will be defined by reducing regulatory non-compliance incidents by 30%, increasing risk identification accuracy by 25%, and mitigating risks with a 20% lower impact on business operations.\")"
+        ];
+
+        // Initialize userAnswers
+        const userAnswers: string[] = [];
+        let lastQuestionIndex = -1;
+
+        // Extract user answers from the conversation
+        for (let i = 0; i < messages.length; i++) {
+            const message = messages[i];
+
+            if (message.role === 'assistant') {
+                // Check if the assistant's message is one of the questions
+                const questionIndex = questions.findIndex(q =>
+                    message.content.trim().startsWith(q.split('\n')[0])
+                );
+                if (questionIndex !== -1) {
+                    lastQuestionIndex = questionIndex;
+                    // Expect the user's answer next
+                    if (i + 1 < messages.length && messages[i + 1].role === 'user') {
+                        userAnswers[questionIndex] = messages[i + 1].content;
+                    }
+                }
+            }
+        }
+
+        if (userAnswers.length < questions.length) {
+            // Ask the next question
+            const nextQuestionIndex = userAnswers.length;
+            const nextQuestion = questions[nextQuestionIndex];
+
+            return streamAssistantMessage(nextQuestion);
+        } else {
+            // All questions have been answered
+            // Combine the answers into a single query
+            const userQuery = userAnswers.join(' ');
+
+            // Step 1: Embed the user's combined answers
+            const embeddingResponse = await openai.embeddings.create({
+                model: 'text-embedding-ada-002',
+                input: [userQuery],
+            });
+
+            const questionEmbedding = embeddingResponse.data[0].embedding;
+
+            // Step 2: Query Pinecone for relevant task descriptions
+            const queryResponse = await index.query({
+                vector: questionEmbedding,
+                topK: 5,
+                includeMetadata: true,
+            });
+
+            // Extract the relevant task descriptions
+            const contexts = queryResponse.matches
+                ?.map((match: ScoredPineconeRecord<MatchMetadata>) => match.metadata?.description)
+                .filter(desc => desc) // Remove undefined descriptions
+                .join('\n');
+
+            if (!contexts) {
+                return streamError("No relevant task descriptions found.");
+            }
+
+            // Step 3: Generate an answer using OpenAI's Chat API
+            const assistantPrompt = `Based on the following task descriptions, help the user find the most suitable task that matches their needs.
+
+Task Descriptions:
+${contexts}
+
+User's Needs:
+${userQuery}
+
+Assistant:`;
+
+            // Create a streaming response from OpenAI
+            const completion = await openai.chat.completions.create({
+                model: process.env.GPT_MODEL || 'gpt-3.5-turbo',
+                messages: [{ role: 'user', content: assistantPrompt }],
+                stream: true,
+            });
+
+            // Convert OpenAI's streaming response to a ReadableStream
+            const stream = new ReadableStream({
+                async start(controller) {
+                    for await (const chunk of completion) {
+                        const data = chunk.toString();
+                        controller.enqueue(new TextEncoder().encode(data));
+                    }
+                    controller.close();
+                }
+            });
+
+            // Return the streamed response
+            return new Response(stream, {
+                headers: { 'Content-Type': 'text/event-stream' },
+            });
+        }
+
+    } catch (error: any) {
+        console.error('Error in chatbot handler:', error);
+
+        // Handle specific known errors
+        if (error.message && error.message.includes('Referee already has the free chats')) {
+            return streamError("Referee already has the free chats.");
+        }
+
+        // Generic error message
+        return streamError("Internal server error. Please try again later.");
+    }
+}
+
+// Helper function to stream assistant messages
+function streamAssistantMessage(content: string) {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+        start(controller) {
+            // Format according to OpenAI's streaming format
+            const data = JSON.stringify({ role: 'assistant', content });
+            controller.enqueue(new TextEncoder().encode(`data: ${data}\n\n`));
+            controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+            controller.close();
+        }
+    });
+
+    return new Response(stream, {
+        headers: { 'Content-Type': 'text/event-stream' },
+    });
+}
+
+// Helper function to stream error messages
+function streamError(errorMessage: string) {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+        start(controller) {
+            // Send error message as assistant content in OpenAI's streaming format
+            const data = JSON.stringify({ role: 'assistant', content: `Error: ${errorMessage}` });
+            controller.enqueue(new TextEncoder().encode(`data: ${data}\n\n`));
+            controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+            controller.close();
+        }
+    });
+
+    return new Response(stream, {
+        headers: { 'Content-Type': 'text/event-stream' },
+    });
+}

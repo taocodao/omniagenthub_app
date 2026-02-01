@@ -1,0 +1,128 @@
+import { createAssistant, re_createAssistant } from '../../../components/createAssistant1';
+import OpenAI from 'openai';
+import { AssistantResponse } from 'ai';
+import { createClient } from '@vercel/kv';
+import { unstable_noStore as noStore } from 'next/cache';
+
+export const runtime = "edge";
+
+export const dynamic = 'force-dynamic';
+export const maxDuration = 120;
+
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY || '',
+});
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+export async function POST(req: Request) {
+    //export function GET(req: Request) {
+    noStore();
+    let input;
+    try {
+        //console.log("Parsing request body...");
+        input = await req.json();
+        ////console.log("Received input:", input);
+    } catch (error) {
+        console.error("Error parsing request JSON:", error);
+        return new Response('Invalid JSON in request body', { status: 400 });
+    }
+
+    const { threadId: inputThreadId, realAssistantId: iuputRealAssistantId, message, assistantId } = input;
+    let realAssistantId = iuputRealAssistantId;// Declare realAssistantId with explicit type
+
+    if (!assistantId) {
+        console.error('assistantId is required');
+        return new Response('assistantId is required', { status: 400 });
+    }
+
+    let threadId = inputThreadId;
+
+    try {
+        if (!threadId) {
+            //console.log("Creating a new thread and assistant...");
+            const thread = await openai.beta.threads.create({});
+            threadId = thread.id;
+
+            realAssistantId = await createAssistant(assistantId);
+            //console.log("Created new assistant with ID:", realAssistantId);
+
+            await kv.set(`thread-to-assistant:${threadId}`, realAssistantId, { ex: 3600 });
+            //console.log(`Saved thread-to-assistant mapping for thread ${threadId}`);
+        } else {
+            //console.log("Re-using threadId:", threadId);
+
+            realAssistantId = await kv.get<string>(`thread-to-assistant:${threadId}`); // Explicitly type the retrieved value
+            if (!realAssistantId) {
+                //console.log("No thread-to-assistant mapping found, creating a new assistant...");
+                realAssistantId = await createAssistant(assistantId);
+                await kv.set(`thread-to-assistant:${threadId}`, realAssistantId, { ex: 3600 });
+                //console.log(`Updated thread-to-assistant mapping for thread ${threadId}`);
+            } else {
+                //console.log("Retrieved assistantId from thread-to-assistant mapping:", realAssistantId);
+            }
+        }
+
+        const createdMessage = await openai.beta.threads.messages.create(
+            threadId,
+            { role: 'user', content: message },
+            { signal: req.signal }
+        );
+        //console.log("Message created with ID:", createdMessage.id);
+
+        return AssistantResponse(
+            { threadId, messageId: createdMessage.id },
+            async ({ forwardStream }) => {
+                const runStream = openai.beta.threads.runs.stream(
+                    threadId,
+                    {
+                        assistant_id: String(realAssistantId), // Use realAssistantId here
+                    },
+                    { signal: req.signal }
+                );
+
+                //console.log("Streaming assistant response...");
+                await forwardStream(runStream);
+            }
+        );
+
+    } catch (error) {
+        console.error("Error during assistant processing:", error);
+
+        try {
+            //console.log("Retrying with re_createAssistant...");
+            realAssistantId = await re_createAssistant(assistantId);
+
+            await kv.set(`thread-to-assistant:${threadId}`, realAssistantId, { ex: 3600 });
+            //console.log(`Updated thread-to-assistant mapping with new assistant for thread ${threadId}`);
+
+            const createdMessage = await openai.beta.threads.messages.create(
+                threadId,
+                { role: 'user', content: message },
+                { signal: req.signal }
+            );
+            //console.log("Message re-created with ID:", createdMessage.id);
+
+            const runStream = openai.beta.threads.runs.stream(
+                threadId,
+                realAssistantId,
+                { signal: req.signal }
+            );
+            //console.log("Streaming assistant response after retry...");
+
+            return AssistantResponse(
+                { threadId, messageId: createdMessage.id },
+                async ({ forwardStream }) => {
+                    await forwardStream(runStream);
+                }
+            );
+        } catch (recreateError) {
+            console.error("Error running assistant with re_createAssistant:", recreateError);
+            return new Response('Error running assistant', { status: 500 });
+        }
+    }
+}
+

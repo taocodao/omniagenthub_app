@@ -1,0 +1,249 @@
+// components/ChatModal.tsx
+
+import React, { useState, useEffect, ChangeEvent, useContext } from 'react';
+import styles from '../styles/ChatModal.module.css'; // Create this CSS module for styling
+import { toast } from 'react-toastify';
+import { LocalizationContext } from '../util/LocalizationContext';
+
+interface ChatModalProps {
+    isOpen: boolean;
+    onClose: () => void;
+}
+
+const ChatModal: React.FC<ChatModalProps> = ({ isOpen, onClose }) => {
+    const { language } = useContext(LocalizationContext);
+    const [input, setInput] = useState<{ query: string }>({ query: '' });
+    const [messages, setMessages] = useState<any[]>([]);
+    const [chatDepartments, setChatDepartments] = useState<string[]>([]);
+    const [chatRoles, setChatRoles] = useState<string[]>(['ALL']);
+    const [selectedChatDepartment, setSelectedChatDepartment] = useState<string>('ALL');
+    const [selectedChatRole, setSelectedChatRole] = useState<string>('ALL');
+
+    // Handle input changes for chat input
+    const handleInputChange = (e: ChangeEvent<HTMLInputElement>) => {
+        setInput({ query: e.target.value });
+    };
+
+    // Format results from API response with hyperlinks
+    const formatResults = (results: any[]) => {
+        if (!results || results.length === 0) {
+            return <p>No matching tasks found.</p>;
+        }
+
+        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || '';
+
+        const formattedResults = results.map((result, index) => {
+            const encodedRole = encodeURIComponent(result.role);
+            const encodedDepartment = encodeURIComponent(result.department);
+            const encodedTask = encodeURIComponent(result.task);
+            const url = `${baseUrl}ChatHome?selectedRole=${encodedRole}&selectedCategory=${encodedDepartment}&selectedTask=${encodedTask}`;
+            console.log("-----------the url is ", url);
+            return (
+                <div key={index} className={styles.resultItem}>
+                    <strong>{index + 1}. Department:</strong> {result.department}
+                    <br />
+                    <strong>Role:</strong> {result.role}
+                    <br />
+                    <strong>Task:</strong>{' '}
+                    <a href={url} target="_blank" rel="noopener noreferrer">
+                        {result.task}
+                    </a>
+                    <br />
+                    <strong>Score:</strong> {result.score.toFixed(2)}
+                    <hr />
+                </div>
+            );
+        });
+
+        return <div>{formattedResults}</div>;
+    };
+
+    // Handle form submission for chat
+    const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+        e.preventDefault();
+
+        const payload: any = {
+            query: input.query,
+        };
+
+        if (selectedChatDepartment !== 'ALL') {
+            payload.department = selectedChatDepartment;
+        }
+
+        if (selectedChatRole !== 'ALL') {
+            payload.role = selectedChatRole;
+        }
+
+        try {
+            const response = await fetch('/api/chatbot', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(payload),
+            });
+
+            const data = await response.json();
+
+            if (response.ok) {
+                // Process and display the results
+                setMessages((prevMessages) => [
+                    ...prevMessages,
+                    {
+                        role: 'user',
+                        content: input.query,
+                    },
+                    {
+                        role: 'assistant',
+                        content: formatResults(data.results),
+                    },
+                ]);
+            } else {
+                // Handle error response
+                setMessages((prevMessages) => [
+                    ...prevMessages,
+                    {
+                        role: 'assistant',
+                        content: data.error || 'An error occurred.',
+                    },
+                ]);
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            setMessages((prevMessages) => [
+                ...prevMessages,
+                {
+                    role: 'assistant',
+                    content: 'An error occurred while processing your request.',
+                },
+            ]);
+        }
+
+        // Reset the input field
+        setInput({ query: '' });
+    };
+
+    // Fetch departments for the chat modal
+    useEffect(() => {
+        const fetchChatDepartments = async () => {
+            try {
+                const response = await fetch('/api/get-departments');
+                if (!response.ok) {
+                    throw new Error('Failed to fetch departments');
+                }
+                const data = await response.json();
+                setChatDepartments(['ALL', ...data]); // Include 'ALL' as default option
+            } catch (error) {
+                console.error('Error fetching departments:', error);
+            }
+        };
+        fetchChatDepartments();
+    }, []);
+
+    // Fetch roles based on selected department for the chat modal
+    useEffect(() => {
+        if (selectedChatDepartment === 'ALL') {
+            setChatRoles(['ALL']);
+            setSelectedChatRole('ALL');
+        } else {
+            const fetchChatRoles = async () => {
+                try {
+                    const response = await fetch('/api/get-roles', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ department: selectedChatDepartment }),
+                    });
+                    if (!response.ok) {
+                        throw new Error('Failed to fetch roles');
+                    }
+                    const data = await response.json();
+                    const roles = Array.isArray(data.roles) ? data.roles : [];
+                    setChatRoles(['ALL', ...roles]);
+                    setSelectedChatRole('ALL');
+                } catch (error) {
+                    console.error('Error fetching roles:', error);
+                }
+            };
+            fetchChatRoles();
+        }
+    }, [selectedChatDepartment]);
+
+    if (!isOpen) return null;
+
+    return (
+        <div className={styles.modalOverlay}>
+            <div className={styles.modalContent}>
+                {/* Close Button */}
+                <button className={styles.closeButton} onClick={onClose}>
+                    X
+                </button>
+                {/* Department and Role Selectors */}
+                <div className={styles.chatSelectors}>
+                    <label className={styles.selectorLabel}>
+                        <span>Department:</span>
+                        <select
+                            value={selectedChatDepartment}
+                            onChange={(e) => setSelectedChatDepartment(e.target.value)}
+                            className={styles.chatDropdown}
+                        >
+                            {chatDepartments.map((dept) => (
+                                <option key={dept} value={dept}>
+                                    {dept}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                    <label className={styles.selectorLabel}>
+                        <span>Role:</span>
+                        <select
+                            value={selectedChatRole}
+                            onChange={(e) => setSelectedChatRole(e.target.value)}
+                            className={styles.chatDropdown}
+                        >
+                            {chatRoles.map((role) => (
+                                <option key={role} value={role}>
+                                    {role}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                </div>
+                <div className={styles.chatContainer}>
+                    {/* Chat messages */}
+                    {messages.map((message: any, index: number) => (
+                        <div
+                            key={index}
+                            className={
+                                message.role === 'user'
+                                    ? styles.userMessage
+                                    : styles.assistantMessage
+                            }
+                        >
+                            {message.role === 'assistant' ? (
+                                <div className={styles.assistantContent}>{message.content}</div>
+                            ) : (
+                                <div className={styles.userContent}>{message.content}</div>
+                            )}
+                        </div>
+                    ))}
+                    {/* Input form */}
+                    <form onSubmit={handleSubmit} className={styles.chatInputForm}>
+                        <input
+                            name="query"
+                            value={input.query}
+                            onChange={handleInputChange}
+                            placeholder="What is your primary objective for this task?"
+                            className={styles.chatInput}
+                            required
+                        />
+                        <button type="submit" className={styles.sendButton}>
+                            Search
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+export default ChatModal;

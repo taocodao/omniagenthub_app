@@ -1,0 +1,116 @@
+.container {
+    display: flex;
+    flex-direction: column;
+    height: 75vh;
+    width: 100%;
+    background-color: black;
+    overflow-y: auto;
+}
+
+.qaContainer {
+    padding: 2px;
+    background-color: rgb(10, 0, 0);
+
+    overflow-y: auto;
+}
+
+.qaHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+    width: 100%;
+    /* Ensure the header takes full width */
+    position: relative;
+}
+
+.qaTitle {
+    margin: 0;
+    margin-left: 10px;
+}
+
+.buttonContainer {
+    display: flex;
+    gap: 1px;
+    /* Adjust gap between buttons */
+    align-items: center;
+    /* Align items vertically centered */
+
+
+    /* Align buttons to the right */
+}
+
+.editButton {
+    padding: 0.5rem 1rem;
+    border: none;
+    width: 100px;
+    border-radius: 4px;
+    background-color: #0070f3;
+    color: white;
+    font-weight: bold;
+    font-size: medium;
+    cursor: pointer;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    box-shadow: 3px 6px #761e03f0;
+    margin-right: 900px;
+}
+
+.editButton:hover {
+    transform: scale(0.9);
+    background-color: rgba(0, 208, 255, 0.95);
+    font-weight: bold;
+    color: rgb(241, 244, 245);
+    box-shadow: 4px 8px rgba(245, 56, 4, 0.918);
+}
+
+.submitButtonContainer {
+    display: flex;
+    justify-content: center;
+
+    /* Center the submit button */
+    margin-top: 20px;
+}
+
+.submitButton {
+    padding: 10px 20px;
+    background-color: #0070f3;
+    width: 250px;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: medium;
+    box-shadow: 3px 6px #761e03f0;
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.submitButton:hover {
+    transform: scale(0.9);
+
+    background-color: rgba(0, 208, 255, 0.95);
+    font-weight: bold;
+    color: rgb(241, 244, 245);
+    box-shadow: 4px 8px rgba(245, 56, 4, 0.918);
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.chatStreamContainer {
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+    height: 100vh;
+    background-color: black;
+}
+
+.loadingIndicator {
+    text-align: center;
+    font-size: large;
+    font-weight: bold;
+    color: hsl(10, 94%, 50%);
+    margin: 2rem 0;
+}

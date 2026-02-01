@@ -1,0 +1,160 @@
+require('dotenv').config(); // Load environment variables
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+import HashUtil from '../../util/hashToFixedDigits';
+
+// Initialize KV Client
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+// Utility function to parse JSON safely
+const parseJsonObject = (jsonString: string) => {
+    try {
+        return JSON.parse(jsonString);
+    } catch (e) {
+        console.error('Error parsing JSON:', e);
+        return {};
+    }
+};
+
+// Validate if a string is a valid JSON
+const isValidJSON = (str: string) => {
+    try {
+        JSON.parse(str);
+        return true;
+    } catch {
+        return false;
+    }
+};
+
+// Clean up the prompt text by removing unwanted sections
+const cleanPrompt = (prompt: string) => {
+    return prompt
+        .replace(/📌📌 .* 📌📌/g, '') // Remove any newsletter subscription blocks
+        .replace(/aiforwork\.co/g, ''); // Replace unnecessary URLs
+};
+
+// Parse the prompt input and extract the necessary fields
+const parsePrompt = (prompt: string) => {
+    const cleanedPrompt = cleanPrompt(prompt);
+
+    // Extract key sections from the cleaned prompt
+    const promptMatch = cleanedPrompt.match(/"prompt":"([^"]+)"/);
+    const roleMatch = cleanedPrompt.match(/"role":"([^"]+)"/);
+    const departmentMatch = cleanedPrompt.match(/"department":"([^"]+)"/);
+    const taskMatch = cleanedPrompt.match(/"task":"([^"]+)"/);
+    const taskDescriptionMatch = cleanedPrompt.match(/"task_description":"([^"]+)"/);
+    const keyReferencesMatch = cleanedPrompt.match(/"key_references":{([^}]+)}/s);
+    const criteriaMatch = cleanedPrompt.match(/"criteria":({[^}]+})/s);
+    const evaluationRubricMatch = cleanedPrompt.match(/"evaluationRubric":{([^}]+)}/s);
+
+    // Define simplified rules
+    const newRules = {
+        rule_1: "Ask 3 relevant questions to gather essential information to achieve the user's goal. Return the questions and await the user's responses.",
+        rule_2: "Proceed to the next step using the given information and develop the content according to the user's requirements.",
+        rule_3: "Follow a step-by-step approach, focusing on success factors and key goals. Ensure precision and clarity at each step.",
+        rule_4: "Incorporate user inputs and blend them with reference material to craft optimal content.",
+        rule_5: "Conclude each task with a quick evaluation, offering suggestions for improvement where necessary.",
+        rule_6: `Generate an evaluation table with the following headers: Criteria, Rating (out of 10), Reasons, Feedback. Use the following HTML format:
+            <table>
+              <thead>
+                <tr>
+                  <th>Criteria</th>
+                  <th>Rating</th>
+                  <th>Reasons</th>
+                  <th>Feedback</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Criteria 1</td>
+                  <td>Rating 1</td>
+                  <td>Reasons 1</td>
+                  <td>Feedback 1</td>
+                </tr>
+                <tr>
+                  <td>Criteria 2</td>
+                  <td>Rating 2</td>
+                  <td>Reasons 2</td>
+                  <td>Feedback 2</td>
+                </tr>
+              </tbody>
+            </table>`,
+        rule_7: "Cross-check content with the evaluationRubric to ensure accuracy and alignment with goals.",
+        rule_8: `After evaluation, await user input. Based on their feedback:
+            - If input contains "refine", make targeted improvements and display refined work.
+            - If input is "Evaluate", conduct a deeper evaluation and raise standards.
+            - Implement feedback and follow up with a structured output.`,
+        rule_9: "Add a 'Change Log 📝' section summarizing key updates at the end of each task.",
+        rule_10: "After focus group or expert reviews, generate new content based on feedback, aiming for higher evaluation scores."
+    };
+
+    // Structured prompt with simplified rules
+    const structuredPrompt = {
+        prompt: promptMatch ? promptMatch[1] : '',
+        role: roleMatch ? roleMatch[1] : '',
+        department: departmentMatch ? departmentMatch[1] : '',
+        task: taskMatch ? taskMatch[1] : '',
+        task_description: taskDescriptionMatch ? taskDescriptionMatch[1] : '',
+        rules: newRules,
+        key_references: keyReferencesMatch ? parseJsonObject(`{${keyReferencesMatch[1]}}`) : {},
+        criteria: criteriaMatch ? parseJsonObject(criteriaMatch[1]) : {},
+        evaluationRubric: evaluationRubricMatch ? parseJsonObject(`{${evaluationRubricMatch[1]}}`) : {}
+    };
+
+    return structuredPrompt;
+};
+
+// API handler function
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    const { department, role, task, prompt } = req.body;
+
+    // Ensure required fields are provided
+    if (!prompt || !role || !task || !department) {
+        return res.status(400).json({ message: 'Department, Role, Task, and Prompt are required.' });
+    }
+
+    // Parse the input prompt
+    const structuredPrompt = parsePrompt(prompt);
+    const key = HashUtil.hashTo(`${role}${task}`);
+
+    // Fetch or update the department and task mappings
+    const departmentRolesKey = `department:${department}:roles`;
+    const roleTasksKey = `department:${department}:role:${role}:tasks`;
+
+    try {
+        // Fetch department roles and tasks in parallel for faster processing
+        const [roles, tasks] = await Promise.all([
+            kv.get(departmentRolesKey).then((res: any) => (res && isValidJSON(res) ? JSON.parse(res) : [])),
+            kv.get(roleTasksKey).then((res: any) => (res && isValidJSON(res) ? JSON.parse(res) : [])),
+        ]);
+
+        // Update roles if necessary
+        if (!roles.includes(role)) {
+            roles.push(role);
+            await kv.set(departmentRolesKey, JSON.stringify(roles));
+        }
+
+        // Update tasks if necessary
+        if (!tasks.includes(task)) {
+            tasks.push(task);
+            await kv.set(roleTasksKey, JSON.stringify(tasks));
+        }
+
+        // Save the structured prompt in KV
+        await kv.set(`assistant:${key}:instructions`, JSON.stringify({
+            ...structuredPrompt,
+            role,
+            department,
+            task,
+        }));
+
+        return res.status(200).json({ message: `Instructions saved with key: ${key}`, instruction: structuredPrompt });
+
+    } catch (error) {
+        console.error('Error saving instructions to KV:', error);
+        return res.status(500).json({ message: 'Error saving instructions to KV database.' });
+    }
+}

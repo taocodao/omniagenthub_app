@@ -1,0 +1,158 @@
+// pages/api/add-free-chats.ts
+
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+import HashUtil from '../../util/hashToFixedDigits';
+
+// Initialize Vercel KV client
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+// Define the structure of the request body
+interface AddFreeChatsRequest {
+    userKey: string;
+    freeTrades: number;
+    freeUploads?: number;       // Optional: Free Knowledge Base Uploads
+    freeCustomGPT?: number;     // Optional: Free Custom AI Tool Requests
+}
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    // Allow only POST requests
+    if (req.method !== 'POST') {
+        res.setHeader('Allow', 'POST');
+        return res.status(405).json({ message: 'Method Not Allowed' });
+    }
+
+    // Environment variable to determine if we're in development or production
+    const configEnv = process.env.NEXT_PUBLIC_CONFIG_ENV || 'prod';
+
+    // Function to determine if the request is from localhost
+    const isLocalhostRequest = (): boolean => {
+        const forwarded = req.headers['x-forwarded-for'];
+        const ip = typeof forwarded === 'string' ? forwarded.split(',')[0] : '';
+        const remoteAddress = req.socket.remoteAddress || '';
+
+        // Check for localhost IP addresses
+        return (
+            ip === '127.0.0.1' ||
+            ip === '::1' ||
+            remoteAddress === '127.0.0.1' ||
+            remoteAddress === '::1' ||
+            req.headers.host?.includes('localhost') === true
+        );
+    };
+
+    // Determine if the request is from localhost
+    const isLocalhost = isLocalhostRequest();
+
+    // In production, always require the token. In development, bypass token check for localhost.
+    if (configEnv !== 'dev' || !isLocalhost) {
+        const token = req.headers['x-updater-token'];
+
+        if (typeof token !== 'string' || token !== process.env.UPDATER_SECRET_TOKEN) {
+            return res.status(401).json({ message: 'Unauthorized: Invalid or missing token.' });
+        }
+    }
+
+    // Extract data from the request body
+    const { userKey, freeTrades, freeUploads, freeCustomGPT } = req.body as AddFreeChatsRequest;
+
+    console.log('Request body:', req.body);
+    console.log('Adding perks for userKey:', userKey);
+    console.log('Number of freeTrades to add:', freeTrades);
+    console.log('Number of freeUploads to add:', freeUploads);
+    console.log('Number of freeCustomGPT to add:', freeCustomGPT);
+
+    // Validate required fields
+    if (!userKey || typeof freeTrades !== 'number') {
+        return res.status(400).json({ message: 'User key and number of free trades are required.' });
+    }
+
+    // Validate that freeTrades is a positive number
+    if (freeTrades <= 0) {
+        return res.status(400).json({ message: 'Number of free trades must be a positive number.' });
+    }
+
+    // Validate additional fields if they are provided
+    if (freeUploads !== undefined && (typeof freeUploads !== 'number' || freeUploads <= 0)) {
+        return res.status(400).json({ message: 'Number of free uploads must be a positive number.' });
+    }
+
+    if (freeCustomGPT !== undefined && (typeof freeCustomGPT !== 'number' || freeCustomGPT <= 0)) {
+        return res.status(400).json({ message: 'Number of free Custom GPT requests must be a positive number.' });
+    }
+
+    try {
+        // Hash the userKey to create a consistent key format for KV store
+        const hashedUserKey = HashUtil.hashTo(userKey);
+
+        // Define KV store keys
+        const freeTradesKey = `${hashedUserKey}:freeTrades`;
+        const freeUploadsKey = `${hashedUserKey}:freeUploads`;
+        const freeCustomGPTKey = `${hashedUserKey}:freeCustomGPT`;
+
+        // Fetch current values
+        const [currentFreeTrades, currentFreeUploads, currentFreeCustomGPT] = await Promise.all([
+            kv.get<number>(freeTradesKey),
+            kv.get<number>(freeUploadsKey),
+            kv.get<number>(freeCustomGPTKey),
+        ]);
+
+        // Calculate updated balances
+        const updatedFreeTrades = (currentFreeTrades ? Number(currentFreeTrades) : 0) + freeTrades;
+        const updatedFreeUploads = (freeUploads !== undefined
+            ? (currentFreeUploads ? Number(currentFreeUploads) : 0) + freeUploads
+            : currentFreeUploads ? Number(currentFreeUploads) : 0);
+        const updatedFreeCustomGPT = (freeCustomGPT !== undefined
+            ? (currentFreeCustomGPT ? Number(currentFreeCustomGPT) : 0) + freeCustomGPT
+            : currentFreeCustomGPT ? Number(currentFreeCustomGPT) : 0);
+
+        // Prevent negative balances (though addition should not cause this)
+        if (updatedFreeTrades < 0 || updatedFreeUploads < 0 || updatedFreeCustomGPT < 0) {
+            return res.status(400).json({
+                message: 'Resulting free trades, uploads, or Custom GPT requests cannot be negative.',
+                currentBalances: {
+                    freeTrades: currentFreeTrades ? Number(currentFreeTrades) : 0,
+                    freeUploads: currentFreeUploads ? Number(currentFreeUploads) : 0,
+                    freeCustomGPT: currentFreeCustomGPT ? Number(currentFreeCustomGPT) : 0,
+                },
+            });
+        }
+
+        // Update the balances in KV store using incrby
+        const updatePromises = [
+            kv.incrby(freeTradesKey, freeTrades),
+        ];
+
+        if (freeUploads !== undefined) {
+            updatePromises.push(kv.incrby(freeUploadsKey, freeUploads));
+        }
+
+        if (freeCustomGPT !== undefined) {
+            updatePromises.push(kv.incrby(freeCustomGPTKey, freeCustomGPT));
+        }
+
+        // Execute all increment operations concurrently
+        const [newFreeTrades, newFreeUploads, newFreeCustomGPT] = await Promise.all(updatePromises);
+
+        console.log('Perks updated successfully:');
+        console.log('New freeTrades:', newFreeTrades);
+        console.log('New freeUploads:', newFreeUploads);
+        console.log('New freeCustomGPT:', newFreeCustomGPT);
+
+        // Respond with success message and updated balances
+        return res.status(200).json({
+            message: 'Perks updated successfully.',
+            updatedBalances: {
+                freeTrades: newFreeTrades,
+                freeUploads: freeUploads !== undefined ? newFreeUploads : undefined,
+                freeCustomGPT: freeCustomGPT !== undefined ? newFreeCustomGPT : undefined,
+            },
+        });
+    } catch (error: any) {
+        console.error('Error updating perks:', error);
+        return res.status(500).json({ message: 'Internal server error.' });
+    }
+}

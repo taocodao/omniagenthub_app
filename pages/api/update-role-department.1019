@@ -1,0 +1,119 @@
+// pages/api/update-role-department.ts
+
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+
+// Initialize the KV client
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'POST') {
+        return res.status(405).json({ message: 'Method not allowed' });
+    }
+
+    const { currentDepartment, role, newDepartment } = req.body;
+
+    if (!currentDepartment || !role || !newDepartment) {
+        return res.status(400).json({ message: 'currentDepartment, role, and newDepartment are required' });
+    }
+
+    try {
+        // Step 1: Update the department-role mappings
+
+        // Remove the role from the current department's role list
+        const currentDeptRolesKey = `department:${currentDepartment}:roles`;
+        let currentDeptRoles: string[] = await kv.get(currentDeptRolesKey)
+            .then((res: any) => {
+                if (Array.isArray(res)) return res;
+                if (typeof res === 'string') {
+                    try {
+                        return JSON.parse(res);
+                    } catch {
+                        return [];
+                    }
+                }
+                return [];
+            });
+
+        currentDeptRoles = currentDeptRoles.filter((r) => r !== role);
+        await kv.set(currentDeptRolesKey, JSON.stringify(currentDeptRoles));
+
+        // Add the role to the new department's role list
+        const newDeptRolesKey = `department:${newDepartment}:roles`;
+        let newDeptRoles: string[] = await kv.get(newDeptRolesKey)
+            .then((res: any) => {
+                if (Array.isArray(res)) return res;
+                if (typeof res === 'string') {
+                    try {
+                        return JSON.parse(res);
+                    } catch {
+                        return [];
+                    }
+                }
+                return [];
+            });
+
+        if (!newDeptRoles.includes(role)) {
+            newDeptRoles.push(role);
+            await kv.set(newDeptRolesKey, JSON.stringify(newDeptRoles));
+        }
+
+        // Step 2: Move the role mappings to the new department
+        const mappingKeys = [
+            `${currentDepartment}:${role}:APIkey`,
+            `${currentDepartment}:${role}:user`,
+            `${currentDepartment}:${role}:price`,
+            `${currentDepartment}:${role}:image`,
+        ];
+
+        for (const key of mappingKeys) {
+            const value = await kv.get(key);
+            if (value !== null) {
+                const newKey = key.replace(`${currentDepartment}:${role}`, `${newDepartment}:${role}`);
+                await kv.set(newKey, value);
+                await kv.del(key);
+            }
+        }
+
+        // Step 3: Update tasks associated with the role
+        const tasksKey = `tasks:${currentDepartment}:${role}`;
+        let tasks: string[] = await kv.get(tasksKey)
+            .then((res: any) => {
+                if (Array.isArray(res)) return res;
+                if (typeof res === 'string') {
+                    try {
+                        return JSON.parse(res);
+                    } catch {
+                        return [];
+                    }
+                }
+                return [];
+            });
+
+        // Save tasks under the new department
+        const newTasksKey = `tasks:${newDepartment}:${role}`;
+        await kv.set(newTasksKey, JSON.stringify(tasks));
+
+        // Move each task's instruction data
+        for (const taskName of tasks) {
+            const instructionKey = `task:${currentDepartment}:${role}:${taskName}`;
+            const instructionValue = await kv.get(instructionKey);
+            if (instructionValue !== null) {
+                const newInstructionKey = `task:${newDepartment}:${role}:${taskName}`;
+                await kv.set(newInstructionKey, instructionValue);
+                await kv.del(instructionKey);
+            }
+        }
+
+        // Delete the old tasks key
+        await kv.del(tasksKey);
+
+        return res.status(200).json({ message: 'Role department updated successfully' });
+    } catch (error) {
+        console.error('Error updating role department:', error);
+        return res.status(500).json({ message: 'Error updating role department.' });
+    }
+}

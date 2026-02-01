@@ -1,0 +1,111 @@
+// pages/api/add-free-chats.ts
+
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+import HashUtil from '../../util/hashToFixedDigits';
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+interface AddFreeChatsRequest {
+    userKey: string;
+    freeTrades: number;
+    freeUploads?: number;
+    freeWebScrape?: number;
+    promoCodeUsed?: string;
+}
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'POST') {
+        res.setHeader('Allow', 'POST');
+        return res.status(405).json({ success: false, message: 'Method Not Allowed' });
+    }
+
+    const configEnv = process.env.NEXT_PUBLIC_CONFIG_ENV || 'prod';
+
+    const isLocalhostRequest = (): boolean => {
+        const forwarded = req.headers['x-forwarded-for'];
+        const ip = typeof forwarded === 'string' ? forwarded.split(',')[0] : '';
+        const remoteAddress = req.socket.remoteAddress || '';
+        return (
+            ip === '127.0.0.1' ||
+            ip === '::1' ||
+            remoteAddress === '127.0.0.1' ||
+            remoteAddress === '::1' ||
+            req.headers.host?.includes('localhost') === true
+        );
+    };
+
+    if (configEnv !== 'dev' || !isLocalhostRequest()) {
+        const token = req.headers['x-updater-token'];
+        if (typeof token !== 'string' || token !== process.env.UPDATER_SECRET_TOKEN) {
+            return res.status(401).json({ success: false, message: 'Unauthorized: Invalid or missing token.' });
+        }
+    }
+
+    const { userKey, freeTrades, freeUploads, freeWebScrape, promoCodeUsed } = req.body as AddFreeChatsRequest;
+
+    if (!userKey || typeof freeTrades !== 'number' || freeTrades <= 0) {
+        return res.status(400).json({ success: false, message: 'Invalid request parameters.' });
+    }
+
+    try {
+        const hashedUserKey = HashUtil.hashTo(userKey);
+
+        if (promoCodeUsed) {
+            // Handle different promo code formats with different validation rules
+            if (promoCodeUsed.includes(':')) {
+                // This is a unique link format (hashedEmail:prom40)
+                // Use a global key to track usage - not tied to any specific user
+                const globalPromoKey = `global:promo:${promoCodeUsed}`;
+                const promoAlreadyUsed = await kv.get(globalPromoKey);
+
+                if (promoAlreadyUsed) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'This unique promotion link has already been used.',
+                    });
+                }
+
+                // Mark this unique promo as used globally
+                await kv.set(globalPromoKey, 'used');
+            } else {
+                // Standard promo code (like "prom40")
+                // Track usage per user address
+                const promoUsageKey = `${hashedUserKey}:promo:${promoCodeUsed}`;
+                const promoAlreadyUsed = await kv.get(promoUsageKey);
+
+                if (promoAlreadyUsed) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Promo code has already been used by this account.',
+                    });
+                }
+
+                // Mark this promo as used by this user
+                await kv.set(promoUsageKey, 'used');
+            }
+        }
+
+        const freeTradesKey = `${hashedUserKey}:freeTrades`;
+        const freeUploadsKey = `${hashedUserKey}:freeUploads`;
+        const freeWebScrapeKey = `${hashedUserKey}:freeWebScrape`;
+
+        const updatedBalances = {
+            freeTrades: await kv.incrby(freeTradesKey, freeTrades),
+            freeUploads: freeUploads ? await kv.incrby(freeUploadsKey, freeUploads) : undefined,
+            freeWebScrape: freeWebScrape ? await kv.incrby(freeWebScrapeKey, freeWebScrape) : undefined,
+        };
+
+        return res.status(200).json({
+            success: true,
+            message: 'Perks updated successfully.',
+            updatedBalances,
+        });
+    } catch (error) {
+        console.error('Error updating perks:', error);
+        return res.status(500).json({ success: false, message: 'Internal server error.' });
+    }
+}

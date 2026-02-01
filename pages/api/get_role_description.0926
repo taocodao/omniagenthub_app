@@ -1,0 +1,43 @@
+// pages/api/get_role_description.ts
+
+import { NextApiRequest, NextApiResponse } from 'next';
+import { get_role_desc } from '../../util/get_role_task_desc';
+import getContentByLanguage from '../../util/get_content_by_language';
+
+// Function to remove markdown characters like "**" or "_"
+const stripMarkdown = (text: string) => {
+    return text.replace(/(\*\*|__|_|\*)/g, '');
+};
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed' });
+    }
+
+    const { department, role, language } = req.body;
+
+    if (!department || !role || !language || typeof department !== 'string' || typeof role !== 'string' || typeof language !== 'string') {
+        return res.status(400).json({ error: 'Invalid parameters' });
+    }
+
+    try {
+        // Get the role description in English
+        const roleDesc = await get_role_desc(department, role);
+
+        if (!roleDesc) {
+            return res.status(404).json({ error: 'Role description not found' });
+        }
+
+        // Get the translated content
+        const contentKey = `role_desc:${department}:${role}`;
+        const { content: translatedDesc } = await getContentByLanguage(contentKey, language, roleDesc);
+
+        // Ensure translatedDesc is a string (use empty string as default if null)
+        const cleanDescription = stripMarkdown(translatedDesc ?? '');
+
+        res.status(200).json({ description: cleanDescription });
+    } catch (error) {
+        console.error('Error fetching role description:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+}

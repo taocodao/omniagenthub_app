@@ -1,0 +1,144 @@
+// pages/SignIn.tsx            
+import React, { useState, useEffect } from "react";
+import { useRouter } from "next/router";
+import {
+    ConnectEmbed,
+    darkTheme,
+    useActiveWallet,
+} from "thirdweb/react";
+import {
+    getUserEmail
+    // ❌ Removed getProfiles - not available in this SDK version
+} from "thirdweb/wallets/in-app";
+import { inAppWallet } from "thirdweb/wallets";
+import { polygon, polygonAmoy, Chain } from "thirdweb/chains";
+import { client } from "../util/client";
+import {
+    ACTIVE_CHAIN,
+    ACCOUNT_FACTORY_ADDRESS,
+} from "../constants/constants";
+import styles from "../styles/Signin_new.module.css";
+
+// ❌ Removed Profile interface since we're not using getProfiles
+
+/* ------------------ theme ------------------ */
+const customTheme = darkTheme({ colors: { modalBg: "#1a1a1a" } });
+
+/* ------------------ chain configuration ------------------ */
+const chainMap: Record<string, Chain> = {
+    "polygon-amoy-testnet": polygonAmoy,
+    polygon,
+};
+const activeChain = chainMap[ACTIVE_CHAIN];
+
+/* ------------------ main page -------------- */
+const SignInPage: React.FC = () => {
+    const router = useRouter();
+    const [emailCaptured, setEmailCaptured] = useState(false);
+
+    return (
+        <div className={styles.container}>
+            <div className={styles.signInCard}>
+                <h1 className={styles.title}>Welcome to Web3AIstore</h1>
+                <p className={styles.subtitle}>Sign in with your preferred method</p>
+
+                <ConnectEmbed
+                    client={client}
+                    accountAbstraction={{
+                        chain: activeChain,
+                        sponsorGas: true,
+                        factoryAddress: ACCOUNT_FACTORY_ADDRESS,
+                    }}
+                    theme={customTheme}
+                    className={styles.connectEmbed}
+                    wallets={[
+                        inAppWallet({
+                            auth: {
+                                options: ["email", "google", "apple", "facebook", "phone"],
+                            },
+                        }),
+                    ]}
+                    showThirdwebBranding={false}
+                />
+
+                {/* Email capture */}
+                <EmailCapture onEmailCaptured={() => setEmailCaptured(true)} />
+
+                {emailCaptured && (
+                    <div className={styles.successMessage}>
+                        ✅ Successfully signed in! Redirecting…
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+/* ------------------ helper types ----------- */
+interface EmailCaptureProps {
+    onEmailCaptured: () => void;
+}
+
+/* ------------------ email capture ----------- */
+const EmailCapture: React.FC<EmailCaptureProps> = ({ onEmailCaptured }) => {
+    const wallet = useActiveWallet();
+    const router = useRouter();
+    const [processed, setProcessed] = useState(false);
+
+    useEffect(() => {
+        if (!wallet || processed) return;
+
+        //  💡 annotate the async IIFE ➜ Promise<void>
+        (async (): Promise<void> => {
+            try {
+                console.log("🔍 Wallet connected, attempting to capture email…");
+
+                await new Promise((res) => setTimeout(res, 1_000));
+
+                /* ✅ Only use getUserEmail - getProfiles not available */
+                const directEmail = await getUserEmail({ client });
+
+                const finalEmail = directEmail || null;
+                const walletAddress = wallet.getAccount()?.address ?? "unknown";
+
+                console.log("=".repeat(45));
+                console.log("📧 EMAIL       :", finalEmail ?? "N/A");
+                console.log("🔗 WALLET      :", walletAddress);
+                console.log("📅 TIMESTAMP   :", new Date().toISOString());
+                console.log("🔐 AUTH METHOD :", wallet.id);
+                console.log("🔗 CHAIN       :", activeChain.name);
+                console.log("🏭 FACTORY     :", ACCOUNT_FACTORY_ADDRESS);
+                console.log("=".repeat(45));
+
+                /* Persist locally */
+                if (finalEmail) {
+                    localStorage.setItem("userEmail", finalEmail);
+                    localStorage.setItem("walletAddress", walletAddress);
+                    localStorage.setItem("loginTimestamp", new Date().toISOString());
+                    localStorage.setItem("chainUsed", activeChain?.name ?? "unknown-chain");
+                    localStorage.setItem("factoryAddress", ACCOUNT_FACTORY_ADDRESS);
+                }
+
+                setProcessed(true);
+                onEmailCaptured();
+
+                /* ✅ Fixed: Ensure target is always a string */
+                const target = finalEmail || "no-email";
+                setTimeout(
+                    () => router.push(`/dashboard?email=${encodeURIComponent(target)}`),
+                    2_000,
+                );
+            } catch (err) {
+                console.error("❌ Email capture error:", err);
+                setTimeout(
+                    () => router.push("/dashboard?status=logged-in-no-email"),
+                    2_000,
+                );
+            }
+        })();
+    }, [wallet, processed, onEmailCaptured, router]);
+
+    return null;
+};
+
+export default SignInPage;

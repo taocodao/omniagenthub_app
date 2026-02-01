@@ -1,0 +1,58 @@
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { Pinecone } from '@pinecone-database/pinecone';
+import { OpenAI } from 'openai';
+
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY!,
+});
+
+const pinecone = new Pinecone({
+    apiKey: process.env.PINECONE_API_KEY!,
+});
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'GET') {
+        return res.status(405).json({ error: 'Method not allowed' });
+    }
+
+    try {
+        const website = req.query.website as string;
+        const normalizedWebsite = website.toLowerCase().replace(/\/$/, '');
+
+        // Generate embedding properly
+        const embeddingResponse = await openai.embeddings.create({
+            model: 'text-embedding-ada-002',
+            input: "Generate common questions based on this content:"
+        });
+
+        // Extract the actual embedding vector
+        const vector = embeddingResponse.data[0].embedding;
+
+        const index = pinecone.Index('omnisharing');
+        const pineResponse = await index.query({
+            vector, // Use the extracted vector
+            topK: 5,
+            includeMetadata: true,
+            filter: { url: { $eq: normalizedWebsite } },
+        });
+
+        const context = pineResponse.matches?.map(m => m.metadata?.text).join('\n') || '';
+
+        const questionsResponse = await openai.chat.completions.create({
+            model: 'gpt-4o-mini',
+            messages: [{
+                role: 'system',
+                content: `Generate 8 common questions about: ${context}`
+            }]
+        });
+
+        const questions = questionsResponse.choices[0].message.content
+            ?.split('\n')
+            .filter(q => q.trim());
+
+        return res.status(200).json({ questions });
+    } catch (error) {
+        console.error('Error:', error);
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+}

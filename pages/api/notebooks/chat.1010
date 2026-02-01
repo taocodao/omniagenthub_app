@@ -1,0 +1,356 @@
+// pages/api/notebooks/chat.ts - MULTI-SOURCE SELECTION IN ONE NOTEBOOK
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+import axios from 'axios';
+
+const kv = createClient({
+  url: process.env.KV_REST_API_URL!,
+  token: process.env.KV_REST_API_TOKEN!,
+});
+
+const SURFSENSE_API_URL = process.env.SURFSENSE_API_URL || 'https://surfsense-backend-730233624615.us-central1.run.app';
+const SURFSENSE_JWT_TOKEN = process.env.SURFSENSE_JWT_TOKEN!;
+
+interface NotebookSource {
+  id: string;
+  title: string;
+  type: 'file' | 'website' | 'text';
+  status: 'uploading' | 'processing' | 'completed' | 'error';
+  progress: number;
+  dateCreated: string;
+  selected: boolean;
+  surfsenseDocId?: number;
+  surfsenseSearchSpaceId?: number;
+  fileName?: string;
+  fileType?: string;
+  content?: string; // For text sources
+}
+
+interface ChatRequest {
+  userKey: string;
+  notebookId: string;
+  query: string;
+  selectedSources?: string[]; // Array of source IDs
+  sources?: NotebookSource[]; // Full source objects from frontend
+  userAddress: string;
+  conversationHistory?: any[];
+}
+
+interface ChatResponse {
+  success: boolean;
+  response?: string;
+  sourcesUsed?: string[];
+  searchSpaceId?: number;
+  messageId?: string;
+  timestamp?: string;
+  message?: string;
+}
+
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse<ChatResponse>
+): Promise<void> {
+  if (req.method !== 'POST') {
+    res.status(405).json({ success: false, message: 'Method Not Allowed' });
+    return;
+  }
+
+  try {
+    const {
+      userKey,
+      notebookId,
+      query,
+      selectedSources = [],
+      sources: sourcesFromRequest = [],
+      conversationHistory = [],
+    } = req.body as ChatRequest;
+
+    if (!userKey || !query?.trim() || !notebookId) {
+      res.status(400).json({
+        success: false,
+        message: 'Missing required parameters'
+      });
+      return;
+    }
+
+    console.log('💬 Multi-source chat query:', query);
+    console.log('📋 Selected sources:', selectedSources);
+
+    // Get notebook from KV
+    const notebookKey = `${userKey}:notebook:${notebookId}`;
+    const notebookData = await kv.get(notebookKey);
+
+    if (!notebookData) {
+      res.status(404).json({
+        success: false,
+        message: 'Notebook not found'
+      });
+      return;
+    }
+
+    const notebook = typeof notebookData === 'string' 
+      ? JSON.parse(notebookData) 
+      : notebookData as any;
+
+    const searchSpaceId = notebook.surfsenseSearchSpaceId;
+
+    if (!searchSpaceId) {
+      res.status(400).json({
+        success: false,
+        message: 'No search space configured for this notebook'
+      });
+      return;
+    }
+
+    // ✅ MULTI-SOURCE SELECTION: Extract content and metadata from selected sources
+    const selectedDocumentIds: number[] = [];
+    const selectedSourceTitles: string[] = [];
+    const fallbackContent: string[] = []; // For sources without doc IDs
+
+    if (selectedSources.length > 0) {
+      console.log('🔍 Processing selected sources...');
+
+      // First try to get from request (faster)
+      if (sourcesFromRequest.length > 0) {
+        for (const source of sourcesFromRequest) {
+          if (selectedSources.includes(source.id)) {
+            selectedSourceTitles.push(source.title);
+            
+            if (source.surfsenseDocId) {
+              selectedDocumentIds.push(source.surfsenseDocId);
+              console.log(`✅ Found Doc ID: ${source.title} - ${source.surfsenseDocId}`);
+            } else {
+              console.log(`⚠️ No Doc ID for: ${source.title} - using fallback`);
+              
+              // ✅ FALLBACK: Use source content directly if no doc ID
+              if (source.content) {
+                fallbackContent.push(`[${source.title}]: ${source.content}`);
+              } else if (source.type === 'text') {
+                // For text sources, try to get content from source itself
+                fallbackContent.push(`[${source.title}]: Content not available`);
+              }
+            }
+          }
+        }
+      } else {
+        // Fallback: get from notebook sources
+        for (const sourceId of selectedSources) {
+          const source = notebook.sources?.find((s: any) => s.id === sourceId);
+          if (source) {
+            selectedSourceTitles.push(source.title);
+            
+            if (source.surfsenseDocId) {
+              selectedDocumentIds.push(source.surfsenseDocId);
+              console.log(`✅ Found Doc ID: ${source.title} - ${source.surfsenseDocId}`);
+            } else {
+              console.log(`⚠️ No Doc ID for: ${source.title} - using fallback`);
+              if (source.content) {
+                fallbackContent.push(`[${source.title}]: ${source.content}`);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    console.log('📊 Search summary:');
+    console.log(`   - Search space: ${searchSpaceId}`);
+    console.log(`   - Document IDs: ${selectedDocumentIds.length}`);
+    console.log(`   - Fallback content: ${fallbackContent.length} pieces`);
+    console.log(`   - Source titles: ${selectedSourceTitles}`);
+
+    if (selectedSourceTitles.length === 0) {
+      res.status(400).json({
+        success: false,
+        message: 'No sources selected. Please select at least one source.'
+      });
+      return;
+    }
+
+    let responseText = '';
+    let sourcesUsed: string[] = [];
+
+    // ✅ TRY SURFSENSE FIRST (if we have document IDs)
+    if (selectedDocumentIds.length > 0) {
+      console.log('🚀 Trying SurfSense with document IDs...');
+      
+      try {
+        const messages = [{ role: 'user' as const, content: query }];
+
+        const chatResponse = await axios.post(
+          `${SURFSENSE_API_URL}/api/v1/chat`,
+          {
+            messages: messages,
+            data: {
+              search_space_id: searchSpaceId,
+              research_mode: 'QNA',
+              selected_connectors: [],
+              search_mode: 'CHUNKS',
+              document_ids_to_add_in_context: selectedDocumentIds // ✅ Only selected docs
+            }
+          },
+          {
+            headers: {
+              'Authorization': `Bearer ${SURFSENSE_JWT_TOKEN}`,
+              'Content-Type': 'application/json',
+              'Accept': 'text/plain'
+            },
+            timeout: 30000,
+            responseType: 'stream'
+          }
+        );
+
+        // Parse streaming response
+        await new Promise<void>((resolve, reject) => {
+          chatResponse.data.on('data', (chunk: Buffer) => {
+            const chunkStr = chunk.toString();
+            const lines = chunkStr.split('\n');
+
+            for (const line of lines) {
+              if (!line.trim()) continue;
+
+              try {
+                if (line.startsWith('0:')) {
+                  const textData = line.substring(2);
+                  try {
+                    const parsed = JSON.parse(textData);
+                    if (typeof parsed === 'string') {
+                      responseText += parsed;
+                    }
+                  } catch (e) {
+                    const cleanText = textData.replace(/"/g, '');
+                    responseText += cleanText;
+                  }
+                } else if (line.startsWith('8:')) {
+                  const data = line.substring(2);
+                  try {
+                    const parsed = JSON.parse(data);
+                    if (Array.isArray(parsed)) {
+                      for (const item of parsed) {
+                        if (item.type === 'sources' && item.data?.nodes) {
+                          sourcesUsed = item.data.nodes.map((node: any) => 
+                            node.metadata?.title || node.text || 'Unknown Source'
+                          );
+                        }
+                      }
+                    }
+                  } catch (e) {
+                    // Ignore parse errors for metadata
+                  }
+                }
+              } catch (error) {
+                // Continue processing other lines
+              }
+            }
+          });
+
+          chatResponse.data.on('end', () => {
+            console.log('✅ SurfSense response completed');
+            resolve();
+          });
+
+          chatResponse.data.on('error', (error: any) => {
+            console.error('❌ SurfSense stream error:', error);
+            reject(error);
+          });
+        });
+
+        console.log(`✅ SurfSense response length: ${responseText.length}`);
+
+      } catch (surfsenseError) {
+        console.error('❌ SurfSense failed:', surfsenseError);
+        responseText = ''; // Reset to try fallback
+      }
+    }
+
+    // ✅ FALLBACK: Use direct content + OpenAI (if SurfSense failed or no doc IDs)
+    if (!responseText.trim() && fallbackContent.length > 0) {
+      console.log('🔄 Using fallback with direct content...');
+      
+      try {
+        const context = fallbackContent.join('\n\n');
+        
+        const openaiResponse = await axios.post(
+          'https://api.openai.com/v1/chat/completions',
+          {
+            model: 'gpt-4o-mini',
+            messages: [
+              {
+                role: 'system',
+                content: 'You are a helpful assistant that answers questions based on provided source content. Always mention which sources you used in your response.'
+              },
+              {
+                role: 'user',
+                content: `Context from selected sources:\n${context}\n\nQuestion: ${query}`
+              }
+            ],
+            max_tokens: 500,
+            temperature: 0.7,
+          },
+          {
+            headers: {
+              'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+
+        responseText = openaiResponse.data.choices[0].message.content;
+        sourcesUsed = selectedSourceTitles; // Use all selected source titles
+        console.log('✅ Fallback response generated');
+
+      } catch (openaiError) {
+        console.error('❌ OpenAI fallback failed:', openaiError);
+        responseText = "I apologize, but I couldn't generate a response from your selected sources. Please try selecting different sources or rephrasing your question.";
+      }
+    }
+
+    // Final fallback message
+    if (!responseText.trim()) {
+      responseText = "I couldn't find relevant information in your selected sources. Please make sure your sources are properly uploaded and try rephrasing your question.";
+    }
+
+    // Store conversation history (optional)
+    try {
+      const conversationKey = `chat:${userKey}:${notebookId}`;
+      const updatedHistory = [
+        ...conversationHistory.slice(-6), // Keep last 6 messages
+        {
+          id: `msg_${Date.now()}_user`,
+          role: 'user' as const,
+          content: query,
+          timestamp: new Date().toISOString()
+        },
+        {
+          id: `msg_${Date.now()}_assistant`,
+          role: 'assistant' as const,
+          content: responseText,
+          timestamp: new Date().toISOString(),
+          sourcesUsed: sourcesUsed.length > 0 ? sourcesUsed : selectedSourceTitles
+        }
+      ];
+
+      await kv.set(conversationKey, JSON.stringify(updatedHistory), { ex: 86400 });
+    } catch (error) {
+      console.error('Failed to store conversation:', error);
+      // Continue without storing
+    }
+
+    res.status(200).json({
+      success: true,
+      response: responseText,
+      sourcesUsed: sourcesUsed.length > 0 ? sourcesUsed : selectedSourceTitles,
+      searchSpaceId,
+      messageId: `msg_${Date.now()}`,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ Chat error:', error);
+    
+    res.status(500).json({
+      success: false,
+      message: 'Chat failed: ' + (error instanceof Error ? error.message : 'Unknown error')
+    });
+  }
+}

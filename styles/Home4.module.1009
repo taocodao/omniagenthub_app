@@ -1,0 +1,616 @@
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 2rem;
+}
+
+.main {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 5rem 0;
+}
+
+.linkContainer {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+}
+
+.setupUserLink,
+.uploadNFTLink {
+    color: #0070f3;
+    text-decoration: none;
+    margin-right: 1rem;
+}
+
+.setupUserLink:hover,
+.uploadNFTLink:hover {
+    text-decoration: underline;
+}
+
+.navLink {
+    margin: 0 1rem;
+    text-decoration: none;
+    color: #0070f3;
+    font-size: 24px;
+}
+
+.navLink:hover {
+    color: whitesmoke;
+
+}
+
+.hoverLogo {
+    transition: transform 0.2s;
+}
+
+.hoverLogo:hover {
+    transform: scale(1.1);
+}
+
+.shareButton {
+    background-color: blue;
+    color: white;
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 18px;
+}
+
+.freeChats {
+    margin-top: 10px;
+    font-size: 18px;
+    color: white;
+}
+
+
+
+
+.shareButton:hover {
+    background-color: darkblue;
+}
+
+.modal {
+    background: white;
+    border-radius: 8px;
+    padding: 2rem;
+    width: 90%;
+    max-width: 500px;
+    margin: 0 auto;
+    position: relative;
+}
+
+.overlay {
+    background: rgba(0, 0, 0, 0.75);
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modalTitle {
+    margin-bottom: 1rem;
+    text-align: center;
+    font-size: 24px;
+    color: blue;
+}
+
+.socialIcons {
+    display: flex;
+    justify-content: space-around;
+    margin-bottom: 1rem;
+}
+
+.iconx,
+.iconf,
+.iconl,
+.iconr {
+    color: blue;
+    transition: color 0.2s;
+}
+
+.iconx:hover,
+.iconf:hover,
+.iconl:hover,
+.iconr:hover {
+    color: darkblue;
+}
+
+.textarea {
+    width: 100%;
+    height: 100px;
+    border: 2px solid #444;
+    border-radius: 8px;
+    padding: 0.5rem;
+    margin-bottom: 1rem;
+    font-size: 16px;
+    resize: none;
+}
+
+.buttonContainer {
+    display: flex;
+    justify-content: space-between;
+}
+
+.copyButton,
+.closeButton1 {
+    background-color: blue;
+    color: white;
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 18px;
+}
+
+.copyButton:hover,
+.closeButton1:hover {
+    background-color: darkblue;
+}
+
+.hoverEffect:hover {
+    color: white;
+}
+
+.modalOverlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(33, 2, 106, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.modalContent {
+    background: rgb(4, 2, 101);
+    padding: 20px;
+    border-radius: 5px;
+    box-shadow: 0 2px 10px rgba(136, 2, 2, 0.3);
+    width: 80%;
+    height: auto;
+    min-width: 200px;
+    /* Example minimum width */
+    min-height: 100px;
+    /* Example minimum height */
+    max-height: 80vh;
+    /* Example: Limit the height to 80% of the viewport height */
+    overflow-y: auto;
+    /* Allows scrolling within the modal content if needed */
+    padding-bottom: 60px;
+    /* Provide enough padding at the bottom for the close button */
+    position: relative;
+    overflow-y: auto;
+}
+
+.closeButton {
+    /* Example styles, adjust as necessary */
+    position: absolute;
+    bottom: 15px;
+    /* Ensure this value doesn't place the button outside of the modal */
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 8px 16px;
+    cursor: pointer;
+    background-color: #007bff;
+    /* Example background color */
+    color: white;
+    /* Text color */
+    border: none;
+    border-radius: 4px;
+}
+
+/* Add this to your Home.module.css or wherever your modal styles are defined */
+.modalTitle {
+    color: white;
+    /* Ensuring the title color matches the modal text color */
+    text-align: center;
+    /* Optional: Center-align the title */
+    margin-bottom: 16px;
+    /* Adds some space between the title and the content */
+}
+
+.tooltip {
+    position: absolute;
+    background-color: black;
+    color: white;
+    padding: 5px;
+    border-radius: 5px;
+    /* Adjust positioning as needed */
+    top: 90%;
+    left: 50%;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    /* Additional styling */
+    z-index: 1;
+    /* Ensure it appears above other content */
+}
+
+.hoverMessage {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: rgba(0, 0, 0, 0.75);
+    color: white;
+    padding: 8px;
+    border-radius: 5px;
+    text-align: center;
+    display: none;
+    white-space: nowrap;
+    /* Initially hidden */
+}
+
+.nftImageWrapper:hover .hoverMessage {
+    display: block;
+    /* Show on hover */
+}
+
+
+
+.shareBlock {
+    display: flex;
+    justify-content: space-around;
+    /* Distributes space evenly around items */
+    align-items: center;
+    margin: 10px 0;
+}
+
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+}
+
+.textarea {
+    width: 100%;
+    /* Full width of its container */
+    height: 400px;
+    /* Sufficient height */
+    background-color: #fff;
+    /* White background for contrast */
+    color: #0a0a0a;
+    /* Darker black color for text */
+    border: 1px solid #ccc;
+    /* Light grey border */
+    padding: 10px;
+    font-size: 18px;
+    /* Larger font size */
+    font-weight: bolder;
+    /* Bolder font */
+    line-height: 1.2;
+    /* Adjust line height for better readability */
+    /* Padding inside the textarea */
+    box-sizing: border-box;
+    /* Includes padding and border in the width and height */
+    resize: vertical;
+    /* Allow vertical resizing only */
+
+}
+
+
+.modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 80%;
+    /* Make modal width 80% of the viewport width */
+    max-width: 1000px;
+    padding: 20px;
+    background: rgb(29, 238, 238);
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+}
+
+.buttonContainer {
+    display: flex;
+    justify-content: center;
+    /* Center buttons horizontally */
+    align-items: center;
+    /* Align buttons vertically */
+    gap: 100px;
+    /* Adjust the gap to a moderate value */
+    margin-top: 20px;
+}
+
+
+.copyButton,
+.closeButton1 {
+    background-color: #2806e8;
+    /* Blue background */
+    color: white;
+    /* White text */
+    border: 2px;
+    padding: 10px 30px;
+    /* Sufficient padding around text */
+    cursor: pointer;
+    border-radius: 5px;
+    width: auto;
+    /* Auto width based on content or minimum width */
+    min-width: 40px;
+    /* Ensure minimum visibility width */
+}
+
+
+
+.socialIcons {
+    display: flex;
+    justify-content: center;
+    gap: 40px;
+    margin-top: 10px;
+}
+
+.iconx {
+    color: #f4580a;
+    /* Default icon color */
+    transition: color 0.3s ease;
+}
+
+.iconx:hover {
+    color: #c1f909;
+    /* Color changes on hover */
+}
+
+.iconf {
+    color: #1e0af3;
+    /* Default icon color */
+    transition: color 0.3s ease;
+}
+
+.iconf:hover {
+    color: #f007e5;
+    /* Color changes on hover */
+}
+
+.iconl {
+    color: #edcc0f;
+    /* Default icon color */
+    transition: color 0.3s ease;
+}
+
+.iconl:hover {
+    color: #f94b0c;
+    /* Color changes on hover */
+}
+
+.iconr {
+    color: #ed0fde;
+    /* Default icon color */
+    transition: color 0.3s ease;
+}
+
+.iconr:hover {
+    color: #f96b0c;
+    /* Color changes on hover */
+}
+
+.shareButton {
+    margin-left: 10px;
+
+    background-color: rgb(5, 22, 156);
+    color: white;
+    border: none;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    border: 2px;
+    padding: 10px 30px;
+    /* Sufficient padding around text */
+    cursor: pointer;
+    border-radius: 5px;
+    width: auto;
+    /* Auto width based on content or minimum width */
+    min-width: 40px;
+    /* Ensure minimum visibility width */
+    box-shadow: 0px 3px 6px rgb(126, 1, 1);
+    /* Adds a red shadow on hover */
+}
+
+.shareButton:hover {
+    transform: scale(0.8);
+    /* Shrinks the button to 80% of its size */
+}
+
+.hoverLogo {
+    position: relative;
+    display: inline-block;
+    /* or block depending on your layout */
+    transition: transform 0.3s, box-shadow 0.3s;
+    cursor: pointer;
+}
+
+.hoverLogo:hover {
+    transform: scale(0.9);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
+}
+
+.logoTooltip {
+    visibility: visible;
+    position: absolute;
+    width: 220px;
+    background-color: rgb(10, 167, 16);
+    color: white;
+    text-align: center;
+    border-radius: 6px;
+    padding: 5px;
+    bottom: 50%;
+    /* Adjust this as needed */
+    left: 50%;
+    transform: translateX(-50%);
+    opacity: 0;
+    transition: visibility 0s linear 0.3s, opacity 0.3s linear;
+}
+
+.hoverLogo:hover .logoTooltip {
+    visibility: visible;
+    opacity: 1;
+    transition-delay: 0s;
+}
+
+.modalTitle {
+    text-align: center;
+    font-weight: bold;
+    color: rgb(8, 8, 238);
+    margin-bottom: 20px;
+    /* Adjust as needed */
+}
+
+/* styles/Home.module.css */
+.modelItem {
+    font-size: 15px;
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+    border-bottom: 1px solid #eee;
+    transition: background-color 0.3s ease;
+    /* Smooth transition for background color */
+}
+
+.modelItem:hover {
+    background-color: #e40593;
+    /* Change background color on hover */
+}
+
+.modelItem:last-child {
+    border-bottom: none;
+}
+
+/* Container for the dropdown to ensure it is centered with space below */
+.dropdownContainer {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin: 20px auto 40px;
+    /* Adjusted bottom margin for spacing */
+    width: 100%;
+    min-Width: "250px";
+    /* Full width to center dropdown */
+}
+
+.categoryLabel {
+    margin-right: 10px;
+    font-size: 16px;
+    font-weight: bold;
+    color: white;
+    /* Ensure label is visible */
+}
+
+.dropdown {
+    width: auto;
+    /* Auto width based on content */
+    padding: 8px 16px;
+    background-color: blue;
+    color: white;
+    border: 1px solid #ccc;
+    /* Subtle border */
+    border-radius: 4px;
+    /* Rounded corners for modern look */
+    cursor: pointer;
+    appearance: none;
+    /* Removes default styling */
+    outline: none;
+    /* Removes focus outline */
+}
+
+.dropdown option {
+    padding: 10px;
+    /* Padding for better readability */
+    background-color: rgb(33, 9, 251);
+    /* Default background for options */
+    color: rgb(246, 239, 239);
+    /* Text color for readability */
+}
+
+.dropdown option:hover {
+    background-color: red;
+    /* Background for hover and focus on options */
+    color: white;
+}
+
+.shrinking {
+    transform: scale(0.7);
+    transition: transform 0.3s ease;
+}
+
+.overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    color: white;
+    font-size: 24px;
+    z-index: 1000;
+    /* Make sure this is above all other content */
+}
+
+/* Styles.css (or wherever your CSS is defined) */
+.optionHover:hover {
+    background-color: red;
+}
+
+.centeredSendAmount {
+    text-align: center;
+    display: block;
+    margin: auto;
+    font-size: 16px;
+    color: white;
+}
+
+.ratingAndAmount {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+}
+
+.ratingValue {
+    margin-right: 5px;
+    font-size: 14px;
+    color: white;
+}
+
+.sendAmount {
+    margin-left: 10px;
+    font-size: 16px;
+    color: white;
+}
+
+.navLink {
+    margin-right: 1rem;
+    color: blue;
+    text-decoration: none;
+}
+
+.navLink:hover {
+    color: white;
+}
+
+/* Home4.module.css */
+
+/* Existing styles... */
+
+/* Add this new class for hover scale effect */
+.hoverScale {
+    display: inline-block;
+    /* Ensure the span respects the transform */
+    transition: transform 0.2s ease;
+}
+
+.hoverScale:hover {
+    transform: scale(0.8);
+}

@@ -1,0 +1,187 @@
+// pages/api/notebooks/chat.ts - UPDATED WITH WEB3 INTEGRATION
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+
+const kv = createClient({
+  url: process.env.KV_REST_API_URL!,
+  token: process.env.KV_REST_API_TOKEN!,
+});
+
+interface ChatRequest {
+  userKey: string;
+  notebookId: string;
+  query: string;
+  selectedSources: string[];
+}
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ success: false, message: 'Method Not Allowed' });
+  }
+
+  try {
+    const { userKey, notebookId, query, selectedSources } = req.body as ChatRequest;
+
+    if (!userKey || !notebookId || !query?.trim()) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid request parameters.' 
+      });
+    }
+
+    // Get notebook
+    const notebookKey = `${userKey}:notebook:${notebookId}`;
+    const notebookData = await kv.get(notebookKey);
+
+    if (!notebookData || typeof notebookData !== 'string') {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Notebook not found.' 
+      });
+    }
+
+    const notebook = JSON.parse(notebookData);
+    const userAddress = notebook.userAddress || 'unknown';
+    let response = '';
+
+    console.log(`Chat request from user ${userAddress} for notebook: ${notebook.title}`);
+
+    // Try Pinecone Assistant first
+    if (notebook.pineconeAssistantName) {
+      try {
+        console.log(`Chatting with Pinecone Assistant: ${notebook.pineconeAssistantName} for user: ${userAddress}`);
+
+        // Use Pinecone Assistant Chat API
+        const pineconeHost = process.env.PINECONE_ASSISTANT_HOST || 'https://prod-1-data.ke.pinecone.io';
+        const chatUrl = `${pineconeHost}/assistant/chat/${notebook.pineconeAssistantName}`;
+
+        const chatResponse = await fetch(chatUrl, {
+          method: 'POST',
+          headers: {
+            'Api-Key': process.env.PINECONE_API_KEY!,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            messages: [
+              {
+                role: 'user',
+                content: query
+              }
+            ],
+            stream: false,
+            // Optional: filter by file metadata if needed
+            filter: selectedSources.length > 0 ? {
+              source_id: { $in: selectedSources }
+            } : undefined
+          })
+        });
+
+        if (chatResponse.ok) {
+          const chatData = await chatResponse.json();
+
+          // Extract response from Pinecone Assistant format
+          if (chatData.choices && chatData.choices[0]?.message?.content) {
+            response = chatData.choices[0].message.content;
+          } else if (chatData.message) {
+            response = chatData.message;
+          } else {
+            response = JSON.stringify(chatData);
+          }
+
+          console.log(`Pinecone Assistant response received for user: ${userAddress}`);
+        } else {
+          const errorText = await chatResponse.text();
+          console.error(`Pinecone Assistant chat failed for user ${userAddress}:`, errorText);
+          throw new Error(`Pinecone chat failed: ${chatResponse.status}`);
+        }
+      } catch (error) {
+        console.warn(`Pinecone Assistant error for user ${userAddress}, falling back to local response:`, error);
+      }
+    }
+
+    // Fallback to context-based response if Pinecone fails
+    if (!response) {
+      try {
+        // Get sources for context
+        const sourcesKey = `${userKey}:notebook:${notebookId}:sources`;
+        const sourcesData = await kv.get(sourcesKey);
+
+        let contextText = '';
+        if (sourcesData && typeof sourcesData === 'string') {
+          const sources = JSON.parse(sourcesData);
+          const selectedSourcesData = sources
+            .filter((source: any) => 
+              selectedSources.length === 0 || selectedSources.includes(source.id)
+            )
+            .filter((source: any) => source.status === 'completed')
+            .map((source: any) => `Source: ${source.title}\n${source.content || ''}`)
+            .join('\n\n');
+
+          contextText = selectedSourcesData;
+        }
+
+        if (contextText && process.env.OPENAI_API_KEY) {
+          console.log(`Using OpenAI fallback for user: ${userAddress}`);
+
+          // Use OpenAI as fallback with context
+          const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: 'gpt-3.5-turbo',
+              messages: [
+                {
+                  role: 'system',
+                  content: `You are an AI assistant for the notebook "${notebook.title}". Answer questions based only on the provided sources. Always cite your sources and be helpful and accurate. If you cannot answer based on the sources, say so.\n\nSources:\n${contextText}`
+                },
+                {
+                  role: 'user',
+                  content: query
+                }
+              ],
+              max_tokens: 1000,
+              temperature: 0.7
+            })
+          });
+
+          if (openaiResponse.ok) {
+            const openaiData = await openaiResponse.json();
+            response = openaiData.choices[0]?.message?.content || 'I could not generate a response.';
+            console.log(`OpenAI fallback response generated for user: ${userAddress}`);
+          }
+        }
+      } catch (error) {
+        console.error(`OpenAI fallback error for user ${userAddress}:`, error);
+      }
+    }
+
+    // Final fallback
+    if (!response) {
+      response = "I'm sorry, I couldn't generate a response at this time. Please make sure you have sources added to your notebook and that the Pinecone Assistant is properly configured.";
+      console.log(`Final fallback response for user: ${userAddress}`);
+    }
+
+    // Log successful chat
+    console.log(`Chat response generated for user ${userAddress}, query length: ${query.length}, response length: ${response.length}`);
+
+    return res.status(200).json({
+      success: true,
+      response,
+      query,
+      notebookTitle: notebook.title,
+      assistantName: notebook.pineconeAssistantName,
+      userAddress: userAddress
+    });
+
+  } catch (error) {
+    console.error('Error processing chat:', error);
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Internal server error.' 
+    });
+  }
+}

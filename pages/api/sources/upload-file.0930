@@ -1,0 +1,419 @@
+// pages/api/sources/upload-file.ts - UPDATED WITH WEB3 INTEGRATION AND ENHANCED NOTEBOOK LOOKUP
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { IncomingForm, File } from 'formidable';
+import fs from 'fs';
+import path from 'path';
+import { createClient } from '@vercel/kv';
+
+const kv = createClient({
+  url: process.env.KV_REST_API_URL!,
+  token: process.env.KV_REST_API_TOKEN!,
+});
+
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
+
+interface NotebookSource {
+  id: string;
+  title: string;
+  type: 'file' | 'website' | 'text';
+  status: 'uploading' | 'processing' | 'completed' | 'error';
+  progress: number;
+  fileSize?: string;
+  dateCreated: string;
+  error?: string;
+  url?: string;
+  fileName?: string;
+  content?: string;
+  selected: boolean;
+  pineconeFileId?: string;
+}
+
+interface PineconeFileUploadResponse {
+  name: string;
+  id: string;
+  metadata?: any;
+  created_on: string;
+  updated_on: string;
+  status: 'Processing' | 'Available' | 'ProcessingFailed';
+  percent_done: number;
+  signed_url?: string;
+  error_message?: string;
+}
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ success: false, message: 'Method not allowed' });
+  }
+
+  try {
+    // Parse multipart form data
+    const form = new IncomingForm({
+      uploadDir: path.join(process.cwd(), 'tmp'),
+      keepExtensions: true,
+    });
+
+    // Ensure tmp directory exists
+    const tmpDir = path.join(process.cwd(), 'tmp');
+    if (!fs.existsSync(tmpDir)) {
+      fs.mkdirSync(tmpDir, { recursive: true });
+    }
+
+    const [fields, files] = await form.parse(req);
+
+    const file = Array.isArray(files.file) ? files.file[0] : files.file;
+    const userKey = Array.isArray(fields.userKey) ? fields.userKey[0] : fields.userKey;
+    const sourceId = Array.isArray(fields.sourceId) ? fields.sourceId[0] : fields.sourceId;
+    const notebookId = Array.isArray(fields.notebookId) ? fields.notebookId[0] : fields.notebookId;
+    const userAddress = Array.isArray(fields.userAddress) ? fields.userAddress[0] : fields.userAddress;
+
+    console.log('📤 Upload request received:', {
+      fileName: file?.originalFilename,
+      userKey: userKey?.substring(0, 10) + '...',
+      sourceId,
+      notebookId,
+      userAddress: userAddress?.substring(0, 10) + '...'
+    });
+
+    if (!file || !userKey || !sourceId || !notebookId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Missing required fields: file, userKey, sourceId, or notebookId' 
+      });
+    }
+
+    // ✅ ENHANCED: Better notebook lookup with debugging and fallback
+    const notebookKey = `${userKey}:notebook:${notebookId}`;
+    console.log('🔍 Looking for notebook at key:', notebookKey);
+
+    let notebookData = await kv.get(notebookKey);
+    console.log('📋 Notebook data found:', !!notebookData, typeof notebookData);
+
+    // ✅ Enhanced notebook validation with detailed debugging
+    if (!notebookData) {
+      console.log('❌ Notebook not found, trying alternative lookup...');
+      
+      // Try to find notebook in user's notebooks list
+      const notebooksKey = `${userKey}:notebooks`;
+      const notebooksList = await kv.get(notebooksKey);
+      console.log('📚 User notebooks list:', notebooksList);
+
+      if (notebooksList && typeof notebooksList === 'string') {
+        try {
+          const notebooks = JSON.parse(notebooksList);
+          if (Array.isArray(notebooks) && notebooks.includes(notebookId)) {
+            console.log('✅ Notebook ID found in list, creating default notebook data');
+            
+            // Create a default notebook object since it exists in the list
+            const defaultNotebook = {
+              id: notebookId,
+              title: `Notebook ${notebookId}`,
+              sources: [],
+              sourceCount: 0,
+              created: new Date().toISOString(),
+              lastUpdated: new Date().toISOString(),
+              userAddress: userAddress || 'unknown'
+            };
+
+            // Store the default notebook
+            await kv.set(notebookKey, JSON.stringify(defaultNotebook));
+            notebookData = JSON.stringify(defaultNotebook);
+            
+            console.log('📝 Created default notebook data for upload');
+          }
+        } catch (parseError) {
+          console.error('❌ Error parsing notebooks list:', parseError);
+        }
+      }
+
+      // If still no notebook found, return detailed error
+      if (!notebookData) {
+        console.log('❌ Notebook not found after all attempts');
+        
+        return res.status(404).json({ 
+          success: false, 
+          error: 'Notebook not found',
+          debug: {
+            notebookKey,
+            notebookId,
+            userKey: userKey.substring(0, 10) + '...',
+            notebooksList: notebooksList ? 'Found' : 'Not found',
+            message: 'Notebook does not exist or is not accessible'
+          }
+        });
+      }
+    }
+
+    // Parse notebook data
+    let notebook;
+    try {
+      if (typeof notebookData === 'string') {
+        notebook = JSON.parse(notebookData);
+      } else {
+        notebook = notebookData;
+      }
+      console.log('✅ Notebook parsed successfully:', notebook.id, notebook.title);
+    } catch (parseError) {
+      console.error('❌ Error parsing notebook data:', parseError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Invalid notebook data format' 
+      });
+    }
+
+    const assistantName = notebook.pineconeAssistantName || `notebook-${notebookId}`;
+    const resolvedUserAddress = notebook.userAddress || userAddress || 'unknown';
+
+    console.log('🤖 Using assistant:', assistantName, 'for user:', resolvedUserAddress.substring(0, 10) + '...');
+
+    // Validate file type
+    const allowedExtensions = ['.pdf', '.txt', '.md', '.json', '.docx'];
+    const fileExtension = path.extname(file.originalFilename || '').toLowerCase();
+
+    if (!allowedExtensions.includes(fileExtension)) {
+      fs.unlinkSync(file.filepath);
+      return res.status(400).json({ 
+        success: false, 
+        error: `Unsupported file type: ${fileExtension}. Supported types: ${allowedExtensions.join(', ')}` 
+      });
+    }
+
+    // Read file content
+    const fileBuffer = fs.readFileSync(file.filepath);
+    console.log('📄 File read successfully:', formatFileSize(file.size));
+
+    // Upload to Pinecone Assistant using correct REST API
+    let pineconeResponse: PineconeFileUploadResponse | null = null;
+
+    try {
+      console.log(`🌲 Uploading file to Pinecone Assistant: ${assistantName}`);
+
+      // Create FormData for multipart upload
+      const formData = new FormData();
+
+      // Convert Buffer to Blob (fixed TypeScript compatibility)
+      const uint8Array = new Uint8Array(fileBuffer);
+      const blob = new Blob([uint8Array], { 
+        type: getContentType(fileExtension) 
+      });
+
+      formData.append('file', blob, file.originalFilename || 'file');
+
+      // Add metadata (optional)
+      const metadata = {
+        source_type: 'upload',
+        notebook_id: notebookId,
+        user_key: userKey,
+        user_address: resolvedUserAddress,
+        source_id: sourceId,
+        uploaded_at: new Date().toISOString()
+      };
+
+      // URL encode metadata
+      const encodedMetadata = encodeURIComponent(JSON.stringify(metadata));
+
+      // Use the correct Pinecone Assistant API endpoint
+      const pineconeHost = process.env.PINECONE_ASSISTANT_HOST || 'https://prod-1-data.ke.pinecone.io';
+      const uploadUrl = `${pineconeHost}/assistant/files/${assistantName}?metadata=${encodedMetadata}`;
+
+      const uploadResponse = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: {
+          'Api-Key': process.env.PINECONE_API_KEY!,
+          'X-Pinecone-API-Version': '2025-10'
+        },
+        body: formData
+      });
+
+      if (uploadResponse.ok) {
+        pineconeResponse = await uploadResponse.json() as PineconeFileUploadResponse;
+        console.log('✅ Pinecone upload successful:', pineconeResponse.id);
+      } else {
+        const errorText = await uploadResponse.text();
+        console.error(`❌ Pinecone upload failed (${uploadResponse.status}):`, errorText);
+
+        // If assistant doesn't exist, create it first
+        if (uploadResponse.status === 404) {
+          console.log('🔨 Assistant not found, creating new assistant...');
+          await createPineconeAssistant(assistantName, notebook.title, resolvedUserAddress);
+
+          // Retry upload after creating assistant
+          const retryResponse = await fetch(uploadUrl, {
+            method: 'POST',
+            headers: {
+              'Api-Key': process.env.PINECONE_API_KEY!,
+              'X-Pinecone-API-Version': '2025-10'
+            },
+            body: formData
+          });
+
+          if (retryResponse.ok) {
+            pineconeResponse = await retryResponse.json() as PineconeFileUploadResponse;
+            console.log('✅ Pinecone upload successful after assistant creation:', pineconeResponse.id);
+          } else {
+            throw new Error(`Pinecone upload retry failed: ${retryResponse.status} ${await retryResponse.text()}`);
+          }
+        } else {
+          throw new Error(`Pinecone upload failed: ${uploadResponse.status} ${errorText}`);
+        }
+      }
+    } catch (error) {
+      console.warn(`⚠️ Pinecone upload error:`, error);
+      // Continue with local storage as fallback
+    }
+
+    // Create source object
+    const source: NotebookSource = {
+      id: sourceId,
+      title: file.originalFilename || 'Unknown File',
+      type: 'file',
+      status: pineconeResponse ? 'processing' : 'completed',
+      progress: pineconeResponse ? 25 : 100,
+      fileSize: formatFileSize(file.size),
+      dateCreated: new Date().toLocaleDateString(),
+      fileName: file.originalFilename || 'Unknown File',
+      content: fileBuffer.toString('utf8').substring(0, 50000), // Basic content extraction for fallback
+      selected: true,
+      pineconeFileId: pineconeResponse?.id
+    };
+
+    console.log('💾 Storing source in notebook:', source.id);
+
+    // Store source in notebook
+    await addSourceToNotebook(userKey, notebookId, source);
+
+    // Update notebook with assistant name
+    if (pineconeResponse && !notebook.pineconeAssistantName) {
+      notebook.pineconeAssistantName = assistantName;
+      notebook.lastUpdated = new Date().toISOString();
+      await kv.set(notebookKey, JSON.stringify(notebook));
+      console.log('🤖 Updated notebook with assistant name');
+    }
+
+    // Clean up temporary file
+    fs.unlinkSync(file.filepath);
+
+    console.log(`✅ File uploaded successfully: ${sourceId}`);
+
+    res.status(200).json({
+      success: true,
+      source: source,
+      fileId: sourceId,
+      pineconeFileId: pineconeResponse?.id,
+      pineconeStatus: pineconeResponse?.status,
+      message: 'File uploaded successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ Upload error:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Upload failed'
+    });
+  }
+}
+
+// Helper function to create Pinecone Assistant
+async function createPineconeAssistant(assistantName: string, notebookTitle: string, userAddress: string): Promise<void> {
+  try {
+    const createAssistantUrl = 'https://api.pinecone.io/assistants';
+
+    const response = await fetch(createAssistantUrl, {
+      method: 'POST',
+      headers: {
+        'Api-Key': process.env.PINECONE_API_KEY!,
+        'X-Pinecone-API-Version': '2025-10',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        name: assistantName,
+        instructions: `You are an AI assistant for a notebook titled "${notebookTitle}". Answer questions based only on the sources provided in this notebook. Always cite your sources and be helpful and accurate.`,
+        metadata: {
+          notebook_title: notebookTitle,
+          user_address: userAddress,
+          created_by: 'web3_notebook_system',
+          created_at: new Date().toISOString()
+        }
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to create assistant: ${response.status} ${errorText}`);
+    }
+
+    const assistantData = await response.json();
+    console.log('✅ Assistant created successfully:', assistantData.name);
+  } catch (error) {
+    console.error('❌ Error creating Pinecone Assistant:', error);
+    throw error;
+  }
+}
+
+function getContentType(extension: string): string {
+  const mimeTypes: { [key: string]: string } = {
+    '.pdf': 'application/pdf',
+    '.txt': 'text/plain',
+    '.md': 'text/markdown',
+    '.json': 'application/json',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  };
+
+  return mimeTypes[extension] || 'application/octet-stream';
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+async function addSourceToNotebook(userKey: string, notebookId: string, source: NotebookSource): Promise<void> {
+  try {
+    const sourcesKey = `${userKey}:notebook:${notebookId}:sources`;
+    const sourcesData = await kv.get(sourcesKey);
+
+    let sourcesList: NotebookSource[] = [];
+    if (sourcesData && typeof sourcesData === 'string') {
+      try {
+        sourcesList = JSON.parse(sourcesData);
+      } catch (e) {
+        sourcesList = [];
+      }
+    }
+
+    // Check if source already exists
+    const existingIndex = sourcesList.findIndex(s => s.id === source.id);
+    if (existingIndex !== -1) {
+      sourcesList[existingIndex] = source;
+    } else {
+      sourcesList.push(source);
+    }
+
+    // Store updated sources list
+    await kv.set(sourcesKey, JSON.stringify(sourcesList));
+
+    // Update notebook source count
+    const notebookKey = `${userKey}:notebook:${notebookId}`;
+    const notebookData = await kv.get(notebookKey);
+
+    if (notebookData && typeof notebookData === 'string') {
+      const notebook = JSON.parse(notebookData);
+      notebook.sourceCount = sourcesList.length;
+      notebook.sources = sourcesList;
+      notebook.lastUpdated = new Date().toISOString();
+      await kv.set(notebookKey, JSON.stringify(notebook));
+    }
+
+    console.log(`📚 Added source to notebook: ${sourcesList.length} total sources`);
+
+  } catch (error) {
+    console.error('❌ Error adding source to notebook:', error);
+    throw error;
+  }
+}

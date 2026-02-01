@@ -1,0 +1,208 @@
+// pages/api/qa.ts
+import { NextApiRequest, NextApiResponse } from 'next';
+import { Pinecone } from '@pinecone-database/pinecone';
+import { OpenAI } from 'openai';
+import { UserQuestions, UserQA, QuestionAnswer } from '../../types';
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
+const index = pc.index("user-documents");
+const GPT_MODEL = process.env.GPT_MODEL || "gpt-4o-mini";
+
+// Placeholder functions for user data storage
+async function updateUserData(userId: string, data: Partial<UserData>): Promise<void> {
+    // Implement logic to update user data in your database
+}
+
+async function getUserData(userId: string): Promise<UserData> {
+    // Implement logic to retrieve user data from your database.
+    return { lastEmbeddingTimestamp: 0, lastQATimestamp: 0 };
+}
+
+interface UserData {
+    lastEmbeddingTimestamp: number;
+    lastQATimestamp: number;
+}
+
+async function embedText(text: string): Promise<number[]> {
+    const response = await openai.embeddings.create({
+        model: "text-embedding-ada-002",
+        input: text,
+    });
+    return response.data[0].embedding;
+}
+
+async function insertQA(userId: string, qa: QuestionAnswer): Promise<void> {
+    const questionEmbedding = await embedText(qa.question);
+    const id = `${userId}-${Buffer.from(qa.question).toString('base64')}`;
+    const timestamp = Date.now();
+    await index.namespace(userId).upsert([
+        {
+            id: id,
+            values: questionEmbedding,
+            metadata: {
+                question: qa.question,
+                answer: qa.answer,
+                isEditedQA: true,
+                timestamp,
+            }
+        }
+    ]);
+    await updateUserData(userId, { lastQATimestamp: timestamp });
+}
+
+async function insertDocumentEmbedding(userId: string, content: string): Promise<void> {
+    const contentEmbedding = await embedText(content);
+    const id = `doc-${userId}-${Buffer.from(content).toString('base64')}`;
+    const timestamp = Date.now();
+    await index.namespace(userId).upsert([
+        {
+            id: id,
+            values: contentEmbedding,
+            metadata: {
+                content,
+                timestamp,
+            }
+        }
+    ]);
+    await updateUserData(userId, { lastEmbeddingTimestamp: timestamp });
+}
+
+async function checkForNewEmbeddings(userId: string): Promise<boolean> {
+    const userData = await getUserData(userId);
+    return userData.lastEmbeddingTimestamp > userData.lastQATimestamp;
+}
+
+/**
+ * Fetch updated context from Pinecone.
+ * Group the matches by their "source". For sources that include a "version" field,
+ * select only those vectors with the maximum version.
+ * Concatenate the content of the selected vectors as the context.
+ */
+async function fetchUpdatedContext(userId: string, questionEmbedding: number[]): Promise<string> {
+    const contextResponse = await index.namespace(userId).query({
+        vector: questionEmbedding,
+        topK: 20,
+        includeMetadata: true,
+        filter: { content: { $exists: true } }
+    });
+
+    if (!contextResponse.matches || contextResponse.matches.length === 0) {
+        return '';
+    }
+
+    const grouped: { [source: string]: any[] } = {};
+    for (const match of contextResponse.matches) {
+        const meta = match.metadata as any;
+        if (meta.source) {
+            const key = meta.source;
+            if (!grouped[key]) {
+                grouped[key] = [];
+            }
+            grouped[key].push(match);
+        }
+    }
+
+    let selectedMatches: any[] = [];
+    for (const source in grouped) {
+        const matches = grouped[source];
+        if (matches.some(m => (m.metadata as any).version !== undefined)) {
+            const maxVersion = Math.max(...matches.map(m => (m.metadata as any).version));
+            const filtered = matches.filter(m => (m.metadata as any).version === maxVersion);
+            selectedMatches = selectedMatches.concat(filtered);
+        } else {
+            selectedMatches = selectedMatches.concat(matches);
+        }
+    }
+
+    const context = selectedMatches
+        .map(match => (match.metadata as any).content)
+        .join("\n");
+    return context;
+}
+
+async function retrieveQA(userId: string, question: string): Promise<QuestionAnswer | null> {
+    const questionEmbedding = await embedText(question);
+    const queryResponse = await index.namespace(userId).query({
+        vector: questionEmbedding,
+        topK: 10,
+        includeMetadata: true
+    });
+
+    if (!queryResponse.matches || queryResponse.matches.length === 0) {
+        return null;
+    }
+
+    const editedMatches = queryResponse.matches.filter(match =>
+        (match.metadata as any).isEditedQA &&
+        match.score && match.score > 0.9
+    );
+
+    if (editedMatches.length > 0) {
+        const bestMatch = editedMatches[0];
+        const hasNewEmbeddings = await checkForNewEmbeddings(userId);
+        if (!hasNewEmbeddings) {
+            return {
+                question: (bestMatch.metadata as any).question,
+                answer: (bestMatch.metadata as any).answer
+            };
+        }
+    }
+
+    const context = await fetchUpdatedContext(userId, questionEmbedding);
+    const answer = await generateAnswer(question, context);
+    return { question, answer };
+}
+
+/**
+ * Generate an answer for a given question using the provided context.
+ * The prompt instructs the assistant to be creative, comprehensive, and detailed,
+ * synthesizing all available context (from scraped and uploaded content). User-edited answers take priority.
+ */
+async function generateAnswer(question: string, context: string): Promise<string> {
+    const prompt = `Context: ${context}\n\nQuestion: ${question}\n\nAnswer:`;
+    const completion = await openai.chat.completions.create({
+        model: GPT_MODEL,
+        messages: [
+            {
+                role: "system",
+                content: "You are a highly knowledgeable and creative copilot assistant. Using all the provided context from both scraped website content and uploaded text, provide a comprehensive, detailed, and creative answer to the question. If the context is insufficient or unclear, suggest additional details or ask clarifying questions to guide the user. Always prioritize any user-edited answers to improve correctness."
+            },
+            { role: "user", content: prompt }
+        ],
+        max_tokens: 600,
+        temperature: 0.7,
+    });
+    return completion.choices[0].message.content || "Sorry, I couldn't generate an answer.";
+}
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'POST') {
+        return res.status(405).json({ message: 'Method not allowed' });
+    }
+
+    const body: UserQuestions | UserQA = req.body;
+
+    if ('questions' in body) {
+        const userQuestions: UserQuestions = body;
+        const answers: QuestionAnswer[] = await Promise.all(
+            userQuestions.questions.map(async (question) => {
+                const qa = await retrieveQA(userQuestions.userId, question.question);
+                if (qa) return qa;
+                const contextEmbedding = await embedText(question.question);
+                const context = await fetchUpdatedContext(userQuestions.userId, contextEmbedding);
+                const answer = await generateAnswer(question.question, context);
+                return { question: question.question, answer };
+            })
+        );
+        return res.status(200).json({ userId: userQuestions.userId, qa: answers });
+    } else if ('qa' in body) {
+        const userQA: UserQA = body;
+        for (const qa of userQA.qa) {
+            await insertQA(userQA.userId, qa);
+        }
+        return res.status(200).json({ message: 'QA pairs inserted successfully' });
+    } else {
+        return res.status(400).json({ message: 'Invalid request body' });
+    }
+}

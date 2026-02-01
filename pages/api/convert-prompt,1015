@@ -1,0 +1,270 @@
+require('dotenv').config(); // Load environment variables
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from '@vercel/kv';
+import HashUtil from '../../util/hashToFixedDigits';
+import createAssistant from '../../components/createAssistant';
+
+// Initialize KV Client
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+type Criterion = {
+    name: string;
+    description: string;
+};
+
+const parseJsonObject = (jsonString: string) => {
+    try {
+        console.log('Parsing JSON string:', jsonString); // Log the JSON string
+        return JSON.parse(jsonString);
+    } catch (e) {
+        console.error('JSON parsing error:', e, 'Invalid JSON:', jsonString); // Log the error and the JSON string
+        return {};
+    }
+};
+
+const isValidJSON = (str: string) => {
+    try {
+        JSON.parse(str);
+        return true;
+    } catch (e) {
+        return false;
+    }
+};
+
+const cleanPrompt = (prompt: string) => {
+    return prompt
+        .replace(
+            /📌📌 \[Subscribe to the AI for Work Newsletter 🤖\]\([^\)]+\)\. AI in marketing is advancing so fast - you cannot afford to get left behind at this stage in your career\. Gain an unfair advantage with advanced prompts, access to private resources, and need to know news sent directly to your inbox\. \[Subscribe Now!\]\([^\)]+\) 📌📌/g,
+            ''
+        )
+        .replace(/aiforwork\.co/g, '');
+};
+
+// Parse the prompt and extract relevant fields
+const parsePrompt = (prompt: string) => {
+    const cleanedPrompt = cleanPrompt(prompt);
+
+    const promptMatch = cleanedPrompt.match(/"prompt":"([^"]+)"/);
+    const roleMatch = cleanedPrompt.match(/"role":"([^"]+)"/);
+    const departmentMatch = cleanedPrompt.match(/"department":"([^"]+)"/);
+    const taskMatch = cleanedPrompt.match(/"task":"([^"]+)"/);
+    const taskDescriptionMatch = cleanedPrompt.match(/"task_description":"([^"]+)"/);
+    const keyReferencesMatch = cleanedPrompt.match(/"key_references":{([^}]+)}/s);
+    const criteriaMatch = cleanedPrompt.match(/"criteria":\s*({(?:[^{}]*|{(?:[^{}]*|{[^{}]*})*})*})/s);
+    const evaluationRubricMatch = cleanedPrompt.match(/"evaluationRubric":{([^}]+)}/s);
+
+    const newRules = {
+        rule_1:
+            "If user starts with 'Ask 5 questions,' then ask 5 pertinent questions in English designed to elicit as much detail as needed to create the highest quality personalized output that achieves their goal. Return the questions only, one question per line, and then wait for the user's responses.",
+        rule_2:
+            "If user starts with 'Please proceed to the task in language:${language} based on the following Q&A information: ', then proceed to the next step using the given information and all the content display including the table will be in ${language}.",
+        rule_3:
+            'Think about your task step by step. Consider the success factors, the criteria, and the goal. Imagine what the optimal output would be. Aim for perfection in every attempt.',
+        rule_4:
+            'Use the details provided by the user, blending them with insights from references and industry best practices to craft the optimal content.',
+        rule_5:
+            'Conclude every completion of work with an evaluation of the work and provide suggestions to improve it.',
+        rule_6:
+            "Display the evaluation table. Each evaluation must encompass the following elements, with all headers and content displayed in ${language}:\n\
+{criteria_header} \n\
+{rating_header} (out of 10 based on evaluationRubric)\n\
+{reasons_header}\n\
+{feedback_header}\n\
+Display the evaluation table in html format, strictly following the format below: <table> <thead> <tr> <th>{criteria_header_${language}}</th> <th>{rating_header_${language}}</th> <th>{reasons_header_${language}}</th> <th>{feedback_header_${language}}</th> </tr> </thead> <tbody> <tr> <td>{criteria_1_${language}}</td> <td>{rating_1_${language}}</td> <td>{reasons_1_${language}}</td> <td>{feedback_1_${language}}</td> </tr> <tr> <td>{criteria_2_${language}}</td> <td>{rating_2_${language}}</td> <td>{reasons_2_${language}}</td> <td>{feedback_2_${language}}</td> </tr> </tbody> </table>",
+        rule_7:
+            "The evaluationRubric is the definitive guide for rating work. Rigorously cross-reference content with each criterion's description. Match the work's attributes with the rubric's specifics.",
+        rule_8: `After evaluation, wait for user input without displaying options. Then execute the corresponding action based on the input: 
+
+if user input starts with "refine":
+
+    Check to see if there is any input after "refine". If yes, then use the input as the feedback to refine your work, then follow the rest of the procedure. If no, then follow the rest of the procedure.
+    Analyze the previous evaluation feedback.
+    Make targeted improvements to address specific critiques and suggestions.
+    Refine Based on Feedback.
+    Display the refined work with these improvements.
+    Conduct an evaluation following the format in rule 6:
+        Use a table format with Criteria, Rating, Reasons for Rating, and Detailed Feedback for Improvement.
+        Display the evaluation table in HTML format as specified.
+    Append a "CHANGE LOG 📝" section (as per rule 9) documenting specific alterations and updates.
+
+if user input is "Evaluate":
+
+    Conduct a more rigorous evaluation, focusing on identifying areas for improvement and setting higher standards for each criterion. Follow the evaluation process and output format as described in rule 6.
+
+if user input is "Personalize":
+
+    1. Ask additional questions to gather more specific details about user needs and preferences.
+    2. Wait for the user's answers.
+    3. Once answers are received, incorporate this new information to refine the task, similar to the process in rule 2.
+    4. Display the refined work.
+    5. Conduct an evaluation following rule 6 and append a change log as per rule 9.
+
+if user input is "Focus Group":
+
+    Emulate a focus group evaluation:
+        Create 3-5 fictional focus group participants with diverse backgrounds and viewpoints.
+        Have each 'participant' provide specific feedback on strengths, weaknesses, and areas for improvement.
+        Summarize key insights and patterns from the focus group feedback.
+        Offer 3-5 concrete suggestions for improving the work based on the focus group results.
+    Implement the suggested improvements to enhance the original work.
+    Evaluate the improved work following rule 6.
+    Append a change log as per rule 9.
+    Present the response in a clear, structured format using appropriate markdown formatting.
+
+if user input is "Expert Feedback":
+
+    Emulate an expert group evaluation:
+        Create 3-5 fictional expert evaluators with diverse specializations in the field.
+        Have each 'expert' provide in-depth, technical feedback on strengths, weaknesses, and areas for improvement.
+        Analyze and synthesize the expert opinions, highlighting key insights and patterns.
+        Develop 3-5 advanced, industry-specific recommendations for enhancing the work based on the expert feedback.
+    Implement the suggested improvements to elevate the original work to expert standards.
+    Evaluate the improved work following rule 6, with a focus on industry best practices and expert-level criteria.
+    Append a change log as per rule 9.
+    Present the response in a clear, structured format using appropriate markdown formatting and industry-specific terminology.
+
+if user input is "Creative":
+
+    Be creative, propose and implement an alternative, innovative approach to the task.
+    Display the refined work.
+    Explain the rationale behind the changes and how they contribute to creativity.
+    Conduct an evaluation following rule 6.
+    Append a change log as per rule 9.
+
+if user input is "Modify":
+
+    Provide suggestions for format, style, or length changes.
+    Implement the suggested modifications.
+    Display the modified work.
+    Conduct an evaluation following rule 6.
+    Append a change log as per rule 9.
+
+if user input is "Auto Improve":
+
+    Analyze all previous feedback and criteria.
+    Make comprehensive improvements aiming to achieve the highest possible quality across all evaluation metrics. AutoMagically make this a 10/10.
+    Present the improved work.
+    Conduct an evaluation following rule 6.
+    Append a change log as per rule 9.
+
+Execute the corresponding action based on the user's input, then proceed with the task accordingly.`,
+
+        rule_9:
+            "Append a 'Change Log' section at the end of the content. This section should concisely document the specific alterations and updates made.",
+        rule_10:
+            'For emulating a focus group and expert review, after the review, generate new work based on the feedback and strive to achieve higher evaluation points.',
+    };
+
+    const structuredPrompt = {
+        prompt: promptMatch ? promptMatch[1] : '',
+        role: roleMatch ? roleMatch[1] : '',
+        department: departmentMatch ? departmentMatch[1] : '',
+        task: taskMatch ? taskMatch[1] : '',
+        task_description: taskDescriptionMatch ? taskDescriptionMatch[1] : '',
+        rules: newRules,
+        key_references: keyReferencesMatch
+            ? parseJsonObject(`{${keyReferencesMatch[1]}}`)
+            : {},
+        criteria: criteriaMatch ? parseJsonObject(criteriaMatch[1]) : {},
+        evaluationRubric: evaluationRubricMatch
+            ? parseJsonObject(`{${evaluationRubricMatch[1]}}`)
+            : {},
+    };
+
+    console.log('Structured Prompt:', JSON.stringify(structuredPrompt, null, 2));
+
+    return structuredPrompt;
+};
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    const { department, role, task, prompt } = req.body;
+
+    if (!prompt || !role || !task || !department) {
+        return res.status(400).json({
+            message: 'Department, Role, Task, and Prompt are required',
+        });
+    }
+
+    const structuredPrompt = parsePrompt(prompt);
+    //const key = HashUtil.hashTo(`${department}:${role}:${task}`);
+    const key = HashUtil.hashTo(`${role}${task}`);
+    const value = JSON.stringify(
+        {
+            ...structuredPrompt,
+            role: role,
+            department: department,
+            task: task,
+        },
+        null,
+        2
+    );
+
+    const departmentRolesKey = `department:${department}:roles`;
+    const roleTasksKey = `department:${department}:role:${role}:tasks`;
+
+    // Helper function to parse data from KV
+    const parseData = (data: any): any[] => {
+        if (Array.isArray(data)) {
+            return data;
+        } else if (typeof data === 'string') {
+            try {
+                const parsed = JSON.parse(data);
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (e) {
+                console.error('Error parsing data:', e);
+                return [];
+            }
+        } else if (data == null) {
+            return [];
+        } else {
+            return [];
+        }
+    };
+
+    try {
+        // Fetch roles and tasks from KV store
+        const rolesData = await kv.get(departmentRolesKey);
+        const tasksData = await kv.get(roleTasksKey);
+
+        // Parse the roles and tasks data
+        const roles: any[] = parseData(rolesData);
+        const tasks: any[] = parseData(tasksData);
+
+        // Use Sets to enforce uniqueness
+        const rolesSet = new Set(roles);
+        const tasksSet = new Set(tasks);
+
+        // Add the new role if it doesn't exist
+        if (!rolesSet.has(role)) {
+            rolesSet.add(role);
+            const rolesArray = Array.from(rolesSet);
+            await kv.set(departmentRolesKey, JSON.stringify(rolesArray));
+            console.log('Roles after adding new role:', rolesArray);
+        }
+
+        // Add the new task if it doesn't exist
+        if (!tasksSet.has(task)) {
+            tasksSet.add(task);
+            const tasksArray = Array.from(tasksSet);
+            await kv.set(roleTasksKey, JSON.stringify(tasksArray));
+            console.log('Tasks after adding new task:', tasksArray);
+        }
+
+        // Save the instructions associated with the task
+        await kv.set(`assistant:${key}:instructions`, value);
+        //await createAssistant(key);
+
+        return res.status(200).json({
+            message: `${key}`,
+            instruction: value,
+        });
+    } catch (error) {
+        console.error('Error saving prompt to KV database:', error);
+        return res
+            .status(500)
+            .json({ message: 'Error saving prompt to KV database.' });
+    }
+}

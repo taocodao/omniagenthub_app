@@ -1,0 +1,258 @@
+// pages/api/qa.ts
+import { NextApiRequest, NextApiResponse } from 'next';
+import { Pinecone } from '@pinecone-database/pinecone';
+import { OpenAI } from 'openai';
+import { UserQuestions, UserQA, QuestionAnswer } from '../../types';
+import { createClient } from '@vercel/kv';
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
+const index = pc.index("user-documents");
+const GPT_MODEL = process.env.GPT_MODEL || "gpt-4o-mini";
+
+const kv = createClient({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+});
+
+// Placeholder functions for user data storage.
+async function updateUserData(userId: string, data: Partial<UserData>): Promise<void> {
+    // TODO: Implement updating user data in your database.
+}
+
+async function getUserData(userId: string): Promise<UserData> {
+    // TODO: Implement retrieval of user data.
+    return { lastEmbeddingTimestamp: 0, lastQATimestamp: 0 };
+}
+
+interface UserData {
+    lastEmbeddingTimestamp: number;
+    lastQATimestamp: number;
+}
+
+/**
+ * Embed a given text using OpenAI API.
+ */
+async function embedText(text: string): Promise<number[]> {
+    const response = await openai.embeddings.create({
+        model: "text-embedding-ada-002",
+        input: text,
+    });
+    return response.data[0].embedding;
+}
+
+/**
+ * Retrieve the selected sources (namespaces) for a given user from KV.
+ */
+async function getSelectedSources(userId: string): Promise<string[]> {
+    const key = `selectedSources:${userId.toLowerCase()}`;
+    const data = await kv.get(key);
+    const sources = data ? (data as string[]) : [];
+    console.log(`[qa] Retrieved selected sources for ${userId}: ${JSON.stringify(sources)}`);
+    return sources;
+}
+
+/**
+ * Helper to combine the default user namespace with the selected sources.
+ */
+function getNamespaces(userId: string, selectedSources: string[]): string[] {
+    // Ensure the user's default namespace is included.
+    const nsSet = new Set<string>([userId, ...selectedSources]);
+    return Array.from(nsSet);
+}
+
+/**
+ * Insert a QA pair into each namespace.
+ * If selectedSources is provided (or retrieved), the QA pair is upserted in every namespace.
+ */
+async function insertQA(userId: string, qa: QuestionAnswer, selectedSources?: string[]): Promise<void> {
+    const questionEmbedding = await embedText(qa.question);
+    const id = `${userId}-${Buffer.from(qa.question).toString('base64')}`;
+    const timestamp = Date.now();
+    const namespaces = selectedSources && selectedSources.length > 0 ? getNamespaces(userId, selectedSources) : [userId];
+    console.log(`[qa] Inserting QA into namespaces: ${JSON.stringify(namespaces)}`);
+    for (const ns of namespaces) {
+        await index.namespace(ns).upsert([
+            {
+                id,
+                values: questionEmbedding,
+                metadata: {
+                    question: qa.question,
+                    answer: qa.answer,
+                    isEditedQA: true,
+                    timestamp,
+                },
+            },
+        ]);
+    }
+    await updateUserData(userId, { lastQATimestamp: timestamp });
+}
+
+/**
+ * Insert a document embedding in the default user namespace.
+ */
+async function insertDocumentEmbedding(userId: string, content: string): Promise<void> {
+    const contentEmbedding = await embedText(content);
+    const id = `doc-${userId}-${Buffer.from(content).toString('base64')}`;
+    const timestamp = Date.now();
+    await index.namespace(userId).upsert([
+        {
+            id,
+            values: contentEmbedding,
+            metadata: {
+                content,
+                timestamp,
+            },
+        },
+    ]);
+    await updateUserData(userId, { lastEmbeddingTimestamp: timestamp });
+}
+
+/**
+ * Check if new embeddings have been added since the last QA.
+ */
+async function checkForNewEmbeddings(userId: string): Promise<boolean> {
+    const userData = await getUserData(userId);
+    return userData.lastEmbeddingTimestamp > userData.lastQATimestamp;
+}
+
+/**
+ * Query multiple namespaces to fetch updated context.
+ */
+async function fetchUpdatedContextFromNamespaces(namespaces: string[], questionEmbedding: number[]): Promise<string> {
+    let allMatches: any[] = [];
+    for (const ns of namespaces) {
+        const response = await index.namespace(ns).query({
+            vector: questionEmbedding,
+            topK: 20,
+            includeMetadata: true,
+            filter: { content: { $exists: true } },
+        });
+        if (response.matches) {
+            allMatches.push(...response.matches);
+        }
+    }
+    console.log(`[qa] Total matches from namespaces ${JSON.stringify(namespaces)}: ${allMatches.length}`);
+    // Group matches by source (if available)
+    const grouped: { [source: string]: any[] } = {};
+    for (const match of allMatches) {
+        const meta = match.metadata as any;
+        if (meta.source) {
+            if (!grouped[meta.source]) grouped[meta.source] = [];
+            grouped[meta.source].push(match);
+        }
+    }
+    let selectedMatches: any[] = [];
+    for (const source in grouped) {
+        const matches = grouped[source];
+        if (matches.some(m => (m.metadata as any).version !== undefined)) {
+            const maxVersion = Math.max(...matches.map(m => (m.metadata as any).version));
+            selectedMatches = selectedMatches.concat(matches.filter(m => (m.metadata as any).version === maxVersion));
+        } else {
+            selectedMatches = selectedMatches.concat(matches);
+        }
+    }
+    const context = selectedMatches.map(match => (match.metadata as any).content).join("\n");
+    console.log(`[qa] Combined context length: ${context.length}`);
+    return context;
+}
+
+/**
+ * Retrieve a cached QA pair from the selected namespaces.
+ * If a high-scoring edited QA exists, return that answer.
+ * Otherwise, generate a new answer using updated context.
+ */
+async function retrieveQA(userId: string, question: string): Promise<QuestionAnswer | null> {
+    const selectedSources = await getSelectedSources(userId);
+    const namespaces = getNamespaces(userId, selectedSources);
+    console.log(`[qa] Querying namespaces for QA: ${JSON.stringify(namespaces)}`);
+    const questionEmbedding = await embedText(question);
+    let allMatches: any[] = [];
+    for (const ns of namespaces) {
+        const queryResponse = await index.namespace(ns).query({
+            vector: questionEmbedding,
+            topK: 10,
+            includeMetadata: true,
+        });
+        if (queryResponse.matches) {
+            allMatches.push(...queryResponse.matches.map(match => ({ ...match, ns })));
+        }
+    }
+    console.log(`[qa] Total QA matches found: ${allMatches.length}`);
+    if (allMatches.length === 0) return null;
+
+    // Check for edited QA matches above a similarity threshold.
+    const editedMatches = allMatches.filter(match =>
+        (match.metadata as any).isEditedQA &&
+        match.score && match.score > 0.9
+    );
+    if (editedMatches.length > 0) {
+        const bestMatch = editedMatches[0];
+        console.log(`[qa] Returning cached QA from namespace ${bestMatch.ns}`);
+        return {
+            question: (bestMatch.metadata as any).question,
+            answer: (bestMatch.metadata as any).answer,
+        };
+    }
+    // Otherwise, generate a new answer using updated context.
+    const context = await fetchUpdatedContextFromNamespaces(namespaces, questionEmbedding);
+    const answer = await generateAnswer(question, context);
+    return { question, answer };
+}
+
+/**
+ * Generate an answer using GPT.
+ */
+async function generateAnswer(question: string, context: string): Promise<string> {
+    const prompt = `Context: ${context}\n\nQuestion: ${question}\n\nAnswer:`;
+    const completion = await openai.chat.completions.create({
+        model: GPT_MODEL,
+        messages: [
+            {
+                role: "system",
+                content:
+                    "You are a highly knowledgeable and creative assistant. Using the provided context—which is derived from the selected namespace knowledge (scraped website content and uploaded text)—generate a comprehensive and thoughtful answer to the user's question. If the provided context is insufficient, ask clarifying questions and also guide the user towards finding the answer."
+                ,
+            },
+            { role: "user", content: prompt },
+        ],
+        max_tokens: 650,
+        temperature: 0.6,
+    });
+    const answer = completion.choices[0].message?.content;
+    console.log(`[qa] Generated answer: ${answer}`);
+    return answer ? answer.trim() : "Sorry, I couldn't generate an answer.";
+}
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== "POST") {
+        return res.status(405).json({ message: "Method not allowed" });
+    }
+
+    const body = req.body as any;
+
+    if ("questions" in body) {
+        const userQuestions = body as UserQuestions;
+        const answers: QuestionAnswer[] = await Promise.all(
+            userQuestions.questions.map(async (question) => {
+                const qa = await retrieveQA(userQuestions.userId, question.question);
+                if (qa) return qa;
+                // Fallback: If no cached answer is found, generate one using the default namespace.
+                const contextEmbedding = await embedText(question.question);
+                const context = await fetchUpdatedContextFromNamespaces([userQuestions.userId], contextEmbedding);
+                const answer = await generateAnswer(question.question, context);
+                return { question: question.question, answer };
+            })
+        );
+        return res.status(200).json({ userId: userQuestions.userId, qa: answers });
+    } else if ("qa" in body) {
+        const userQA = body as UserQA;
+        // Insert each QA pair into all relevant namespaces.
+        for (const qa of userQA.qa) {
+            await insertQA(userQA.userId, qa);
+        }
+        return res.status(200).json({ message: "QA pairs inserted successfully" });
+    } else {
+        return res.status(400).json({ message: "Invalid request body" });
+    }
+}
