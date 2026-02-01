@@ -13,14 +13,6 @@
         "BASE_URL": "https://omniagenthub.vercel.app",
         "UPDATER_SECRET_TOKEN": "jK8#2LmP7r$5Tq*6Vw%E3uQ2f@9Zx!8Bn#4LmP7r$5Tq*6Vw%E3u"
     },
-    "functions": {
-        "api/scrape-webhook.ts": {
-            "maxDuration": 300
-        },
-        "api/initiate-scrape.ts": {
-            "maxDuration": 300
-        }
-    },
     "github": {
         "enabled": true
     },
