@@ -14,6 +14,7 @@ import OpenWebsiteToast from '../components/OpenWebsiteToast';
  * 
  * MIGRATED: From Auth0 to Privy authentication
  * Uses Privy's built-in login modal with embedded wallets
+ *
  */
 const SignIn = () => {
     const router = useRouter();
