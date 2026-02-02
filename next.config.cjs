@@ -12,8 +12,7 @@ const nextConfig = {
   reactStrictMode: true,
   swcMinify: true, // Use SWC for faster minification
 
-  // Base path configuration
-  basePath: "",
+  // Routing configuration
   trailingSlash: false,
 
   // Image optimization
