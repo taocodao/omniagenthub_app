@@ -2,7 +2,7 @@
 import { createClient } from '@vercel/kv';
 import OpenAI from 'openai';  // Import the OpenAI library
 import { Assistant } from 'experts';
-export const runtime = "edge";
+
 
 // Instantiate KV client
 const kv = createClient({
