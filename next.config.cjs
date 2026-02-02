@@ -185,6 +185,9 @@ const nextConfig = {
     reactRemoveProperties: process.env.NODE_ENV === 'production',
   },
 
+  // Output configuration
+  output: process.env.NODE_ENV === 'production' ? 'standalone' : undefined,
+
   // Power user features
   poweredByHeader: false, // Remove X-Powered-By header
 
