@@ -14,6 +14,7 @@ import { usePayment } from '../hook/Payment_Process';
 import { useAssistant } from 'ai/react';
 import ReactDOM from 'react-dom/client';
 import { toast } from 'react-toastify';
+import { LinkedInPostButton } from './integrations/LinkedInPostButton';
 
 export const maxDuration = 300; // This function can run for a maximum of 300 seconds
 
@@ -409,6 +410,15 @@ export function ChatBaseStream({ role, task, initialMessage, department, user, p
                             </div>
                         </div>
                     ))}
+
+                    {/* LinkedIn Post Button - shows after AI response */}
+                    {messages.length > 0 && messages[messages.length - 1]?.role === 'assistant' && (
+                        <LinkedInPostButton
+                            content={messages[messages.length - 1]?.content || ''}
+                            disabled={isLoading}
+                            language={language}
+                        />
+                    )}
                 </div>
 
                 <form className={styles.inputForm}>

@@ -1,0 +1,7 @@
+=ƒöº Creating LinkedIn Auth Config via Composio API...
+
+1. Testing API connectivity...
+   Status: 410
+   G¥î API test failed
+{"error":"This endpoint is no longer available. Please upgrade to v3 APIs. "}
+

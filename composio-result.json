@@ -1,0 +1,11 @@
+{
+  "steps": [
+    "Step 1: Checking existing LinkedIn configs...",
+    "List Status: 200",
+    "Step 2: Creating new LinkedIn auth config (v3 object format)...",
+    "Create Status (object): 201"
+  ],
+  "error": null,
+  "existingConfigs": "{\"items\":[],\"current_page\":1,\"total_pages\":0,\"total_items\":0,\"next_cursor\":null}",
+  "createResponse1": "{\"toolkit\":{\"slug\":\"linkedin\"},\"auth_config\":{\"id\":\"ac_zLliAJlO9V0G\",\"auth_scheme\":\"OAUTH2\",\"is_composio_managed\":true,\"restrict_to_following_tools\":[]}}"
+}
