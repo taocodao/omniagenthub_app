@@ -1983,7 +1983,7 @@ const ChatHome: React.FC<ChatHomeBusinessProps> = ({
                                         role: selectedRole?.role || "",
                                         task: selectedTask || "",
                                         department: selectedRole?.department || "",
-                                        kbSelectedSources: selectedEmbeddings, // Fixed: was 'selectedSources', now 'kbSelectedSources'
+                                        kbSelectedSources: kbSelectedSources, // Use the actual kbSelectedSources from SourceSelector
                                     } as any)}
                                 />
                             )}
