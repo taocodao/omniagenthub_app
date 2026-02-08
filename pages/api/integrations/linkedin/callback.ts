@@ -47,8 +47,8 @@ export default async function handler(
         try {
             // Get connected accounts for this user
             const accounts = await composio.connectedAccounts.list({
-                userUuid: composioUserId,
-                status: 'ACTIVE',
+                user_ids: [composioUserId],
+                statuses: ['ACTIVE'],
             });
 
             // Find the LinkedIn account

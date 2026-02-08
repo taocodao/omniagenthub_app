@@ -45,9 +45,7 @@ export default async function handler(
             const composio = getComposioClient();
 
             if (connection.composioConnectedAccountId) {
-                await composio.connectedAccounts.delete({
-                    connectedAccountId: connection.composioConnectedAccountId,
-                });
+                await composio.connectedAccounts.delete(connection.composioConnectedAccountId);
                 console.log('✅ [LINKEDIN-DISCONNECT] Revoked Composio connection');
             }
         } catch (revokeError: any) {

@@ -48,8 +48,8 @@ export default async function handler(
 
                 // Verify the connection is still active
                 const accounts = await composio.connectedAccounts.list({
-                    userUuid: composioUserId,
-                    status: 'ACTIVE',
+                    user_ids: [composioUserId],
+                    statuses: ['ACTIVE'],
                 });
 
                 const linkedInAccount = accounts.items?.find(
