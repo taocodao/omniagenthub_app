@@ -695,14 +695,15 @@ function detectIncompleteAnswer(answer: string): boolean {
     if (!answer || answer.length < 20) return true;
 
     const incompletePatterns = [
-        /cannot find this information/i,
-        /not found in (?:your )?(?:selected )?sources/i,
-        /information (?:is )?not available/i,
-        /I (?:don't|do not) have (?:enough )?information/i,
-        /please provide (?:the following|more) details/i,
+        /(?:cannot|could not|can't) find (?:this )?information/i,
+        /not (?:found|find) (?:this )?information in/i,
+        /information (?:is )?not (?:available|found)/i,
+        /I (?:don't|do not|couldn't|could not) have (?:enough )?information/i,
+        /please (?:provide|edit this answer|specify)/i,
         /I would need (?:some )?specific information/i,
         /no relevant (?:information|data|content) (?:was )?found/i,
         /this information was not found/i,
+        /provide more specific source documents/i,
     ];
 
     return incompletePatterns.some(pattern => pattern.test(answer));
