@@ -99,8 +99,14 @@ export const runAssistant = async (
             content: userMessage,
         });
 
+        // Get the real OpenAI assistant ID (asst_...) from the mapping
+        const realAssistantId = await createAssistant(assistantId);
+        if (!realAssistantId) {
+            throw new Error('Failed to get or create assistant');
+        }
+
         const run = await openai.beta.threads.runs.create(realThreadId, {
-            assistant_id: assistantId,
+            assistant_id: realAssistantId,
         });
 
         let runStatus = await openai.beta.threads.runs.retrieve(realThreadId, run.id);

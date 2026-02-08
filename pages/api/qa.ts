@@ -656,14 +656,15 @@ async function retrieveQA(
         mcpStoreName = mcpSources.storeName;
     }
 
-    // If KB sources are available, use the KB store mechanism directly (same as KB chat page)
+    // If KB sources are available, use iterative RAG approach
     if (mcpSourceIds.length > 0) {
-        console.log(`[qa] Querying KB with ${mcpSourceIds.length} source IDs`);
-        const kbResult = await queryKnowledgeBaseStore(question, mcpSourceIds, mcpStoreName);
-        if (kbResult && kbResult.answer) {
-            console.log(`[qa] Using KB answer directly for question: ${question}`);
+        console.log(`[qa] Querying KB with ${mcpSourceIds.length} source IDs using iterative approach`);
+        const ragResult = await iterativeRAGQuery(question, mcpSourceIds, mcpStoreName);
+
+        if (ragResult.answer) {
+            console.log(`[qa] Got answer for question (iterative=${ragResult.usedIterative}): ${question}`);
             // Strip inline citations like [filename.pdf] or [Source Name] for cleaner output
-            const cleanAnswer = kbResult.answer
+            const cleanAnswer = ragResult.answer
                 .replace(/\s*\[[^\]]+\.(pdf|docx?|pptx?|txt|csv|xlsx?)\]/gi, '')  // Remove [file.ext] citations
                 .replace(/\s*\[OmniAgentHub[^\]]*\]/gi, '')  // Remove OmniAgentHub citations specifically
                 .replace(/\s*\[Source:[^\]]+\]/gi, '')  // Remove [Source: ...] citations
@@ -686,6 +687,164 @@ async function retrieveQA(
 }
 
 
+
+/**
+ * Detect if an answer is incomplete or indicates the information wasn't found.
+ */
+function detectIncompleteAnswer(answer: string): boolean {
+    if (!answer || answer.length < 20) return true;
+
+    const incompletePatterns = [
+        /cannot find this information/i,
+        /not found in (?:your )?(?:selected )?sources/i,
+        /information (?:is )?not available/i,
+        /I (?:don't|do not) have (?:enough )?information/i,
+        /please provide (?:the following|more) details/i,
+        /I would need (?:some )?specific information/i,
+        /no relevant (?:information|data|content) (?:was )?found/i,
+        /this information was not found/i,
+    ];
+
+    return incompletePatterns.some(pattern => pattern.test(answer));
+}
+
+/**
+ * Generate sub-questions to decompose a complex question into answerable parts.
+ */
+async function generateSubQuestions(originalQuestion: string): Promise<string[]> {
+    console.log(`[qa] Generating sub-questions for: ${originalQuestion}`);
+
+    const prompt = `Given this question that a RAG system could not answer directly:
+"${originalQuestion}"
+
+Generate 3-5 simpler, more specific sub-questions that could help gather the necessary information to answer the original question. These should be questions that are more likely to match content in business documents.
+
+For example, if the question is "What industry is the person you're trying to connect with?", generate questions like:
+- What is the company name mentioned in the documents?
+- What products or services does the company offer?
+- Who is the target audience?
+
+Return ONLY the questions, one per line, no numbering or bullets.`;
+
+    try {
+        const completion = await openai.chat.completions.create({
+            model: GPT_MODEL,
+            messages: [
+                { role: "system", content: "You are a helpful assistant that breaks down complex questions into simpler, more specific sub-questions." },
+                { role: "user", content: prompt },
+            ],
+            max_tokens: 500,
+            temperature: 0.3,
+        });
+
+        const response = completion.choices[0].message?.content || '';
+        const subQuestions = response
+            .split('\n')
+            .map(q => q.trim())
+            .filter(q => q.length > 10 && q.endsWith('?'))
+            .slice(0, 5);
+
+        console.log(`[qa] Generated ${subQuestions.length} sub-questions`);
+        return subQuestions;
+    } catch (error) {
+        console.error('[qa] Error generating sub-questions:', error);
+        return [];
+    }
+}
+
+/**
+ * Synthesize a comprehensive answer from multiple sub-question answers.
+ */
+async function synthesizeAnswerFromSubQuestions(
+    originalQuestion: string,
+    subQAs: { question: string; answer: string }[]
+): Promise<string> {
+    console.log(`[qa] Synthesizing answer from ${subQAs.length} sub-question answers`);
+
+    const subQAText = subQAs
+        .map((qa, i) => `Q${i + 1}: ${qa.question}\nA${i + 1}: ${qa.answer}`)
+        .join('\n\n');
+
+    const prompt = `Original Question: "${originalQuestion}"
+
+I gathered the following information from related sub-questions:
+
+${subQAText}
+
+Based on the above information, provide a comprehensive, well-structured answer to the original question. 
+- Use the actual data found (company names, products, audiences, etc.)
+- Format the answer clearly with bullet points or sections where appropriate
+- If some information was not found, note what specific information is still needed
+- DO NOT use placeholder text like "[insert X]"`;
+
+    try {
+        const completion = await openai.chat.completions.create({
+            model: GPT_MODEL,
+            messages: [
+                { role: "system", content: "You are a helpful assistant that synthesizes information from multiple sources into comprehensive answers." },
+                { role: "user", content: prompt },
+            ],
+            max_tokens: 1000,
+            temperature: 0.4,
+        });
+
+        const synthesizedAnswer = completion.choices[0].message?.content || '';
+        console.log(`[qa] Synthesized answer: ${synthesizedAnswer.substring(0, 100)}...`);
+        return synthesizedAnswer.trim();
+    } catch (error) {
+        console.error('[qa] Error synthesizing answer:', error);
+        // Fallback: just combine the sub-answers
+        return subQAs.map(qa => `**${qa.question}**\n${qa.answer}`).join('\n\n');
+    }
+}
+
+/**
+ * Perform iterative RAG query: if initial answer is incomplete, use sub-questions.
+ */
+async function iterativeRAGQuery(
+    question: string,
+    sourceIds: string[],
+    storeName: string
+): Promise<{ answer: string; usedIterative: boolean }> {
+    // First attempt: direct query
+    const directResult = await queryKnowledgeBaseStore(question, sourceIds, storeName);
+    const directAnswer = directResult?.answer || '';
+
+    // Check if answer is complete
+    if (directAnswer && !detectIncompleteAnswer(directAnswer)) {
+        return { answer: directAnswer, usedIterative: false };
+    }
+
+    console.log(`[qa] Initial answer incomplete, trying iterative approach...`);
+
+    // Generate sub-questions
+    const subQuestions = await generateSubQuestions(question);
+    if (subQuestions.length === 0) {
+        return { answer: directAnswer || 'Unable to find relevant information in the selected sources.', usedIterative: false };
+    }
+
+    // Query each sub-question
+    const subQAs: { question: string; answer: string }[] = [];
+    for (const subQ of subQuestions) {
+        const subResult = await queryKnowledgeBaseStore(subQ, sourceIds, storeName);
+        if (subResult?.answer && !detectIncompleteAnswer(subResult.answer)) {
+            subQAs.push({ question: subQ, answer: subResult.answer });
+            console.log(`[qa] Sub-question "${subQ.substring(0, 30)}..." got valid answer`);
+        }
+    }
+
+    // If we got valid answers from sub-questions, synthesize
+    if (subQAs.length > 0) {
+        const synthesized = await synthesizeAnswerFromSubQuestions(question, subQAs);
+        return { answer: synthesized, usedIterative: true };
+    }
+
+    // No valid sub-answers found
+    return {
+        answer: directAnswer || 'I could not find this information in the provided sources. Please edit this answer or provide more specific source documents.',
+        usedIterative: false
+    };
+}
 
 /**
  * Generate an answer using GPT.
