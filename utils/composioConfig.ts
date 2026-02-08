@@ -1,7 +1,7 @@
 // utils/composioConfig.ts
 // Server-side Composio SDK configuration
 
-import { Composio } from '@composio/core';
+import { Composio } from '@composio/client';
 
 if (!process.env.COMPOSIO_API_KEY) {
     console.warn('⚠️ [COMPOSIO] COMPOSIO_API_KEY not set in environment variables');

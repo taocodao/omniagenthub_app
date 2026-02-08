@@ -45,22 +45,35 @@ export default async function handler(
         const composio = getComposioClient();
 
         // Create connection request via Composio SDK
-        // The SDK returns a redirect URL for the hosted OAuth flow
-        const connectionRequest = await composio.connectedAccounts.initiate({
-            integrationId: 'linkedin',
-            userUuid: composioUserId,
-            authConfig: LINKEDIN_AUTH_CONFIG_ID,
-            redirectUrl: callbackUrl,
+        // The SDK uses create() method with auth_config and connection params
+        const connectionRequest = await composio.connectedAccounts.create({
+            auth_config: {
+                id: LINKEDIN_AUTH_CONFIG_ID
+            },
+            connection: {
+                user_id: composioUserId,
+                callback_url: callbackUrl,
+            }
         });
 
+        // Extract redirect URL from the response
+        let redirectUrl = '';
+        const connectionData = connectionRequest.connectionData;
+        if (connectionData && 'val' in connectionData && typeof connectionData.val === 'object' &&
+            connectionData.val !== null && 'redirectUrl' in connectionData.val) {
+            redirectUrl = connectionData.val.redirectUrl as string;
+        } else if ('redirect_url' in connectionRequest) {
+            redirectUrl = (connectionRequest as any).redirect_url;
+        }
+
         console.log('✅ [LINKEDIN-CONNECT] Connection request created:', {
-            connectionId: connectionRequest.connectionId,
-            redirectUrl: connectionRequest.redirectUrl,
+            connectionId: connectionRequest.id,
+            redirectUrl: redirectUrl,
         });
 
         // Save pending connection state
         await saveLinkedInConnection(auth0UserId, {
-            composioConnectedAccountId: connectionRequest.connectionId || '',
+            composioConnectedAccountId: connectionRequest.id,
             status: 'PENDING',
             connectedAt: new Date().toISOString(),
         });
@@ -68,7 +81,7 @@ export default async function handler(
         // Return redirect URL for frontend
         return res.status(200).json({
             success: true,
-            redirectUrl: connectionRequest.redirectUrl,
+            redirectUrl: redirectUrl,
         });
 
     } catch (error: any) {
