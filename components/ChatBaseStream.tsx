@@ -411,14 +411,13 @@ export function ChatBaseStream({ role, task, initialMessage, department, user, p
                         </div>
                     ))}
 
-                    {/* LinkedIn Post Button - shows after AI response */}
-                    {messages.length > 0 && messages[messages.length - 1]?.role === 'assistant' && (
-                        <LinkedInPostButton
-                            content={messages[messages.length - 1]?.content || ''}
-                            disabled={isLoading}
-                            language={language}
-                        />
-                    )}
+
+                    {/* LinkedIn Post Button - always visible alongside other action buttons */}
+                    <LinkedInPostButton
+                        content={messages.find(m => m.role === 'assistant')?.content || ''}
+                        disabled={isLoading || messages.filter(m => m.role === 'assistant').length === 0}
+                        language={language}
+                    />
                 </div>
 
                 <form className={styles.inputForm}>
