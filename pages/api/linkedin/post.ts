@@ -59,10 +59,9 @@ export default async function handler(
 
         // Execute LinkedIn "Create a LinkedIn post" tool
         // Using Composio's tool execution with the connected account
-        const result = await composio.tools.execute({
-            action: 'LINKEDIN_CREATE_POST',
-            connectedAccountId: connection.composioConnectedAccountId,
-            input: {
+        const result = await composio.tools.execute('LINKEDIN_CREATE_POST', {
+            connected_account_id: connection.composioConnectedAccountId,
+            arguments: {
                 text: content,
                 visibility: visibility,
             },
